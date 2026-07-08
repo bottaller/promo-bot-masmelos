@@ -10,7 +10,7 @@ const TABS = {
 // Encabezados esperados en cada pestaña. Si la planilla esta vacia,
 // se crean automaticamente al arrancar (ver ensureHeaders mas abajo).
 const HEADERS = {
-  ALTAS: ['id', 'fecha', 'usuario', 'sku', 'descripcion', 'categoria', 'lote', 'vencimiento', 'cantidad', 'motivo', 'estado'],
+  ALTAS: ['id', 'fecha', 'usuario', 'sku', 'producto', 'proveedor', 'lote', 'vencimiento', 'cantidad', 'motivo', 'estado'],
   BAJAS: ['id', 'fecha', 'alta_id', 'sku', 'cantidad_remanente', 'cantidad_vendida', 'motivo_baja'],
 };
 
