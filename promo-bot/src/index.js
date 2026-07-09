@@ -1,14 +1,21 @@
 require('dotenv').config();
 const { Telegraf, Scenes, session } = require('telegraf');
 
-const altaWizard = require('./scenes/alta');
-const bajaWizard = require('./scenes/baja');
-const reporteWizard = require('./scenes/reporte');
-const { ensureHeaders } = require('./sheets');
+const { auth } = require('./middleware/auth');
 const { setBot } = require('./notificar');
+const { estaConfigurado, ensureHeaders } = require('./sheets');
 
-const required = ['BOT_TOKEN', 'GOOGLE_SHEET_ID', 'GOOGLE_SERVICE_ACCOUNT_JSON_BASE64'];
-for (const key of required) {
+const compras = require('./areas/compras');
+const tesoreria = require('./areas/tesoreria');
+const admin = require('./admin/usuarios');
+
+// Áreas registradas. Sumar un área = agregarla a esta lista.
+const areas = [compras, tesoreria];
+
+// Solo estas dos variables son imprescindibles para arrancar. Las de Google Sheets
+// son opcionales (se piden solo cuando se usa un comando de Compras).
+const requeridas = ['BOT_TOKEN', 'DATABASE_URL'];
+for (const key of requeridas) {
   if (!process.env[key]) {
     console.error(`Falta la variable de entorno ${key}. Revisá el archivo .env`);
     process.exit(1);
@@ -18,41 +25,67 @@ for (const key of required) {
 const bot = new Telegraf(process.env.BOT_TOKEN);
 setBot(bot);
 
-const stage = new Scenes.Stage([altaWizard, bajaWizard, reporteWizard]);
+// Stage con todas las scenes de todas las áreas.
+const scenes = areas.flatMap((a) => a.scenes || []);
+const stage = new Scenes.Stage(scenes);
+
 bot.use(session());
+bot.use(auth); // control de acceso: corre antes que todo
 bot.use(stage.middleware());
 
-bot.start((ctx) =>
-  ctx.reply(
-    'Bot de promociones por vencimiento — Más Melos.\n\n' +
-    '/alta — registrar producto pasado a promoción\n' +
-    '/baja — registrar retiro de góndola (vendido o descartado)\n' +
-    '/reporte — ver historial por SKU o por proveedor'
-  )
-);
+// Arma el texto del menú según las áreas del usuario.
+function menuPara(usuario) {
+  const misAreas = usuario.es_admin ? areas.map((a) => a.codigo) : usuario.areas || [];
+  const lineas = [];
+  for (const area of areas) {
+    if (!misAreas.includes(area.codigo)) continue;
+    lineas.push(`\n${area.nombre}:`);
+    for (const c of area.comandos) lineas.push(`  /${c.comando} — ${c.descripcion}`);
+  }
+  let texto = lineas.length
+    ? `Comandos disponibles para vos:${lineas.join('\n')}`
+    : 'Todavía no tenés comandos asignados. Pedile un área al admin.';
+  if (usuario.es_admin) texto += '\n\nAdmin:\n  /usuarios — gestionar accesos';
+  return texto;
+}
 
-bot.command('alta', (ctx) => ctx.scene.enter('alta-wizard'));
-bot.command('baja', (ctx) => ctx.scene.enter('baja-wizard'));
-bot.command('reporte', (ctx) => ctx.scene.enter('reporte-wizard'));
+async function saludar(ctx) {
+  const u = ctx.state.usuario;
+  if (!u) return;
+  await ctx.reply(`Hola ${u.nombre || ''}! Bot de Más Melos.\n\n${menuPara(u)}`);
+}
+
+bot.start(saludar);
+bot.command('menu', saludar);
+
+// Registrar los comandos de cada área + los de admin.
+for (const area of areas) area.registrar(bot);
+admin.registrar(bot);
 
 bot.catch((err, ctx) => {
   console.error('Error en el bot:', err);
-  ctx.reply('Ocurrió un error. Probá de nuevo o avisá al admin.');
+  if (ctx && typeof ctx.reply === 'function') {
+    ctx.reply('Ocurrió un error. Probá de nuevo o avisá al admin.').catch(() => {});
+  }
 });
 
 (async () => {
   try {
-    console.log('Paso 1/3: verificando conexión con Google Sheets...');
-    await ensureHeaders();
-    console.log('Paso 1/3: OK, conectó con la planilla.');
+    if (estaConfigurado()) {
+      try {
+        await ensureHeaders();
+        console.log('Google Sheets: conectado.');
+      } catch (e) {
+        console.error('Google Sheets configurado pero falló la conexión:', e.message);
+      }
+    } else {
+      console.log('Google Sheets: no configurado (los comandos de Compras van a avisar).');
+    }
 
-    console.log('Paso 2/3: conectando con Telegram...');
     await bot.launch();
-    console.log('Paso 2/3: OK, conectó con Telegram.');
-
-    console.log('Paso 3/3: Bot de promociones (independiente) corriendo.');
+    console.log('Bot de Más Melos corriendo. Áreas:', areas.map((a) => a.codigo).join(', '));
   } catch (err) {
-    console.error('FALLÓ EN ALGÚN PASO. Detalle del error:');
+    console.error('No se pudo iniciar el bot:');
     console.error(err);
   }
 })();

@@ -94,4 +94,10 @@ async function ensureHeaders() {
   }
 }
 
-module.exports = { TABS, HEADERS, appendRow, readAll, updateCellById, ensureHeaders };
+// True si están las dos variables de Google Sheets. Si es false, los comandos que
+// usan la planilla avisan en vez de romper (permite correr el bot sin Sheets todavía).
+function estaConfigurado() {
+  return Boolean(process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64);
+}
+
+module.exports = { TABS, HEADERS, appendRow, readAll, updateCellById, ensureHeaders, estaConfigurado };
