@@ -60,6 +60,9 @@ bot.command('menu', saludar);
 for (const area of areas) area.registrar(bot);
 admin.registrar(bot);
 
+// Responder callbacks sueltos (botones de flujos ya terminados) para que no queden "cargando".
+bot.on('callback_query', (ctx) => ctx.answerCbQuery().catch(() => {}));
+
 bot.catch((err, ctx) => {
   console.error('Error en el bot:', err);
   if (ctx && typeof ctx.reply === 'function') {

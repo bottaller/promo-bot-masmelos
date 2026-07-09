@@ -1,10 +1,6 @@
-const { Scenes, Markup } = require('telegraf');
+const { Scenes } = require('telegraf');
 const { reportePorProducto, reportePorProveedor } = require('../db/compras');
-
-function texto(ctx) {
-  const t = ctx.message && ctx.message.text;
-  return typeof t === 'string' ? t.trim() : null;
-}
+const { respuesta, texto, opciones } = require('../lib/wizard');
 
 // Telegram corta los mensajes de más de 4096 caracteres.
 function recortar(msg) {
@@ -13,23 +9,23 @@ function recortar(msg) {
 
 const reporteWizard = new Scenes.WizardScene(
   'reporte-wizard',
-  // 0: elegir tipo
+  // 0: elegir tipo (botones inline)
   async (ctx) => {
-    await ctx.reply('¿Reporte por producto o por proveedor?', Markup.keyboard([['Producto'], ['Proveedor']]).oneTime().resize());
+    await ctx.reply('¿Reporte por producto o por proveedor?', opciones([['Producto', 'producto'], ['Proveedor', 'proveedor']]));
     return ctx.wizard.next();
   },
   // 1: rutear
   async (ctx) => {
-    const t = (texto(ctx) || '').toLowerCase();
-    if (t === 'producto') {
-      await ctx.reply('¿Qué producto? (EAN, código o nombre)', Markup.removeKeyboard());
+    const r = (await respuesta(ctx) || '').toLowerCase();
+    if (r === 'producto') {
+      await ctx.reply('¿Qué producto? (EAN, código o nombre)');
       return ctx.wizard.next();
     }
-    if (t === 'proveedor') {
-      await ctx.reply('¿Qué proveedor?', Markup.removeKeyboard());
+    if (r === 'proveedor') {
+      await ctx.reply('¿Qué proveedor?');
       return ctx.wizard.selectStep(3);
     }
-    await ctx.reply('Elegí "Producto" o "Proveedor" con los botones.');
+    await ctx.reply('Elegí "Producto" o "Proveedor".');
     return;
   },
   // 2: reporte por producto
@@ -39,7 +35,7 @@ const reporteWizard = new Scenes.WizardScene(
 
     const r = await reportePorProducto(q);
     if (!r) {
-      await ctx.reply(`No hay registros de promoción para "${q}".`, Markup.removeKeyboard());
+      await ctx.reply(`No hay registros de promoción para "${q}".`);
       return ctx.scene.leave();
     }
     const m = r.metricas;
@@ -55,7 +51,7 @@ const reporteWizard = new Scenes.WizardScene(
       `Tasa de descarte: ${tasa}%\n` +
       (m.abiertas > 0 ? `\n⏳ Hay ${m.abiertas} alta(s) todavía abierta(s) en góndola.\n` : '') +
       `\nSugerencia: al recomprar, reducí la cantidad habitual en aproximadamente ${tasa}% respecto del consumo normal.`;
-    await ctx.reply(recortar(msg), Markup.removeKeyboard());
+    await ctx.reply(recortar(msg));
     return ctx.scene.leave();
   },
   // 3: reporte por proveedor
@@ -65,7 +61,7 @@ const reporteWizard = new Scenes.WizardScene(
 
     const r = await reportePorProveedor(q);
     if (!r) {
-      await ctx.reply(`No hay registros de promoción para el proveedor "${q}".`, Markup.removeKeyboard());
+      await ctx.reply(`No hay registros de promoción para el proveedor "${q}".`);
       return ctx.scene.leave();
     }
     const m = r.metricas;
@@ -83,7 +79,7 @@ const reporteWizard = new Scenes.WizardScene(
       `Tasa de descarte: ${tasa}%\n` +
       (m.abiertas > 0 ? `\n⏳ Hay ${m.abiertas} alta(s) todavía abierta(s) en góndola.\n` : '') +
       `\nDetalle por producto:\n${detalle}`;
-    await ctx.reply(recortar(msg), Markup.removeKeyboard());
+    await ctx.reply(recortar(msg));
     return ctx.scene.leave();
   }
 );
