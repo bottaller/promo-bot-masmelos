@@ -9,6 +9,9 @@ al lado del código va un `README.md` corto que apunta acá.
   fuentes de datos, flujo del arqueo, modelo de datos, multi-área, hosting y plan por fases.
   **Empezá por acá.**
 
+**Estado (2026-07-09):** Fases 0–2 hechas — control de acceso, maestro de artículos y Compras en
+Postgres (sin Google Sheets). Detalle en §12 de [arquitectura.md](arquitectura.md).
+
 ## Por venir (se escriben cuando se construye cada parte)
 
 - `modulos/base-de-datos.md` — esquema detallado y migraciones.

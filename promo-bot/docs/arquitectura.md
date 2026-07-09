@@ -1,7 +1,7 @@
 # Arquitectura — Bot Más Melos
 
 > Documento de diseño y decisiones. Es la fuente de verdad de "hacia dónde va esto y por qué".
-> Última actualización: **2026-07-08**.
+> Última actualización: **2026-07-09**.
 
 ---
 
@@ -17,16 +17,15 @@ Hoy arranca cubriendo **Compras** (promociones por vencimiento, lo que ya existe
 
 ---
 
-## 2. De dónde venimos (estado actual)
+## 2. De dónde venimos
 
-- Bot de Telegram en **Node.js + telegraf v4**, desplegado en **Railway**.
-- Datos en **Google Sheets** (pestañas `ALTAS` / `BAJAS`), sin base de datos.
-- Comandos `/alta`, `/baja`, `/reporte` para promociones por vencimiento.
-- **Sin control de acceso**: hoy cualquiera que encuentre el bot puede usarlo y ver los datos.
-  → Es el problema que resuelve la **Fase 1** (ver §12).
+El bot nació como **bot de promociones por vencimiento** en Node/telegraf, con datos en **Google
+Sheets** y **sin control de acceso** (cualquiera podía usarlo). Una revisión inicial encontró varios
+bugs: tasa de descarte inflada, reporte por proveedor case-sensitive, wizards que se colgaban con
+inputs no-texto.
 
-Ver la revisión de código del bot actual para los bugs conocidos (tasa de descarte inflada,
-reporte por proveedor case-sensitive, etc.). Esos se corrigen durante la migración por fases.
+De ahí arrancó la migración por fases (§12). **Hoy** el bot ya no usa Sheets, tiene control de acceso
+y Compras corre en Postgres con esos bugs corregidos. El estado actualizado está en §12.
 
 ---
 
@@ -41,9 +40,10 @@ reporte por proveedor case-sensitive, etc.). Esos se corrigen durante la migraci
 | D5 | **Hosting: Railway**, sin PC en la oficina (por ahora) | Las fuentes de datos actuales (Excel subido + futuro BigQuery) se alcanzan desde la nube. |
 | D6 | **Identidad de usuario = `telegram_id`** | Estable (el username cambia). Allowlist = fila activa en `usuarios`. |
 | D7 | **Cola de trabajos (`jobs`) sí**, pero se usa recién cuando haga falta | Serializa corridas (protege el snapshot del arqueo) y habilita el worker on-prem del futuro. |
-| D8 | **Google Sheets se retira** | Con Supabase deja de ser necesario. Para "mirar los datos con el ojo" queda el editor de tablas de Supabase (o la web futura). |
+| D8 | **Google Sheets retirado** ✅ | Compras ya corre 100% en Postgres. Se borró `sheets.js` y la dependencia `googleapis`. Para "ver los datos" queda el editor de tablas de Supabase. |
 | D9 | **Sin roles finos al inicio**: solo pertenencia a área | YAGNI. Hoy hay 2 áreas reales. Los roles se agregan cuando un caso concreto lo pida. |
 | D10 | **Mantenimiento técnico: Renzo** | Stack elegido a conciencia para que lo sostenga 1 persona técnica. |
+| D11 | **Maestro de artículos en la base** ✅ | `/actartic` (admin) sube el Excel de Sigma a `bot.articulos`; `/alta` y `/buscar` lo consultan por EAN/código/nombre, para no cargar todo a mano. |
 
 **Diferido a futuro (documentado, no construido):** conexión a **BigQuery**, **scraping de la app de
 escritorio (Sigma)**, y **web de reportes**. Cada uno se suma como una pata nueva sin romper lo anterior.
@@ -64,9 +64,9 @@ escritorio (Sigma)**, y **web de reportes**. Cada uno se suma como una pata nuev
 
 El bot es un hub: los datos entran por tres vías (dos futuras).
 
-1. 📤 **Excel subido por el usuario** — *camino principal hoy.*
-   Ej: semanal, el **maestro de artículos**; puntual, el export del arqueo.
-   Alguien exporta del sistema y le manda el `.xlsx` al bot por Telegram.
+1. 📤 **Excel subido por el usuario** — *camino principal, ya implementado.*
+   El **maestro de artículos** se sube con `/actartic` (Excel de Sigma → `bot.articulos`).
+   El export del arqueo seguirá el mismo patrón (Fase 3).
 2. 🔷 **BigQuery** — *futuro.* Parte de los datos ya viven ahí; se consultarán en modo lectura.
 3. 🖥️ **Scraping de la app de escritorio (Sigma)** — *futuro / worst case.*
    Requiere worker on-prem + cola de jobs. Mientras tanto, el dato entra como Excel a mano (vía 1).
@@ -118,24 +118,29 @@ schema `bot` **no** está en la lista de "Exposed schemas" de Supabase → la AP
 de la web no lo ve. El bot se conecta por **conexión directa de Postgres** (`pg` + connection string),
 que sí llega a `bot`. **No** usamos la API REST / `supabase-js` para el bot (eso reexpondría el schema).
 
-**Fase 1 — núcleo (lo que se crea ahora, ver `db/migrations/001_fundaciones.sql`):**
+**Implementado (migraciones 001–003):**
 
 ```
+-- 001 acceso
 bot.areas          (id, codigo, nombre, activa, creado_en)
 bot.usuarios       (id, telegram_id, nombre, activo, es_admin, creado_en, actualizado_en)
 bot.usuario_area   (usuario_id, area_id, creado_en)      -- N:N, sin rol todavía
+-- 002 maestro de artículos
+bot.articulos      (codigo PK, nombre, ean_unidad, ean_display, ean_bulto,
+                    rubro_cod, rubro, proveedor_cod, proveedor, actualizado_en)
+-- 003 compras (promociones por vencimiento)
+bot.compras_altas  (id, fecha, usuario_id, articulo_codigo, ean, producto, proveedor,
+                    lote, vencimiento, cantidad, motivo, estado)
+bot.compras_bajas  (id, fecha, alta_id FK, cantidad_remanente, cantidad_vendida, motivo_baja)
 ```
 
 **Futuro (se define cuando toque cada fase):**
 
 ```
 jobs           -- la cola: (id, tipo, area_id, solicitante, params, estado, resultado, ...)
-compras_*      -- promociones (migra ALTAS/BAJAS), proveedores, compradores
 tesoreria_*    -- registro de arqueos
 ventas_* / calidad_*   -- NO se crean hasta tener un comando real
 ```
-
-> El diseño detallado de las tablas de dominio se hace en su fase. "DB structure lo vemos después."
 
 ---
 
@@ -148,7 +153,7 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
 - **Autorización por comando:** cada comando declara su área (`requiereArea('tesoreria')`).
   `/arqueo` solo para Tesorería; `/alta` `/baja` `/reporte` solo para Compras.
 - **Menú dinámico:** cada usuario ve **solo los comandos de sus áreas**.
-- **Comando admin `/usuarios`** (para Renzo): dar de alta gente y asignar áreas sin tocar código ni la base.
+- **Comandos de admin:** `/usuarios` (dar de alta gente y asignar áreas) y `/actartic` (subir el maestro de artículos). En Compras hay además `/buscar` (artículo por EAN).
 - **Registro por carpeta:** agregar un área = agregar una carpeta en `src/areas/`, sin tocar el núcleo.
 
 ---
@@ -192,14 +197,14 @@ perder el pedido, (c) que el worker pueda correr en **otra máquina** (la PC de 
 Cada fase deja el bot andando. Sin big-bang. La secuencia prioriza:
 **cerrar el agujero de seguridad → migrar datos → sumar features**.
 
-- **Fase 0 — Andamiaje.** Reordenar carpetas al layout objetivo, crear el proyecto Supabase, esqueleto de `docs/`.
-- **Fase 1 — Control de acceso + áreas.** ⬅ *empezamos acá.* Tablas `usuarios`/`areas`/`usuario_area`,
-  middleware de identidad y autorización, comando `/usuarios`, sembrar el admin. El bot deja de estar abierto.
-  Los datos siguen en Sheets/PC — nada se rompe.
-- **Fase 2 — Migrar Compras a Postgres.** Tablas de promociones + proveedores; import de las pestañas actuales.
-  Corregir de paso los bugs de la revisión. (Opcional: doble escritura Sheets+Postgres un tiempo.)
-- **Fase 3 — Cola + `/arqueo` real.** Tabla `jobs`, wrapper del script Python con contrato JSON, volumen
-  persistente, entrega de los dos archivos por el chat. Validar que el arqueo **no venga vacío**.
+- **Fase 0 — Andamiaje.** ✅ Reordenar carpetas, crear el proyecto Supabase, esqueleto de `docs/`.
+- **Fase 1 — Control de acceso + áreas.** ✅ Tablas `usuarios`/`areas`/`usuario_area`, middleware de
+  identidad y autorización, comando `/usuarios` (con admin), admin sembrado. El bot dejó de estar abierto.
+- **Maestro de artículos.** ✅ Tabla `bot.articulos`, comandos `/actartic` (subir Excel de Sigma) y `/buscar`.
+- **Fase 2 — Migrar Compras a Postgres.** ✅ Tablas `compras_altas`/`compras_bajas`, wizards reescritos,
+  bugs de la revisión corregidos, Google Sheets eliminado. `/alta` ahora busca en el maestro de artículos.
+- **Fase 3 — Cola + `/arqueo` real.** ⬅ *próximo.* Tabla `jobs`, wrapper del script Python con contrato JSON,
+  volumen persistente, entrega de los dos archivos por el chat. Validar que el arqueo **no venga vacío**.
 - **Fase 4 — Áreas nuevas.** Ventas / Calidad cuando tengan procesos definidos.
 - **Fase 5 — Fuentes futuras.** BigQuery (lectura) y, si hace falta, el worker on-prem para Sigma.
 - **Fase 6 — Endurecer.** Heartbeat/alertas del worker, backups verificados, session store persistente si escala.

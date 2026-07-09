@@ -11,16 +11,20 @@ Migraciones SQL de la base del bot (Supabase / PostgreSQL). Ver el diseño en
 
 ## Cómo correr una migración
 
-1. Entrá al proyecto **masmelos-bot** en [supabase.com](https://supabase.com) → **SQL Editor**.
+1. Entrá a tu proyecto de Supabase (el compartido con la landing) → **SQL Editor**.
 2. Abrí el archivo `.sql` de `migrations/`, copiá **todo** el contenido y pegalo en el editor.
 3. **Run**. Están escritas para poder correrse más de una vez sin romper nada (idempotentes).
-4. Corré las migraciones **en orden** (`001_`, `002_`, …).
+4. Corré las migraciones **en orden** (`001_`, `002_`, `003_`, …).
+
+También podés correrlas desde la terminal: `node src/db/run-migration.js db/migrations/001_fundaciones.sql`.
 
 ## Migraciones
 
 | Archivo | Qué crea | Fase |
 |---|---|---|
 | `migrations/001_fundaciones.sql` | `areas`, `usuarios`, `usuario_area` + semilla de áreas | Fase 1 — control de acceso |
+| `migrations/002_articulos.sql` | `articulos` (maestro) + índices de búsqueda por EAN | Maestro de artículos |
+| `migrations/003_compras.sql` | `compras_altas`, `compras_bajas` | Fase 2 — promociones |
 
 ## Después de correr `001`
 

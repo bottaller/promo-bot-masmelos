@@ -1,39 +1,41 @@
-// Área Compras. Los comandos de promociones por vencimiento (lo que ya existía),
-// ahora detrás del control de acceso por área.
-//
-// Nota: las scenes siguen en src/scenes/ y los datos en Google Sheets. Eso se migra
-// a Postgres en la Fase 3; por ahora se mantiene funcionando tal cual.
+// Área Compras. Promociones por vencimiento (Postgres) + búsqueda de artículos.
 const altaWizard = require('../../scenes/alta');
 const bajaWizard = require('../../scenes/baja');
 const reporteWizard = require('../../scenes/reporte');
 const { requiereArea } = require('../../middleware/authz');
-const { estaConfigurado } = require('../../sheets');
+const { buscarPorEan } = require('../../db/articulos');
 
 const CODIGO = 'compras';
 
 const comandos = [
   { comando: 'alta', descripcion: 'Registrar producto en promoción por vencimiento' },
   { comando: 'baja', descripcion: 'Registrar retiro de góndola (vendido o descartado)' },
-  { comando: 'reporte', descripcion: 'Ver historial por SKU o proveedor' },
+  { comando: 'reporte', descripcion: 'Ver reporte por producto o proveedor' },
+  { comando: 'buscar', descripcion: 'Buscar un artículo por EAN o primeros dígitos' },
 ];
 
-// Si Google Sheets todavía no está configurado, avisamos en vez de romper.
-function conSheets(handler) {
-  return (ctx) => {
-    if (!estaConfigurado()) {
-      return ctx.reply(
-        'El área de Compras todavía no está conectada a la planilla. ' +
-        'Faltan las credenciales de Google Sheets — avisale al admin.'
-      );
-    }
-    return handler(ctx);
-  };
+// /buscar <ean o primeros dígitos>: busca en el maestro de artículos.
+async function buscar(ctx) {
+  const q = (ctx.message.text || '').trim().split(/\s+/).slice(1).join('');
+  if (!q || !/^\d+$/.test(q)) {
+    return ctx.reply('Uso: /buscar <EAN o primeros dígitos>\nEjemplo: /buscar 779007');
+  }
+  const resultados = await buscarPorEan(q, 10);
+  if (resultados.length === 0) {
+    return ctx.reply(`No encontré artículos con EAN que empiece en "${q}".`);
+  }
+  const lineas = resultados.map((a) =>
+    `• ${a.nombre}\n   EAN ${a.ean_unidad || '-'} · ${a.rubro || ''} · ${a.proveedor || ''}`
+  );
+  const extra = resultados.length === 10 ? '\n\n(hay más resultados; agregá más dígitos)' : '';
+  return ctx.reply(`Resultados para "${q}":\n\n${lineas.join('\n')}${extra}`);
 }
 
 function registrar(bot) {
-  bot.command('alta', requiereArea(CODIGO), conSheets((ctx) => ctx.scene.enter('alta-wizard')));
-  bot.command('baja', requiereArea(CODIGO), conSheets((ctx) => ctx.scene.enter('baja-wizard')));
-  bot.command('reporte', requiereArea(CODIGO), conSheets((ctx) => ctx.scene.enter('reporte-wizard')));
+  bot.command('alta', requiereArea(CODIGO), (ctx) => ctx.scene.enter('alta-wizard'));
+  bot.command('baja', requiereArea(CODIGO), (ctx) => ctx.scene.enter('baja-wizard'));
+  bot.command('reporte', requiereArea(CODIGO), (ctx) => ctx.scene.enter('reporte-wizard'));
+  bot.command('buscar', requiereArea(CODIGO), buscar);
 }
 
 module.exports = {

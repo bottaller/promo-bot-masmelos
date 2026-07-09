@@ -3,17 +3,15 @@ const { Telegraf, Scenes, session } = require('telegraf');
 
 const { auth } = require('./middleware/auth');
 const { setBot } = require('./notificar');
-const { estaConfigurado, ensureHeaders } = require('./sheets');
 
 const compras = require('./areas/compras');
 const tesoreria = require('./areas/tesoreria');
-const admin = require('./admin/usuarios');
+const admin = require('./admin');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
 const areas = [compras, tesoreria];
 
-// Solo estas dos variables son imprescindibles para arrancar. Las de Google Sheets
-// son opcionales (se piden solo cuando se usa un comando de Compras).
+// Variables imprescindibles para arrancar.
 const requeridas = ['BOT_TOKEN', 'DATABASE_URL'];
 for (const key of requeridas) {
   if (!process.env[key]) {
@@ -26,7 +24,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 setBot(bot);
 
 // Stage con todas las scenes de todas las áreas.
-const scenes = areas.flatMap((a) => a.scenes || []);
+const scenes = [...areas.flatMap((a) => a.scenes || []), ...(admin.scenes || [])];
 const stage = new Scenes.Stage(scenes);
 
 bot.use(session());
@@ -45,7 +43,7 @@ function menuPara(usuario) {
   let texto = lineas.length
     ? `Comandos disponibles para vos:${lineas.join('\n')}`
     : 'Todavía no tenés comandos asignados. Pedile un área al admin.';
-  if (usuario.es_admin) texto += '\n\nAdmin:\n  /usuarios — gestionar accesos';
+  if (usuario.es_admin) texto += '\n\nAdmin:\n  /usuarios — gestionar accesos\n  /actartic — actualizar maestro de artículos';
   return texto;
 }
 
@@ -71,17 +69,6 @@ bot.catch((err, ctx) => {
 
 (async () => {
   try {
-    if (estaConfigurado()) {
-      try {
-        await ensureHeaders();
-        console.log('Google Sheets: conectado.');
-      } catch (e) {
-        console.error('Google Sheets configurado pero falló la conexión:', e.message);
-      }
-    } else {
-      console.log('Google Sheets: no configurado (los comandos de Compras van a avisar).');
-    }
-
     await bot.launch();
     console.log('Bot de Más Melos corriendo. Áreas:', areas.map((a) => a.codigo).join(', '));
   } catch (err) {

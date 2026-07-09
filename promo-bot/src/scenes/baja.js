@@ -1,87 +1,103 @@
 const { Scenes, Markup } = require('telegraf');
-const { TABS, appendRow, readAll, updateCellById } = require('../sheets');
+const { buscarAltasAbiertas, registrarBaja } = require('../db/compras');
 const { notificarComprador } = require('../notificar');
 
-function nuevoId() {
-  return `B${Date.now()}`;
+function texto(ctx) {
+  const t = ctx.message && ctx.message.text;
+  return typeof t === 'string' ? t.trim() : null;
 }
 
-function resumenAlta(alta) {
-  return `${alta.producto} — proveedor ${alta.proveedor} — ${alta.cantidad} unidades puestas el ${alta.fecha.slice(0, 10)}`;
+async function cancelado(ctx) {
+  const t = texto(ctx);
+  if (t && /^\/?cancelar$/i.test(t)) {
+    await ctx.reply('Baja cancelada. No se registró nada.', Markup.removeKeyboard());
+    await ctx.scene.leave();
+    return true;
+  }
+  return false;
+}
+
+function resumenAlta(a) {
+  const fecha = a.fecha ? new Date(a.fecha).toISOString().slice(0, 10) : '';
+  return `${a.producto} — proveedor ${a.proveedor || '-'} — ${a.cantidad} unidades (puesta ${fecha})`;
+}
+
+function resumenFinal(d, alta) {
+  return (
+    'Confirmá la baja:\n\n' +
+    `Producto: ${alta.producto}\n` +
+    `Proveedor: ${alta.proveedor || '-'}\n` +
+    `Puesto en promoción: ${alta.cantidad}\n` +
+    `Vendido: ${d.vendido}\n` +
+    `Remanente: ${d.remanente} (${d.motivoBaja})\n\n` +
+    'Escribí "si" para confirmar o "no" para cancelar.'
+  );
 }
 
 const bajaWizard = new Scenes.WizardScene(
   'baja-wizard',
-  // 0: pedir SKU
+  // 0: pedir búsqueda
   async (ctx) => {
-    await ctx.reply('Baja de promoción (se retira de la góndola).\n\n¿SKU del producto?');
     ctx.wizard.state.data = {};
+    await ctx.reply('Baja de promoción (se retira de la góndola).\n\n¿Qué producto? EAN, código o nombre. (o "cancelar")');
     return ctx.wizard.next();
   },
-  // 1: procesar SKU -> decidir si hay 0, 1 o varias altas abiertas
+  // 1: buscar altas abiertas
   async (ctx) => {
-    const sku = ctx.message.text.trim();
-    const { records } = await readAll(TABS.ALTAS);
-    const abiertas = records.filter(
-      (r) => r.sku.toLowerCase() === sku.toLowerCase() && r.estado === 'abierta'
-    );
+    if (await cancelado(ctx)) return;
+    const q = texto(ctx);
+    if (!q) { await ctx.reply('Escribí el EAN, código o nombre.'); return; }
 
+    const abiertas = await buscarAltasAbiertas(q);
     if (abiertas.length === 0) {
-      await ctx.reply(`No hay ningún alta abierta en promoción para el SKU "${sku}".`);
+      await ctx.reply(`No hay ninguna alta abierta en promoción para "${q}".`);
       return ctx.scene.leave();
     }
-
-    ctx.wizard.state.data.sku = sku;
-
     if (abiertas.length === 1) {
       ctx.wizard.state.data.alta = abiertas[0];
       await ctx.reply(
-        `Encontramos:\n${resumenAlta(abiertas[0])}\n\n¿Es este el producto que querés dar de baja?`,
+        `Encontré:\n${resumenAlta(abiertas[0])}\n\n¿Es esta la que querés dar de baja?`,
         Markup.keyboard([['Sí'], ['No']]).oneTime().resize()
       );
       return ctx.wizard.selectStep(3);
     }
-
-    ctx.wizard.state.data.opciones = abiertas;
-    const lista = abiertas
-      .map((r, i) => `${i + 1}) ${resumenAlta(r)}`)
-      .join('\n');
-    await ctx.reply(`Hay ${abiertas.length} altas abiertas para "${sku}":\n\n${lista}\n\nRespondé con el número.`);
+    ctx.wizard.state.opciones = abiertas;
+    const lista = abiertas.map((a, i) => `${i + 1}) ${resumenAlta(a)}`).join('\n');
+    await ctx.reply(`Hay ${abiertas.length} altas abiertas:\n\n${lista}\n\nRespondé con el número.`);
     return ctx.wizard.next();
   },
-  // 2: elegir entre varias opciones
+  // 2: elegir opción
   async (ctx) => {
-    const opcion = Number(ctx.message.text.trim());
-    const opciones = ctx.wizard.state.data.opciones;
-    if (!opcion || !opciones[opcion - 1]) {
+    if (await cancelado(ctx)) return;
+    const n = Number(texto(ctx));
+    const opciones = ctx.wizard.state.opciones || [];
+    if (!Number.isInteger(n) || n < 1 || n > opciones.length) {
       await ctx.reply('Elegí un número válido de la lista.');
       return;
     }
-    const alta = opciones[opcion - 1];
-    ctx.wizard.state.data.alta = alta;
+    ctx.wizard.state.data.alta = opciones[n - 1];
     await ctx.reply(
-      `Elegiste:\n${resumenAlta(alta)}\n\n¿Es este el producto que querés dar de baja?`,
+      `Elegiste:\n${resumenAlta(opciones[n - 1])}\n\n¿Es esta? (Sí/No)`,
       Markup.keyboard([['Sí'], ['No']]).oneTime().resize()
     );
     return ctx.wizard.next();
   },
-  // 3: confirmar que el producto es el correcto
+  // 3: confirmar producto
   async (ctx) => {
-    const respuesta = ctx.message.text.trim().toLowerCase();
-    if (respuesta !== 'si' && respuesta !== 'sí') {
-      await ctx.reply('Ok, cancelado. Revisá el SKU y volvé a intentar con /baja.', Markup.removeKeyboard());
+    if (await cancelado(ctx)) return;
+    const t = (texto(ctx) || '').toLowerCase();
+    if (t !== 'si' && t !== 'sí') {
+      await ctx.reply('Ok, cancelado. Probá de nuevo con /baja.', Markup.removeKeyboard());
       return ctx.scene.leave();
     }
-    await ctx.reply(
-      '¿Cuántas unidades quedan sin vender (remanente)? Si se vendió todo, poné 0.',
-      Markup.removeKeyboard()
-    );
+    await ctx.reply('¿Cuántas unidades quedan sin vender (remanente)? Si se vendió todo, poné 0.', Markup.removeKeyboard());
     return ctx.wizard.next();
   },
-  // 4: cantidad remanente
+  // 4: remanente
   async (ctx) => {
-    const remanente = Number(ctx.message.text.trim().replace(',', '.'));
-    if (Number.isNaN(remanente) || remanente < 0) {
+    if (await cancelado(ctx)) return;
+    const remanente = Number((texto(ctx) || '').replace(',', '.'));
+    if (!Number.isFinite(remanente) || remanente < 0) {
       await ctx.reply('Ingresá un número válido.');
       return;
     }
@@ -99,7 +115,6 @@ const bajaWizard = new Scenes.WizardScene(
       await ctx.reply(resumenFinal(ctx.wizard.state.data, alta), Markup.keyboard([['Sí'], ['No']]).oneTime().resize());
       return ctx.wizard.selectStep(6);
     }
-
     await ctx.reply(
       '¿Qué pasó con el remanente?',
       Markup.keyboard([['Vencido / descartado'], ['Devuelto a góndola normal']]).oneTime().resize()
@@ -108,15 +123,18 @@ const bajaWizard = new Scenes.WizardScene(
   },
   // 5: motivo del remanente
   async (ctx) => {
-    ctx.wizard.state.data.motivoBaja = ctx.message.text.trim();
-    const alta = ctx.wizard.state.data.alta;
-    await ctx.reply(resumenFinal(ctx.wizard.state.data, alta), Markup.keyboard([['Sí'], ['No']]).oneTime().resize());
+    if (await cancelado(ctx)) return;
+    const t = texto(ctx);
+    if (!t) { await ctx.reply('Elegí qué pasó con el remanente.'); return; }
+    ctx.wizard.state.data.motivoBaja = t;
+    await ctx.reply(resumenFinal(ctx.wizard.state.data, ctx.wizard.state.data.alta), Markup.keyboard([['Sí'], ['No']]).oneTime().resize());
     return ctx.wizard.next();
   },
   // 6: confirmación final
   async (ctx) => {
-    const respuesta = ctx.message.text.trim().toLowerCase();
-    if (respuesta !== 'si' && respuesta !== 'sí') {
+    if (await cancelado(ctx)) return;
+    const t = (texto(ctx) || '').toLowerCase();
+    if (t !== 'si' && t !== 'sí') {
       await ctx.reply('Baja cancelada. No se registró nada.', Markup.removeKeyboard());
       return ctx.scene.leave();
     }
@@ -124,40 +142,26 @@ const bajaWizard = new Scenes.WizardScene(
   }
 );
 
-function resumenFinal(d, alta) {
-  return (
-    `Confirmá la baja:\n\n` +
-    `Producto: ${alta.producto}\n` +
-    `Proveedor: ${alta.proveedor}\n` +
-    `Puesto en promoción: ${alta.cantidad}\n` +
-    `Vendido: ${d.vendido}\n` +
-    `Remanente: ${d.remanente} (${d.motivoBaja})\n\n` +
-    `Escribí "si" para confirmar o "no" para cancelar.`
-  );
-}
-
 async function finalizarBaja(ctx) {
   const d = ctx.wizard.state.data;
   const alta = d.alta;
-  const id = nuevoId();
-  const fecha = new Date().toISOString();
 
-  await appendRow(TABS.BAJAS, [id, fecha, alta.id, d.sku, d.remanente, d.vendido, d.motivoBaja]);
-  await updateCellById(TABS.ALTAS, 'id', alta.id, 'estado', 'cerrada');
+  await registrarBaja({ altaId: alta.id, remanente: d.remanente, vendida: d.vendido, motivoBaja: d.motivoBaja });
 
+  const cantidad = Number(alta.cantidad);
+  const efectividad = cantidad > 0 ? Math.round((d.vendido / cantidad) * 100) : 0;
   const mensajeComprador =
-    `📊 Resultado de promoción\n\n` +
+    '📊 Resultado de promoción\n\n' +
     `Producto: ${alta.producto}\n` +
-    `Proveedor: ${alta.proveedor}\n` +
-    `SKU: ${d.sku}\n` +
+    `Proveedor: ${alta.proveedor || '-'}\n` +
     `Puesto en promoción: ${alta.cantidad}\n` +
     `Vendido: ${d.vendido}\n` +
     `Remanente: ${d.remanente} (${d.motivoBaja})\n` +
-    `Efectividad: ${Math.round((d.vendido / alta.cantidad) * 100)}%`;
+    `Efectividad: ${efectividad}%`;
+  if (alta.proveedor) await notificarComprador(alta.proveedor, mensajeComprador);
 
-  await notificarComprador(alta.proveedor, mensajeComprador);
   await ctx.reply(
-    `Baja registrada. Se vendieron ${d.vendido} de ${alta.cantidad} unidades. Se notificó al comprador.`,
+    `Baja registrada. Se vendieron ${d.vendido} de ${alta.cantidad} unidades.`,
     Markup.removeKeyboard()
   );
   return ctx.scene.leave();
