@@ -14,12 +14,13 @@ function escLike(s) {
 async function crearAlta(a) {
   const { rows } = await pool.query(
     `insert into bot.compras_altas
-       (usuario_id, usuario_nombre, articulo_codigo, ean, producto, proveedor, lote, vencimiento, cantidad, motivo)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       (usuario_id, usuario_nombre, articulo_codigo, ean, producto, proveedor, lote, vencimiento, cantidad, motivo, descuento_pct)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      returning id`,
     [
       a.usuarioId ?? null, a.usuarioNombre ?? null, a.articuloCodigo ?? null, a.ean ?? null,
       a.producto, a.proveedor ?? null, a.lote ?? null, a.vencimiento ?? null, a.cantidad, a.motivo ?? null,
+      a.descuentoPct ?? null,
     ]
   );
   return rows[0].id;

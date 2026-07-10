@@ -28,6 +28,7 @@ También podés correrlas desde la terminal: `node src/db/run-migration.js db/mi
 | `migrations/004_calidad.sql` | área `calidad` | Área Calidad |
 | `migrations/005_aviso_vencimiento.sql` | columnas de avisos de vencimiento | Avisos |
 | `migrations/006_unificar_bajas.sql` | unifica la baja en `compras_altas` (elimina `compras_bajas` y `estado`) | Unificación |
+| `migrations/007_descuento_promocion.sql` | columna `descuento_pct` en `compras_altas` | % de descuento en `/alta` |
 
 ## Después de correr `001`
 

@@ -109,7 +109,7 @@ const altaWizard = new Scenes.WizardScene(
     await ctx.reply(`Vence en ${dias} día(s).\n\n¿Cantidad que se pasa a promoción?`);
     return ctx.wizard.next();
   },
-  // 7: cantidad -> motivo (botones inline)
+  // 7: cantidad -> % de descuento
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
@@ -119,10 +119,23 @@ const altaWizard = new Scenes.WizardScene(
       return;
     }
     ctx.wizard.state.data.cantidad = cantidad;
+    await ctx.reply('¿Qué % de descuento tiene la promoción? (ej: 30)');
+    return ctx.wizard.next();
+  },
+  // 8: % de descuento -> motivo (botones inline)
+  async (ctx) => {
+    const r = await respuesta(ctx);
+    if (esCancelar(r)) return cancelar(ctx);
+    const descuento = Number((r || '').replace(',', '.').replace('%', ''));
+    if (!Number.isFinite(descuento) || descuento < 0 || descuento > 100) {
+      await ctx.reply('Ingresá un % válido, entre 0 y 100 (ej: 30).');
+      return;
+    }
+    ctx.wizard.state.data.descuentoPct = descuento;
     await preguntar(ctx, '¿Motivo? (elegí uno o escribí otro)', opciones(['Vencimiento próximo', 'Exceso de stock']));
     return ctx.wizard.next();
   },
-  // 8: motivo -> confirmar (botones inline)
+  // 9: motivo -> confirmar (botones inline)
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
@@ -137,12 +150,13 @@ const altaWizard = new Scenes.WizardScene(
       `Lote: ${d.lote}\n` +
       `Vencimiento: ${d.vencimiento}\n` +
       `Cantidad: ${d.cantidad}\n` +
+      `Descuento: ${d.descuentoPct}%\n` +
       `Motivo: ${d.motivo}`,
       opciones([['✅ Confirmar', 'si'], ['❌ Cancelar', 'no']])
     );
     return ctx.wizard.next();
   },
-  // 9: confirmar -> guardar
+  // 10: confirmar -> guardar
   async (ctx) => {
     const raw = await respuesta(ctx);
     if (raw === null) return; // botón viejo / doble-tap / no-texto: el paso sigue esperando
@@ -167,6 +181,7 @@ const altaWizard = new Scenes.WizardScene(
       vencimiento: d.vencimiento,
       cantidad: d.cantidad,
       motivo: d.motivo,
+      descuentoPct: d.descuentoPct,
     });
 
     const hist = await historialProducto({ articuloCodigo: d.articuloCodigo || null, producto: d.producto });
@@ -175,6 +190,7 @@ const altaWizard = new Scenes.WizardScene(
       `Producto: ${d.producto}\n` +
       `Proveedor: ${d.proveedor || '-'}\n` +
       `Cantidad: ${d.cantidad}\n` +
+      `Descuento: ${d.descuentoPct}%\n` +
       `Motivo: ${d.motivo}\n` +
       `Vencimiento: ${d.vencimiento}\n\n` +
       `Historial: este producto lleva ${hist.veces} alta(s) en promoción, ${hist.unidades} unidades en total. ` +

@@ -15,7 +15,7 @@ tiran, para la próxima comprar menos o pedir descuento al proveedor.
 
 | Comando | Qué hace |
 |---------|----------|
-| `/alta` | Registra una **camada** puesta en oferta por vencimiento (producto, lote, vencimiento, cantidad, motivo). Busca el producto en el maestro (`bot.articulos`) por EAN/código/nombre, o se carga a mano. |
+| `/alta` | Registra una **camada** puesta en oferta por vencimiento (producto, lote, vencimiento, cantidad, **% de descuento**, motivo). Busca el producto en el maestro (`bot.articulos`) por EAN/código/nombre, o se carga a mano. |
 | `/baja` | Cierra una camada abierta: cuántas se vendieron y qué pasó con el remanente (descartado/vencido o devuelto a góndola normal). |
 | `/control` | Excel de **todo lo que está en oferta ahora**, ordenado por fecha de vencimiento. Lleva la fecha de generación (ver [convenciones.md](../convenciones.md)). |
 
