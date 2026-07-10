@@ -3,6 +3,7 @@ const { buscarArticulos } = require('../db/articulos');
 const { crearAlta, historialProducto } = require('../db/compras');
 const { notificarComprador } = require('../notificar');
 const { respuesta, esCancelar, opciones, preguntar } = require('../lib/wizard');
+const { parseVencimiento, formatoVencimiento, diasHasta } = require('../lib/fechas');
 
 async function cancelar(ctx) {
   await ctx.reply('Alta cancelada.');
@@ -89,13 +90,23 @@ const altaWizard = new Scenes.WizardScene(
     await ctx.reply('¿Fecha de vencimiento? (DD/MM/AAAA)');
     return ctx.wizard.next();
   },
-  // 6: vencimiento
+  // 6: vencimiento (se valida: una fecha imparseable deja el producto sin avisos para siempre)
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
     if (!r) { await ctx.reply('Escribí la fecha de vencimiento (DD/MM/AAAA).'); return; }
-    ctx.wizard.state.data.vencimiento = r;
-    await ctx.reply('¿Cantidad que se pasa a promoción?');
+    const fecha = parseVencimiento(r);
+    if (!fecha) {
+      await ctx.reply('No entendí la fecha. Escribila como DD/MM/AAAA, por ejemplo 25/12/2026.');
+      return;
+    }
+    const dias = diasHasta(fecha);
+    if (dias < 0) {
+      await ctx.reply(`Ojo: esa fecha ya pasó hace ${-dias} día(s). Si te equivocaste, escribila de nuevo (DD/MM/AAAA).`);
+      return;
+    }
+    ctx.wizard.state.data.vencimiento = formatoVencimiento(fecha); // normalizada a DD/MM/AAAA
+    await ctx.reply(`Vence en ${dias} día(s).\n\n¿Cantidad que se pasa a promoción?`);
     return ctx.wizard.next();
   },
   // 7: cantidad -> motivo (botones inline)
@@ -133,7 +144,9 @@ const altaWizard = new Scenes.WizardScene(
   },
   // 9: confirmar -> guardar
   async (ctx) => {
-    const r = (await respuesta(ctx) || '').toLowerCase();
+    const raw = await respuesta(ctx);
+    if (raw === null) return; // botón viejo / doble-tap / no-texto: el paso sigue esperando
+    const r = raw.toLowerCase();
     if (r !== 'si' && r !== 'sí') {
       await ctx.reply('Alta cancelada.');
       return ctx.scene.leave();

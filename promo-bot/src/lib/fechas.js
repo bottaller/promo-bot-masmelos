@@ -1,16 +1,27 @@
 // Parseo de la fecha de vencimiento, que se guarda como texto DD/MM/AAAA.
 
 // Devuelve un Date (a medianoche local) o null si el texto no es una fecha válida.
+// El año debe ser de 2 o 4 dígitos: así '31/12/202' (se comió un dígito) no se toma
+// como el año 202 d.C. y ensucia el orden del control y los avisos.
 function parseVencimiento(s) {
   if (!s) return null;
-  const m = String(s).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  const m = String(s).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
   if (!m) return null;
   let [, d, mo, y] = m;
   if (y.length === 2) y = '20' + y;
-  const fecha = new Date(Number(y), Number(mo) - 1, Number(d));
+  const year = Number(y);
+  if (year < 2000 || year > 2100) return null; // fuera de rango razonable -> dedazo
+  const fecha = new Date(year, Number(mo) - 1, Number(d));
   // Chequeo de validez (rechaza 31/02, etc.)
   if (Number.isNaN(fecha.getTime()) || fecha.getMonth() !== Number(mo) - 1) return null;
   return fecha;
+}
+
+// Date -> texto DD/MM/AAAA con ceros. Normaliza lo que tipeó el usuario (5/3/26 -> 05/03/2026).
+function formatoVencimiento(fecha) {
+  const dd = String(fecha.getDate()).padStart(2, '0');
+  const mm = String(fecha.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${fecha.getFullYear()}`;
 }
 
 // Días entre hoy (según el calendario de ARGENTINA, no el del servidor) y una fecha.
@@ -39,4 +50,4 @@ function fechaHoyArgISO() {
   }).format(new Date());
 }
 
-module.exports = { parseVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO };
+module.exports = { parseVencimiento, formatoVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO };

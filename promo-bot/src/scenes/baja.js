@@ -70,8 +70,10 @@ const bajaWizard = new Scenes.WizardScene(
   },
   // 3: confirmar producto
   async (ctx) => {
-    const r = (await respuesta(ctx) || '').toLowerCase();
-    if (esCancelar(r)) return cancelar(ctx);
+    const raw = await respuesta(ctx);
+    if (raw === null) return; // botón viejo / doble-tap / no-texto: el paso sigue esperando
+    if (esCancelar(raw)) return cancelar(ctx);
+    const r = raw.toLowerCase();
     if (r !== 'si' && r !== 'sí') {
       await ctx.reply('Ok, cancelado. Probá de nuevo con /baja.');
       return ctx.scene.leave();
@@ -83,7 +85,8 @@ const bajaWizard = new Scenes.WizardScene(
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
-    const remanente = Number((r || '').replace(',', '.'));
+    if (r === null) { await ctx.reply('Escribí cuántas unidades quedan sin vender (un número).'); return; }
+    const remanente = Number(r.replace(',', '.'));
     if (!Number.isFinite(remanente) || remanente < 0) {
       await ctx.reply('Ingresá un número válido.');
       return;
@@ -116,8 +119,10 @@ const bajaWizard = new Scenes.WizardScene(
   },
   // 6: confirmación final
   async (ctx) => {
-    const r = (await respuesta(ctx) || '').toLowerCase();
-    if (esCancelar(r)) return cancelar(ctx);
+    const raw = await respuesta(ctx);
+    if (raw === null) return; // botón viejo / doble-tap / no-texto: el paso sigue esperando
+    if (esCancelar(raw)) return cancelar(ctx);
+    const r = raw.toLowerCase();
     if (r !== 'si' && r !== 'sí') {
       await ctx.reply('Baja cancelada. No se registró nada.');
       return ctx.scene.leave();

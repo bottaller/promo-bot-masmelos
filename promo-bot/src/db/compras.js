@@ -60,24 +60,27 @@ async function altasEnOferta() {
   return rows;
 }
 
-// Altas abiertas para el chequeo de avisos: trae el telegram_id del que la cargó
-// y si ya se avisó "por vencer" hoy (lo decide SQL con current_date, para no depender de la zona horaria).
-async function altasParaAviso() {
+// Altas abiertas para el chequeo de avisos: trae el telegram_id del que la cargó (solo si sigue
+// activo) y si ya se avisó "por vencer" hoy. La fecha de "hoy" se pasa desde JS en calendario
+// ARGENTINO (hoyISO), no current_date del server (UTC), para que el dedup coincida con la
+// categorización mañana/hoy (que también usa el calendario argentino).
+async function altasParaAviso(hoyISO) {
   const { rows } = await pool.query(
     `select ca.*, u.telegram_id as creador_telegram_id,
-            (ca.aviso_vencimiento_fecha is null or ca.aviso_vencimiento_fecha < current_date) as puede_avisar_vencer
+            (ca.aviso_vencimiento_fecha is null or ca.aviso_vencimiento_fecha < $1::date) as puede_avisar_vencer
        from bot.compras_altas ca
-       left join bot.usuarios u on u.id = ca.usuario_id
-      where ca.fecha_baja is null`
+       left join bot.usuarios u on u.id = ca.usuario_id and u.activo = true
+      where ca.fecha_baja is null`,
+    [hoyISO]
   );
   return rows;
 }
 
-async function marcarAvisoPorVencer(altaIds) {
+async function marcarAvisoPorVencer(altaIds, hoyISO) {
   if (!altaIds || altaIds.length === 0) return;
   await pool.query(
-    `update bot.compras_altas set aviso_vencimiento_fecha = current_date where id = any($1::bigint[])`,
-    [altaIds]
+    `update bot.compras_altas set aviso_vencimiento_fecha = $2::date where id = any($1::bigint[])`,
+    [altaIds, hoyISO]
   );
 }
 

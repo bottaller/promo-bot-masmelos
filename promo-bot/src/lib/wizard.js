@@ -18,27 +18,37 @@ async function preguntar(ctx, texto, keyboard) {
 }
 
 // Respuesta del usuario: la data del botón que tocó, o el texto que escribió.
-// - Un tap sobre un botón que NO es el del paso actual (botón viejo) se ignora (devuelve null),
-//   pero igual se responde el callback y se le sacan los botones para que no quede "cargando".
+// - Un tap sobre un botón que NO es el del paso actual (botón viejo, doble-tap) se ignora
+//   (devuelve null); el paso lo trata como "seguir esperando" y el teclado vigente queda intacto.
 // - Si responde escribiendo, se le sacan los botones al prompt actual (para que no queden vivos).
+//
+// Anti doble-tap: telegraf procesa el batch de getUpdates con Promise.all, así que dos taps del
+// mismo botón corren "a la par". Por eso el teclado activo se "consume" (kbMsgId = undefined)
+// de forma SÍNCRONA, antes de cualquier await: el segundo tap ya lo encuentra consumido y devuelve
+// null, en vez de avanzar el wizard dos veces.
 async function respuesta(ctx) {
-  const espera = ctx.wizard && ctx.wizard.state ? ctx.wizard.state.kbMsgId : undefined;
+  const st = ctx.wizard && ctx.wizard.state;
+  const espera = st ? st.kbMsgId : undefined;
 
   if (ctx.callbackQuery) {
-    try { await ctx.answerCbQuery(); } catch (e) { /* callback viejo */ }
     const msgId = ctx.callbackQuery.message && ctx.callbackQuery.message.message_id;
+    const corresponde = !!espera && msgId === espera;
+    if (corresponde && st) st.kbMsgId = undefined; // consumir YA, sin await en el medio
+    try { await ctx.answerCbQuery(); } catch (e) { /* callback viejo */ }
     try { await ctx.editMessageReplyMarkup(); } catch (e) { /* mensaje viejo */ }
-    if (!espera || msgId !== espera) return null; // botón que no corresponde al paso -> ignorar
-    if (ctx.wizard && ctx.wizard.state) ctx.wizard.state.kbMsgId = undefined;
+    if (!corresponde) return null; // botón que no corresponde al paso (o doble-tap) -> ignorar
     return (ctx.callbackQuery.data || '').trim();
   }
 
-  // Respondió por texto: si había un teclado activo, se lo sacamos para que no quede vivo.
-  if (espera) {
+  // Respondió por texto: solo si REALMENTE es texto le sacamos el teclado activo.
+  // (Una foto/sticker parado en un paso con botones devuelve null y deja el teclado vivo
+  //  para que el usuario todavía pueda tocarlo.)
+  const t = texto(ctx);
+  if (t !== null && espera) {
+    if (st) st.kbMsgId = undefined;
     try { await ctx.telegram.editMessageReplyMarkup(ctx.chat.id, espera, undefined, undefined); } catch (e) { /* ignorar */ }
-    if (ctx.wizard && ctx.wizard.state) ctx.wizard.state.kbMsgId = undefined;
   }
-  return texto(ctx);
+  return t;
 }
 
 function esCancelar(valor) {

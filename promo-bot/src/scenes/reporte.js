@@ -51,6 +51,15 @@ const reporteWizard = new Scenes.WizardScene(
     const enPromo = m.abiertas > 0
       ? `${m.puestasAbiertas} unidades (${m.abiertas} alta${m.abiertas > 1 ? 's' : ''} abierta${m.abiertas > 1 ? 's' : ''})`
       : 'nada (todo cerrado)';
+    // El % descarte y la efectividad solo tienen sentido si hay promociones YA CERRADAS.
+    const hayCerradas = m.puestasCerradas > 0;
+    const cierre = hayCerradas
+      ? `Efectividad: ${m.efectividad}%\n` +
+        `Tasa de descarte: ${tasa}%\n` +
+        `\nSugerencia: de las ${m.puestasCerradas} unidades que fueron a oferta y ya se cerraron, ` +
+        `se descartó el ${tasa}% (${m.descartadas} u). Si el descarte es alto y se repite, al recomprar ` +
+        `pedí menos cantidad de este producto o negociá descuento con el proveedor.`
+      : 'Todavía no hay promociones cerradas de este producto: no se puede medir efectividad ni descarte.';
     const msg =
       `📦 Reporte — ${r.producto}\n` +
       `Proveedor: ${r.proveedor || '-'}\n` +
@@ -61,9 +70,7 @@ const reporteWizard = new Scenes.WizardScene(
       `Unidades puestas: ${m.puestasTotal}\n` +
       `Vendidas en promo: ${m.vendidas}\n` +
       `Descartadas: ${m.descartadas}\n` +
-      `Efectividad: ${m.efectividad}%\n` +
-      `Tasa de descarte: ${tasa}%\n` +
-      `\nSugerencia: al recomprar, reducí la cantidad habitual en aproximadamente ${tasa}% respecto del consumo normal.`;
+      cierre;
     await ctx.reply(recortar(msg));
     return ctx.scene.leave();
   },
@@ -80,6 +87,7 @@ const reporteWizard = new Scenes.WizardScene(
     }
     const m = r.metricas;
     const tasa = Math.round(m.tasaDescarte * 100);
+    const hayCerradas = m.puestasCerradas > 0;
     const detalle = r.porProducto
       .map((p) => `• ${p.producto}: ${p.altas} alta(s), ${p.efectividad}% efectividad`)
       .join('\n');
@@ -95,8 +103,8 @@ const reporteWizard = new Scenes.WizardScene(
       `Unidades puestas: ${m.puestasTotal}\n` +
       `Vendidas en promo: ${m.vendidas}\n` +
       `Descartadas: ${m.descartadas}\n` +
-      `Efectividad global: ${m.efectividad}%\n` +
-      `Tasa de descarte: ${tasa}%\n` +
+      `Efectividad global: ${hayCerradas ? m.efectividad + '%' : 'sin promociones cerradas todavía'}\n` +
+      `Tasa de descarte: ${hayCerradas ? tasa + '%' : '—'}\n` +
       `\nDetalle por producto:\n${detalle}`;
     await ctx.reply(recortar(msg));
     return ctx.scene.leave();
