@@ -5,7 +5,7 @@
 const { Scenes } = require('telegraf');
 const { buscarAltasAbiertas, cambiarPorcentajePromocion } = require('../db/compras');
 const { notificarComprador } = require('../notificar');
-const { respuesta, esCancelar, opciones, preguntar } = require('../lib/wizard');
+const { respuesta, esCancelar, parseUnidades, opciones, preguntar } = require('../lib/wizard');
 
 async function cancelar(ctx) {
   await ctx.reply('Cambio de promoción cancelado.');
@@ -70,7 +70,8 @@ const cambioPromocionWizard = new Scenes.WizardScene(
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
-    const nuevoPct = Number((r || '').replace(',', '.').replace('%', ''));
+    if (r === null) { await ctx.reply('Escribí el % de descuento nuevo (un número entre 0 y 100, ej: 50).'); return; }
+    const nuevoPct = Number(r.replace(',', '.').replace('%', ''));
     if (!Number.isFinite(nuevoPct) || nuevoPct < 0 || nuevoPct > 100) {
       await ctx.reply('Ingresá un % válido, entre 0 y 100 (ej: 50).');
       return;
@@ -84,11 +85,11 @@ const cambioPromocionWizard = new Scenes.WizardScene(
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
-    const unidades = Number((r || '').replace(',', '.'));
+    const unidades = parseUnidades(r);
     const alta = ctx.wizard.state.data.alta;
     const cantidadActual = Number(alta.cantidad);
-    if (!Number.isFinite(unidades) || unidades <= 0) {
-      await ctx.reply('Ingresá un número válido de unidades.');
+    if (unidades === null || unidades <= 0) {
+      await ctx.reply('Ingresá una cantidad válida en unidades enteras (ej: 100).');
       return;
     }
     if (unidades > cantidadActual) {
