@@ -47,16 +47,20 @@ const reporteWizard = new Scenes.WizardScene(
     }
     const m = r.metricas;
     const tasa = Math.round(m.tasaDescarte * 100);
+    const enPromo = m.abiertas > 0
+      ? `${m.puestasAbiertas} unidades (${m.abiertas} alta${m.abiertas > 1 ? 's' : ''} abierta${m.abiertas > 1 ? 's' : ''})`
+      : 'nada (todo cerrado)';
     const msg =
       `📦 Reporte — ${r.producto}\n` +
       `Proveedor: ${r.proveedor || '-'}\n\n` +
+      `🟢 En promoción ahora: ${enPromo}\n\n` +
+      `📊 Histórico:\n` +
       `Veces en promoción: ${m.veces}\n` +
       `Unidades puestas: ${m.puestasTotal}\n` +
-      `Unidades vendidas en promo: ${m.vendidas}\n` +
-      `Unidades descartadas: ${m.descartadas}\n` +
+      `Vendidas en promo: ${m.vendidas}\n` +
+      `Descartadas: ${m.descartadas}\n` +
       `Efectividad: ${m.efectividad}%\n` +
       `Tasa de descarte: ${tasa}%\n` +
-      (m.abiertas > 0 ? `\n⏳ Hay ${m.abiertas} alta(s) todavía abierta(s) en góndola.\n` : '') +
       `\nSugerencia: al recomprar, reducí la cantidad habitual en aproximadamente ${tasa}% respecto del consumo normal.`;
     await ctx.reply(recortar(msg));
     return ctx.scene.leave();
@@ -77,15 +81,19 @@ const reporteWizard = new Scenes.WizardScene(
     const detalle = r.porProducto
       .map((p) => `• ${p.producto}: ${p.altas} alta(s), ${p.efectividad}% efectividad`)
       .join('\n');
+    const enPromo = m.abiertas > 0
+      ? `${m.puestasAbiertas} unidades (${m.abiertas} alta${m.abiertas > 1 ? 's' : ''} abierta${m.abiertas > 1 ? 's' : ''})`
+      : 'nada (todo cerrado)';
     const msg =
       `📦 Reporte — proveedor ${r.proveedor}\n\n` +
-      `Productos distintos en promoción: ${r.productos}\n` +
-      `Unidades puestas (total): ${m.puestasTotal}\n` +
-      `Unidades vendidas en promo: ${m.vendidas}\n` +
-      `Unidades descartadas: ${m.descartadas}\n` +
+      `🟢 En promoción ahora: ${enPromo}\n\n` +
+      `📊 Histórico:\n` +
+      `Productos distintos: ${r.productos}\n` +
+      `Unidades puestas: ${m.puestasTotal}\n` +
+      `Vendidas en promo: ${m.vendidas}\n` +
+      `Descartadas: ${m.descartadas}\n` +
       `Efectividad global: ${m.efectividad}%\n` +
       `Tasa de descarte: ${tasa}%\n` +
-      (m.abiertas > 0 ? `\n⏳ Hay ${m.abiertas} alta(s) todavía abierta(s) en góndola.\n` : '') +
       `\nDetalle por producto:\n${detalle}`;
     await ctx.reply(recortar(msg));
     return ctx.scene.leave();

@@ -54,6 +54,43 @@ async function getAlta(id) {
   return rows[0] || null;
 }
 
+// Todas las altas en oferta actualmente (estado 'abierta'), para el control de Calidad.
+async function altasEnOferta() {
+  const { rows } = await pool.query(
+    `select * from bot.compras_altas where estado = 'abierta' order by fecha`
+  );
+  return rows;
+}
+
+// Altas abiertas para el chequeo de avisos: trae el telegram_id del que la cargó
+// y si ya se avisó "por vencer" hoy (lo decide SQL con current_date, para no depender de la zona horaria).
+async function altasParaAviso() {
+  const { rows } = await pool.query(
+    `select ca.*, u.telegram_id as creador_telegram_id,
+            (ca.aviso_vencimiento_fecha is null or ca.aviso_vencimiento_fecha < current_date) as puede_avisar_vencer
+       from bot.compras_altas ca
+       left join bot.usuarios u on u.id = ca.usuario_id
+      where ca.estado = 'abierta'`
+  );
+  return rows;
+}
+
+async function marcarAvisoPorVencer(altaIds) {
+  if (!altaIds || altaIds.length === 0) return;
+  await pool.query(
+    `update bot.compras_altas set aviso_vencimiento_fecha = current_date where id = any($1::bigint[])`,
+    [altaIds]
+  );
+}
+
+async function marcarAvisoVencido(altaIds) {
+  if (!altaIds || altaIds.length === 0) return;
+  await pool.query(
+    `update bot.compras_altas set aviso_vencido = true where id = any($1::bigint[])`,
+    [altaIds]
+  );
+}
+
 // --- Bajas ---
 
 // Registra la baja y cierra la alta, en una transacción.
@@ -99,6 +136,7 @@ function esDescarte(motivo) {
 function calcularMetricas(altas, bajas) {
   const puestasTotal = altas.reduce((s, a) => s + Number(a.cantidad), 0);
   const puestasCerradas = altas.filter((a) => a.estado === 'cerrada').reduce((s, a) => s + Number(a.cantidad), 0);
+  const puestasAbiertas = altas.filter((a) => a.estado === 'abierta').reduce((s, a) => s + Number(a.cantidad), 0);
   const vendidas = bajas.reduce((s, b) => s + Number(b.cantidad_vendida || 0), 0);
   const descartadas = bajas.filter((b) => esDescarte(b.motivo_baja)).reduce((s, b) => s + Number(b.cantidad_remanente || 0), 0);
   const efectividad = puestasCerradas > 0 ? Math.round((vendidas / puestasCerradas) * 100) : 0;
@@ -106,7 +144,7 @@ function calcularMetricas(altas, bajas) {
   return {
     veces: altas.length,
     abiertas: altas.filter((a) => a.estado === 'abierta').length,
-    puestasTotal, puestasCerradas, vendidas, descartadas, efectividad, tasaDescarte,
+    puestasTotal, puestasCerradas, puestasAbiertas, vendidas, descartadas, efectividad, tasaDescarte,
   };
 }
 
@@ -193,6 +231,10 @@ module.exports = {
   historialProducto,
   buscarAltasAbiertas,
   getAlta,
+  altasEnOferta,
+  altasParaAviso,
+  marcarAvisoPorVencer,
+  marcarAvisoVencido,
   registrarBaja,
   reportePorProducto,
   reportePorProveedor,

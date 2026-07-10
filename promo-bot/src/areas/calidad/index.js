@@ -1,23 +1,36 @@
 // Área Calidad. Registra en promoción por vencimiento (alta), retira de góndola (baja)
-// y control de calidad (por definir).
+// y genera el control de lo que está en oferta (excel por vencimiento).
 const altaWizard = require('../../scenes/alta');
 const bajaWizard = require('../../scenes/baja');
 const { requiereArea } = require('../../middleware/authz');
+const { altasEnOferta } = require('../../db/compras');
+const { construirExcelControl } = require('../../lib/control-excel');
 
 const CODIGO = 'calidad';
 
 const comandos = [
   { comando: 'alta', descripcion: 'Registrar producto en promoción por vencimiento' },
   { comando: 'baja', descripcion: 'Registrar retiro de góndola (vendido o descartado)' },
-  { comando: 'control', descripcion: 'Control de calidad (próximamente)' },
+  { comando: 'control', descripcion: 'Excel de lo que está en oferta, por vencimiento' },
 ];
+
+// /control: genera y manda un Excel con todo lo que está en oferta, ordenado por vencimiento.
+async function control(ctx) {
+  const altas = await altasEnOferta();
+  if (altas.length === 0) {
+    return ctx.reply('No hay productos en oferta en este momento.');
+  }
+  const buffer = construirExcelControl(altas);
+  await ctx.replyWithDocument(
+    { source: buffer, filename: 'control_ofertas.xlsx' },
+    { caption: `Control — ${altas.length} producto(s) en oferta, ordenados por vencimiento.` }
+  );
+}
 
 function registrar(bot) {
   bot.command('alta', requiereArea(CODIGO), (ctx) => ctx.scene.enter('alta-wizard'));
   bot.command('baja', requiereArea(CODIGO), (ctx) => ctx.scene.enter('baja-wizard'));
-  bot.command('control', requiereArea(CODIGO), (ctx) =>
-    ctx.reply('El comando /control va a estar disponible pronto (control de calidad).')
-  );
+  bot.command('control', requiereArea(CODIGO), control);
 }
 
 module.exports = {

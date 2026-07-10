@@ -2,6 +2,7 @@
 const usuarios = require('./usuarios');
 const actArticWizard = require('./scenes/actArtic');
 const { requiereAdmin } = require('../middleware/authz');
+const { revisarVencimientos } = require('../avisos');
 
 // Scenes de admin que hay que registrar en el Stage.
 const scenes = [actArticWizard];

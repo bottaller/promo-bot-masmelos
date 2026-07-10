@@ -8,6 +8,7 @@ const calidad = require('./areas/calidad');
 const compras = require('./areas/compras');
 const tesoreria = require('./areas/tesoreria');
 const admin = require('./admin');
+const { iniciarAvisos } = require('./avisos');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
 const areas = [calidad, compras, tesoreria];
@@ -44,7 +45,7 @@ function menuPara(usuario) {
   let texto = lineas.length
     ? `Comandos disponibles para vos:${lineas.join('\n')}`
     : 'Todavía no tenés comandos asignados. Pedile un área al admin.';
-  if (usuario.es_admin) texto += '\n\nAdmin:\n  /usuarios — gestionar accesos\n  /actartic — actualizar maestro de artículos';
+  if (usuario.es_admin) texto += '\n\nAdmin:\n  /usuarios — gestionar accesos\n  /actartic — actualizar maestro de artículos\n  /avisos — chequear vencimientos ahora';
   return texto;
 }
 
@@ -73,6 +74,7 @@ bot.catch((err, ctx) => {
 
 (async () => {
   try {
+    iniciarAvisos(bot); // programa el chequeo diario de vencimientos
     await bot.launch();
     console.log('Bot de Más Melos corriendo. Áreas:', areas.map((a) => a.codigo).join(', '));
   } catch (err) {

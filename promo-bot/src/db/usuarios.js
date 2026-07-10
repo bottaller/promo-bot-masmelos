@@ -97,6 +97,25 @@ async function quitarAdmin(telegramId) {
   return rowCount > 0;
 }
 
+// telegram_ids de los usuarios activos con un rol dado (para los avisos).
+async function telegramIdsPorRol(codigo) {
+  const { rows } = await pool.query(
+    `select u.telegram_id
+       from bot.usuarios u
+       join bot.usuario_area ua on ua.usuario_id = u.id
+       join bot.areas a on a.id = ua.area_id
+      where a.codigo = $1 and u.activo = true`,
+    [codigo]
+  );
+  return rows.map((r) => r.telegram_id);
+}
+
+// telegram_ids de los admins activos.
+async function telegramIdsAdmins() {
+  const { rows } = await pool.query('select telegram_id from bot.usuarios where es_admin = true and activo = true');
+  return rows.map((r) => r.telegram_id);
+}
+
 module.exports = {
   buscarPorTelegramId,
   listarUsuarios,
@@ -106,4 +125,6 @@ module.exports = {
   listarAreas,
   hacerAdmin,
   quitarAdmin,
+  telegramIdsPorRol,
+  telegramIdsAdmins,
 };
