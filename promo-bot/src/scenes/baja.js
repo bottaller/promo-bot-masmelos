@@ -1,7 +1,7 @@
 const { Scenes } = require('telegraf');
 const { buscarAltasAbiertas, registrarBaja } = require('../db/compras');
 const { notificarComprador } = require('../notificar');
-const { respuesta, esCancelar, opciones, preguntar, SI_NO } = require('../lib/wizard');
+const { respuesta, esCancelar, parseUnidades, opciones, preguntar, SI_NO } = require('../lib/wizard');
 
 async function cancelar(ctx) {
   await ctx.reply('Baja cancelada. No se registró nada.');
@@ -85,10 +85,9 @@ const bajaWizard = new Scenes.WizardScene(
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
-    if (r === null) { await ctx.reply('Escribí cuántas unidades quedan sin vender (un número).'); return; }
-    const remanente = Number(r.replace(',', '.'));
-    if (!Number.isFinite(remanente) || remanente < 0) {
-      await ctx.reply('Ingresá un número válido.');
+    const remanente = parseUnidades(r);
+    if (remanente === null) {
+      await ctx.reply('Escribí cuántas unidades quedan sin vender, en número entero (ej: 12, o 0 si se vendió todo).');
       return;
     }
     const alta = ctx.wizard.state.data.alta;
