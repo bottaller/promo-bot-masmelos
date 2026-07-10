@@ -129,6 +129,62 @@ async function sumarCantidadAlta({ altaId, cantidadAdicional }) {
   return rows[0] ? rows[0].cantidad : null;
 }
 
+// --- Cambio de % de promoción ---
+
+// Divide una alta abierta en dos: cierra la actual marcando la DIFERENCIA (cantidad actual menos
+// las unidades que pasan al % nuevo) como vendida al % viejo, y crea una alta nueva —mismo
+// producto/proveedor/vencimiento/motivo— con las unidades que siguen en promoción, ahora al %
+// nuevo. Así, cuando se haga /baja más adelante, el histórico del producto queda con dos altas:
+// una cerrada (lo que se vendió al % viejo) y otra que se cierra después con el resultado final
+// al % nuevo.
+// Transacción atómica con lock de fila: si la alta ya se cerró justo antes (carrera con /baja),
+// no hace nada y devuelve null.
+async function cambiarPorcentajePromocion({ altaId, unidadesNuevoPct, nuevoPct }) {
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+
+    const { rows } = await client.query(
+      'select * from bot.compras_altas where id = $1 and fecha_baja is null for update',
+      [altaId]
+    );
+    const alta = rows[0];
+    if (!alta) {
+      await client.query('rollback');
+      return null;
+    }
+
+    const diferencia = Number(alta.cantidad) - unidadesNuevoPct;
+
+    await client.query(
+      `update bot.compras_altas
+          set fecha_baja = now(), cantidad_vendida = $2, cantidad_remanente = 0,
+              motivo_baja = 'Cambio de % de promoción'
+        where id = $1`,
+      [altaId, diferencia]
+    );
+
+    const { rows: nuevaRows } = await client.query(
+      `insert into bot.compras_altas
+         (usuario_id, usuario_nombre, articulo_codigo, ean, producto, proveedor, vencimiento, cantidad, motivo, descuento_pct)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       returning id`,
+      [
+        alta.usuario_id, alta.usuario_nombre, alta.articulo_codigo, alta.ean,
+        alta.producto, alta.proveedor, alta.vencimiento, unidadesNuevoPct, alta.motivo, nuevoPct,
+      ]
+    );
+
+    await client.query('commit');
+    return { altaVieja: alta, altaNuevaId: nuevaRows[0].id, diferencia };
+  } catch (e) {
+    await client.query('rollback');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 // --- Baja ---
 
 // Cierra la camada: completa las columnas de resultado en la misma fila.
@@ -218,6 +274,7 @@ module.exports = {
   buscarAltasAbiertas,
   buscarAltasParaReponer,
   sumarCantidadAlta,
+  cambiarPorcentajePromocion,
   altasEnOferta,
   altasParaAviso,
   marcarAvisoPorVencer,

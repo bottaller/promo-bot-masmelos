@@ -17,6 +17,7 @@ tiran, para la próxima comprar menos o pedir descuento al proveedor.
 |---------|----------|
 | `/alta` | Registra una **camada** puesta en oferta por vencimiento (producto, vencimiento, cantidad, **% de descuento**, motivo). Busca el producto en el maestro (`bot.articulos`) por EAN/código/nombre, o se carga a mano. **Nota:** por ahora no pide lote (ver más abajo). |
 | `/reposicion` | Suma cantidad a una camada **ya abierta** del mismo producto con la **misma fecha de vencimiento**, en vez de crear otra alta. Si no hay ninguna camada abierta que matchee, avisa y sugiere `/alta`. |
+| `/cambiopromocion` | Cambia el % de descuento de una camada **vigente**. Pregunta el % nuevo y a cuántas unidades de las actuales se le aplica; por diferencia, cierra la camada vieja marcando lo no alcanzado como vendido al % viejo, y abre una camada nueva con las unidades restantes al % nuevo. |
 | `/baja` | Cierra una camada abierta: cuántas se vendieron y qué pasó con el remanente (descartado/vencido o devuelto a góndola normal). |
 | `/control` | Excel de **todo lo que está en oferta ahora**, ordenado por fecha de vencimiento. Lleva la fecha de generación (ver [convenciones.md](../convenciones.md)). |
 
@@ -37,6 +38,14 @@ retomar más adelante sin migración nueva.
 existe, si no por nombre exacto) y la misma `vencimiento`, y le suma la cantidad con un
 `UPDATE ... SET cantidad = cantidad + X` — no inserta una fila nueva. Como `/baja` lee la `cantidad`
 de esa misma fila, el cierre ya refleja el total acumulado sin ningún cambio adicional.
+
+**Cambio de % de promoción:** el modelo no permite dos porcentajes en la misma fila (una fila = un
+solo resultado final), así que `/cambiopromocion` **divide la alta en dos** dentro de una
+transacción: cierra la alta vieja (`fecha_baja`, `cantidad_vendida` = la diferencia, `motivo_baja`
+= `'Cambio de % de promoción'` para no contarla como descarte real en los reportes) y crea una alta
+nueva —mismo producto/proveedor/vencimiento/motivo— con las unidades restantes y el `descuento_pct`
+nuevo. El histórico del producto queda con dos altas en vez de una, lo cual es correcto: refleja que
+hubo dos tramos con distinto %.
 
 ## Avisos de vencimiento
 
