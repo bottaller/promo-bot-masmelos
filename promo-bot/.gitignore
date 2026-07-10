@@ -1,3 +1,9 @@
 node_modules/
 .env
 *.log
+
+# Artefactos runtime del arqueo (los genera el motor Python en cada corrida)
+arqueo/reports/
+arqueo/data/
+__pycache__/
+*.pyc
