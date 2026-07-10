@@ -52,6 +52,18 @@ async function agregarUsuarioAArea(telegramId, nombre, areaCodigo) {
   return { ok: true };
 }
 
+// Le quita un rol (área) a un usuario. Devuelve false si no lo tenía.
+async function quitarUsuarioDeArea(telegramId, areaCodigo) {
+  const { rowCount } = await pool.query(
+    `delete from bot.usuario_area ua
+      using bot.usuarios u, bot.areas a
+      where ua.usuario_id = u.id and ua.area_id = a.id
+        and u.telegram_id = $1 and a.codigo = $2`,
+    [telegramId, areaCodigo]
+  );
+  return rowCount > 0;
+}
+
 // Guarda el nombre de Telegram si el usuario todavía no tenía uno cargado.
 async function completarNombreSiFalta(telegramId, nombre) {
   if (!nombre) return;
@@ -89,6 +101,7 @@ module.exports = {
   buscarPorTelegramId,
   listarUsuarios,
   agregarUsuarioAArea,
+  quitarUsuarioDeArea,
   completarNombreSiFalta,
   listarAreas,
   hacerAdmin,

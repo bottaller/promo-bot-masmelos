@@ -4,12 +4,13 @@ const { Telegraf, Scenes, session } = require('telegraf');
 const { auth } = require('./middleware/auth');
 const { setBot } = require('./notificar');
 
+const calidad = require('./areas/calidad');
 const compras = require('./areas/compras');
 const tesoreria = require('./areas/tesoreria');
 const admin = require('./admin');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
-const areas = [compras, tesoreria];
+const areas = [calidad, compras, tesoreria];
 
 // Variables imprescindibles para arrancar.
 const requeridas = ['BOT_TOKEN', 'DATABASE_URL'];
