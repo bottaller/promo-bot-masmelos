@@ -128,10 +128,12 @@ bot.usuario_area   (usuario_id, area_id, creado_en)      -- N:N, sin rol todaví
 -- 002 maestro de artículos
 bot.articulos      (codigo PK, nombre, ean_unidad, ean_display, ean_bulto,
                     rubro_cod, rubro, proveedor_cod, proveedor, actualizado_en)
--- 003 compras (promociones por vencimiento)
+-- 003+006 compras (promociones por vencimiento) — UNA fila = una "camada" en oferta.
+-- La baja vive en la misma fila (relación 1:1): fecha_baja IS NULL = sigue en góndola.
 bot.compras_altas  (id, fecha, usuario_id, articulo_codigo, ean, producto, proveedor,
-                    lote, vencimiento, cantidad, motivo, estado)
-bot.compras_bajas  (id, fecha, alta_id FK, cantidad_remanente, cantidad_vendida, motivo_baja)
+                    lote, vencimiento, cantidad, motivo,
+                    fecha_baja, cantidad_vendida, cantidad_remanente, motivo_baja,
+                    aviso_vencimiento_fecha, aviso_vencido)   -- 005: avisos de vencimiento
 ```
 
 **Futuro (se define cuando toque cada fase):**

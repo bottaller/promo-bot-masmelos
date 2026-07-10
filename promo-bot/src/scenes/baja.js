@@ -10,7 +10,8 @@ async function cancelar(ctx) {
 
 function resumenAlta(a) {
   const fecha = a.fecha ? new Date(a.fecha).toISOString().slice(0, 10) : '';
-  return `${a.producto} — proveedor ${a.proveedor || '-'} — ${a.cantidad} unidades (puesta ${fecha})`;
+  const lote = a.lote && a.lote !== '-' ? ` — lote ${a.lote}` : '';
+  return `${a.producto} — vence ${a.vencimiento || '?'}${lote} — ${a.cantidad} unidades (puesta ${fecha})`;
 }
 
 function resumenFinal(d, alta) {

@@ -1,4 +1,7 @@
-// Acceso a datos de Compras: promociones por vencimiento (altas/bajas) en Postgres.
+// Acceso a datos de Compras: promociones por vencimiento en Postgres.
+// Una fila de bot.compras_altas = una "camada" puesta en oferta.
+//   fecha_baja IS NULL  -> sigue en góndola ("abierta")
+//   fecha_baja NOT NULL -> cerrada, con cantidad_vendida / cantidad_remanente / motivo_baja
 const { pool } = require('./pool');
 
 // Escapa los comodines de LIKE/ILIKE (% _ \) para que el texto del usuario no sobre-matchee.
@@ -35,12 +38,12 @@ async function historialProducto({ articuloCodigo, producto }) {
   return { veces: rows[0].veces, unidades: rows[0].unidades };
 }
 
-// Altas ABIERTAS que matchean el texto (código exacto, EAN por prefijo, o nombre contiene).
+// Altas ABIERTAS (camadas en góndola) que matchean el texto (código exacto, EAN por prefijo, o nombre contiene).
 async function buscarAltasAbiertas(texto, limite = 15) {
   const like = escLike(texto);
   const { rows } = await pool.query(
     `select * from bot.compras_altas
-      where estado = 'abierta'
+      where fecha_baja is null
         and (articulo_codigo = $1 or ean like $2 or producto ilike $3)
       order by fecha
       limit $4`,
@@ -49,15 +52,10 @@ async function buscarAltasAbiertas(texto, limite = 15) {
   return rows;
 }
 
-async function getAlta(id) {
-  const { rows } = await pool.query('select * from bot.compras_altas where id = $1', [id]);
-  return rows[0] || null;
-}
-
-// Todas las altas en oferta actualmente (estado 'abierta'), para el control de Calidad.
+// Todas las altas en oferta actualmente, para el control de Calidad.
 async function altasEnOferta() {
   const { rows } = await pool.query(
-    `select * from bot.compras_altas where estado = 'abierta' order by fecha`
+    `select * from bot.compras_altas where fecha_baja is null order by fecha`
   );
   return rows;
 }
@@ -70,7 +68,7 @@ async function altasParaAviso() {
             (ca.aviso_vencimiento_fecha is null or ca.aviso_vencimiento_fecha < current_date) as puede_avisar_vencer
        from bot.compras_altas ca
        left join bot.usuarios u on u.id = ca.usuario_id
-      where ca.estado = 'abierta'`
+      where ca.fecha_baja is null`
   );
   return rows;
 }
@@ -91,36 +89,21 @@ async function marcarAvisoVencido(altaIds) {
   );
 }
 
-// --- Bajas ---
+// --- Baja ---
 
-// Registra la baja y cierra la alta, en una transacción.
+// Cierra la camada: completa las columnas de resultado en la misma fila.
+// Un solo UPDATE atómico; si ya estaba cerrada (doble tap / doble baja), rowCount = 0.
 async function registrarBaja({ altaId, remanente, vendida, motivoBaja }) {
-  const client = await pool.connect();
-  try {
-    await client.query('begin');
-    // Cerramos la alta solo si estaba abierta. Si ya estaba cerrada (doble baja / doble tap),
-    // rowCount = 0 y no registramos nada. Es idempotente.
-    const upd = await client.query(
-      `update bot.compras_altas set estado = 'cerrada' where id = $1 and estado = 'abierta'`,
-      [altaId]
-    );
-    if (upd.rowCount === 0) {
-      await client.query('rollback');
-      return { ok: false };
-    }
-    await client.query(
-      `insert into bot.compras_bajas (alta_id, cantidad_remanente, cantidad_vendida, motivo_baja)
-       values ($1,$2,$3,$4)`,
-      [altaId, remanente, vendida, motivoBaja ?? null]
-    );
-    await client.query('commit');
-    return { ok: true };
-  } catch (e) {
-    await client.query('rollback');
-    throw e;
-  } finally {
-    client.release();
-  }
+  const { rowCount } = await pool.query(
+    `update bot.compras_altas
+        set fecha_baja = now(),
+            cantidad_vendida = $2,
+            cantidad_remanente = $3,
+            motivo_baja = $4
+      where id = $1 and fecha_baja is null`,
+    [altaId, vendida, remanente, motivoBaja ?? null]
+  );
+  return { ok: rowCount > 0 };
 }
 
 // --- Reportes ---
@@ -130,31 +113,24 @@ function esDescarte(motivo) {
   return typeof motivo === 'string' && /descart|vencid/i.test(motivo);
 }
 
-// Calcula métricas sobre un conjunto de altas y sus bajas.
-// Efectividad y tasa de descarte usan como denominador SOLO las altas cerradas
+// Calcula métricas sobre un conjunto de altas (cada fila trae su propio resultado de baja).
+// Efectividad y tasa de descarte usan como denominador SOLO las cerradas
 // (las abiertas todavía no vendieron, no deben diluir el porcentaje).
-function calcularMetricas(altas, bajas) {
+function calcularMetricas(altas) {
+  const cerradas = altas.filter((a) => a.fecha_baja);
+  const abiertas = altas.filter((a) => !a.fecha_baja);
   const puestasTotal = altas.reduce((s, a) => s + Number(a.cantidad), 0);
-  const puestasCerradas = altas.filter((a) => a.estado === 'cerrada').reduce((s, a) => s + Number(a.cantidad), 0);
-  const puestasAbiertas = altas.filter((a) => a.estado === 'abierta').reduce((s, a) => s + Number(a.cantidad), 0);
-  const vendidas = bajas.reduce((s, b) => s + Number(b.cantidad_vendida || 0), 0);
-  const descartadas = bajas.filter((b) => esDescarte(b.motivo_baja)).reduce((s, b) => s + Number(b.cantidad_remanente || 0), 0);
+  const puestasCerradas = cerradas.reduce((s, a) => s + Number(a.cantidad), 0);
+  const puestasAbiertas = abiertas.reduce((s, a) => s + Number(a.cantidad), 0);
+  const vendidas = cerradas.reduce((s, a) => s + Number(a.cantidad_vendida || 0), 0);
+  const descartadas = cerradas.filter((a) => esDescarte(a.motivo_baja)).reduce((s, a) => s + Number(a.cantidad_remanente || 0), 0);
   const efectividad = puestasCerradas > 0 ? Math.round((vendidas / puestasCerradas) * 100) : 0;
   const tasaDescarte = puestasCerradas > 0 ? descartadas / puestasCerradas : 0;
   return {
     veces: altas.length,
-    abiertas: altas.filter((a) => a.estado === 'abierta').length,
+    abiertas: abiertas.length,
     puestasTotal, puestasCerradas, puestasAbiertas, vendidas, descartadas, efectividad, tasaDescarte,
   };
-}
-
-async function bajasDeAltas(altaIds) {
-  if (altaIds.length === 0) return [];
-  const { rows } = await pool.query(
-    'select * from bot.compras_bajas where alta_id = any($1::bigint[])',
-    [altaIds]
-  );
-  return rows;
 }
 
 // Reporte de un producto: matchea por código, EAN (prefijo) o nombre.
@@ -178,12 +154,11 @@ async function reportePorProducto(texto) {
     return { varios: [...distintos.values()] };
   }
 
-  const bajas = await bajasDeAltas(altas.map((a) => a.id));
   const ultima = altas[altas.length - 1];
   return {
     producto: ultima.producto,
     proveedor: ultima.proveedor,
-    metricas: calcularMetricas(altas, bajas),
+    metricas: calcularMetricas(altas),
   };
 }
 
@@ -195,33 +170,25 @@ async function reportePorProveedor(texto) {
     ['%' + like + '%']
   );
   if (altas.length === 0) return null;
-  const bajas = await bajasDeAltas(altas.map((a) => a.id));
-  const bajasPorAlta = new Map();
-  for (const b of bajas) {
-    if (!bajasPorAlta.has(b.alta_id)) bajasPorAlta.set(b.alta_id, []);
-    bajasPorAlta.get(b.alta_id).push(b);
-  }
 
   // Agrupar por producto (por código si existe, si no por nombre).
   const grupos = new Map();
   for (const a of altas) {
     const clave = a.articulo_codigo || `n:${a.producto.toLowerCase()}`;
-    if (!grupos.has(clave)) grupos.set(clave, { producto: a.producto, altas: [], bajas: [] });
-    const g = grupos.get(clave);
-    g.altas.push(a);
-    g.bajas.push(...(bajasPorAlta.get(a.id) || []));
+    if (!grupos.has(clave)) grupos.set(clave, { producto: a.producto, altas: [] });
+    grupos.get(clave).altas.push(a);
   }
 
   const porProducto = [...grupos.values()].map((g) => ({
     producto: g.producto,
     altas: g.altas.length,
-    efectividad: calcularMetricas(g.altas, g.bajas).efectividad,
+    efectividad: calcularMetricas(g.altas).efectividad,
   }));
 
   return {
     proveedor: altas[altas.length - 1].proveedor,
     productos: grupos.size,
-    metricas: calcularMetricas(altas, bajas),
+    metricas: calcularMetricas(altas),
     porProducto,
   };
 }
@@ -230,7 +197,6 @@ module.exports = {
   crearAlta,
   historialProducto,
   buscarAltasAbiertas,
-  getAlta,
   altasEnOferta,
   altasParaAviso,
   marcarAvisoPorVencer,

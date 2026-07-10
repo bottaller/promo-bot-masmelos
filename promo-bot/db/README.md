@@ -25,6 +25,9 @@ También podés correrlas desde la terminal: `node src/db/run-migration.js db/mi
 | `migrations/001_fundaciones.sql` | `areas`, `usuarios`, `usuario_area` + semilla de áreas | Fase 1 — control de acceso |
 | `migrations/002_articulos.sql` | `articulos` (maestro) + índices de búsqueda por EAN | Maestro de artículos |
 | `migrations/003_compras.sql` | `compras_altas`, `compras_bajas` | Fase 2 — promociones |
+| `migrations/004_calidad.sql` | área `calidad` | Área Calidad |
+| `migrations/005_aviso_vencimiento.sql` | columnas de avisos de vencimiento | Avisos |
+| `migrations/006_unificar_bajas.sql` | unifica la baja en `compras_altas` (elimina `compras_bajas` y `estado`) | Unificación |
 
 ## Después de correr `001`
 
