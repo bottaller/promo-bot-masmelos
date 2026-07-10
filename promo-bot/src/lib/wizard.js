@@ -55,6 +55,17 @@ function esCancelar(valor) {
   return typeof valor === 'string' && /^\/?cancelar$/i.test(valor);
 }
 
+// Parsea una cantidad de UNIDADES (entero >= 0). Saca los separadores de miles y los espacios
+// para que "1.000" (mil, notación argentina) no se lea como 1, y "10.500" sea 10500.
+// Rechaza (devuelve null) cualquier cosa que no sea un entero: comas decimales, letras, signos,
+// vacío o null (p. ej. cuando el usuario manda una foto en un paso que espera un número).
+function parseUnidades(valor) {
+  const limpio = (valor || '').trim().replace(/[.\s]/g, '');
+  if (limpio === '' || /\D/.test(limpio)) return null;
+  const n = Number(limpio);
+  return Number.isInteger(n) ? n : null;
+}
+
 // Teclado inline: botones pegados al mensaje (se ven igual en celu, PC y web).
 // items: array de strings, o de [label, data]. Un botón por fila.
 function opciones(items) {
@@ -69,4 +80,4 @@ function opciones(items) {
 // Atajo para el clásico Sí / No.
 const SI_NO = opciones([['Sí', 'si'], ['No', 'no']]);
 
-module.exports = { texto, respuesta, preguntar, esCancelar, opciones, SI_NO };
+module.exports = { texto, respuesta, preguntar, esCancelar, parseUnidades, opciones, SI_NO };

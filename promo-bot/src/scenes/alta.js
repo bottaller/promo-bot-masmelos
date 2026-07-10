@@ -2,7 +2,7 @@ const { Scenes } = require('telegraf');
 const { buscarArticulos } = require('../db/articulos');
 const { crearAlta, historialProducto } = require('../db/compras');
 const { notificarComprador } = require('../notificar');
-const { respuesta, esCancelar, opciones, preguntar } = require('../lib/wizard');
+const { respuesta, esCancelar, parseUnidades, opciones, preguntar } = require('../lib/wizard');
 const { parseVencimiento, formatoVencimiento, diasHasta } = require('../lib/fechas');
 
 async function cancelar(ctx) {
@@ -104,9 +104,9 @@ const altaWizard = new Scenes.WizardScene(
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
-    const cantidad = Number((r || '').replace(',', '.'));
-    if (!Number.isFinite(cantidad) || cantidad <= 0) {
-      await ctx.reply('Ingresá un número válido de cantidad.');
+    const cantidad = parseUnidades(r);
+    if (cantidad === null || cantidad <= 0) {
+      await ctx.reply('Ingresá una cantidad válida en unidades enteras (ej: 1000).');
       return;
     }
     ctx.wizard.state.data.cantidad = cantidad;
@@ -117,7 +117,8 @@ const altaWizard = new Scenes.WizardScene(
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
-    const descuento = Number((r || '').replace(',', '.').replace('%', ''));
+    if (r === null) { await ctx.reply('Escribí el % de descuento (un número entre 0 y 100, ej: 30).'); return; }
+    const descuento = Number(r.replace(',', '.').replace('%', ''));
     if (!Number.isFinite(descuento) || descuento < 0 || descuento > 100) {
       await ctx.reply('Ingresá un % válido, entre 0 y 100 (ej: 30).');
       return;
