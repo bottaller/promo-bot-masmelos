@@ -1,6 +1,7 @@
 const { Scenes } = require('telegraf');
 const { reportePorProducto, reportePorProveedor } = require('../db/compras');
 const { respuesta, esCancelar, opciones, preguntar } = require('../lib/wizard');
+const { fechaHoyArg } = require('../lib/fechas');
 
 // Telegram corta los mensajes de más de 4096 caracteres.
 function recortar(msg) {
@@ -52,7 +53,8 @@ const reporteWizard = new Scenes.WizardScene(
       : 'nada (todo cerrado)';
     const msg =
       `📦 Reporte — ${r.producto}\n` +
-      `Proveedor: ${r.proveedor || '-'}\n\n` +
+      `Proveedor: ${r.proveedor || '-'}\n` +
+      `Generado: ${fechaHoyArg()}\n\n` +
       `🟢 En promoción ahora: ${enPromo}\n\n` +
       `📊 Histórico:\n` +
       `Veces en promoción: ${m.veces}\n` +
@@ -85,7 +87,8 @@ const reporteWizard = new Scenes.WizardScene(
       ? `${m.puestasAbiertas} unidades (${m.abiertas} alta${m.abiertas > 1 ? 's' : ''} abierta${m.abiertas > 1 ? 's' : ''})`
       : 'nada (todo cerrado)';
     const msg =
-      `📦 Reporte — proveedor ${r.proveedor}\n\n` +
+      `📦 Reporte — proveedor ${r.proveedor}\n` +
+      `Generado: ${fechaHoyArg()}\n\n` +
       `🟢 En promoción ahora: ${enPromo}\n\n` +
       `📊 Histórico:\n` +
       `Productos distintos: ${r.productos}\n` +

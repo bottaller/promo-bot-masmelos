@@ -8,6 +8,7 @@ al lado del código va un `README.md` corto que apunta acá.
 - [**arquitectura.md**](arquitectura.md) — visión del sistema, decisiones tomadas y por qué, stack,
   fuentes de datos, flujo del arqueo, modelo de datos, multi-área, hosting y plan por fases.
   **Empezá por acá.**
+- [**convenciones.md**](convenciones.md) — reglas transversales (ej.: todo reporte lleva la fecha de generación).
 
 **Estado (2026-07-09):** Fases 0–2 hechas — control de acceso, maestro de artículos y Compras en
 Postgres (sin Google Sheets). Detalle en §12 de [arquitectura.md](arquitectura.md).

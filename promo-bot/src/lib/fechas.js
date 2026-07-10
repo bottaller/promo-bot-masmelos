@@ -13,12 +13,30 @@ function parseVencimiento(s) {
   return fecha;
 }
 
-// Días entre hoy (a medianoche) y una fecha. Negativo = ya vencido.
+// Días entre hoy (según el calendario de ARGENTINA, no el del servidor) y una fecha.
+// Negativo = ya vencido. Si usáramos la medianoche del servidor, en Railway (UTC)
+// el día cambiaría a las 21:00 hora argentina y los cálculos nocturnos darían un día menos.
 function diasHasta(fecha) {
   if (!fecha) return null;
-  const hoy = new Date();
-  hoy.setHours(0, 0, 0, 0);
+  const [y, m, d] = fechaHoyArgISO().split('-').map(Number);
+  const hoy = new Date(y, m - 1, d); // medianoche del día calendario argentino
   return Math.round((fecha.getTime() - hoy.getTime()) / 86400000);
 }
 
-module.exports = { parseVencimiento, diasHasta };
+// Fecha de hoy en horario de Argentina, formato DD/MM/AAAA (para fechar los reportes).
+function fechaHoyArg() {
+  return new Intl.DateTimeFormat('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+  }).format(new Date());
+}
+
+// Fecha de hoy en Argentina, formato AAAA-MM-DD (para nombres de archivo ordenables).
+function fechaHoyArgISO() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+}
+
+module.exports = { parseVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO };

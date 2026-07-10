@@ -5,6 +5,7 @@ const bajaWizard = require('../../scenes/baja');
 const { requiereArea } = require('../../middleware/authz');
 const { altasEnOferta } = require('../../db/compras');
 const { construirExcelControl } = require('../../lib/control-excel');
+const { fechaHoyArgISO } = require('../../lib/fechas');
 
 const CODIGO = 'calidad';
 
@@ -22,7 +23,7 @@ async function control(ctx) {
   }
   const buffer = construirExcelControl(altas);
   await ctx.replyWithDocument(
-    { source: buffer, filename: 'control_ofertas.xlsx' },
+    { source: buffer, filename: `control_ofertas_${fechaHoyArgISO()}.xlsx` },
     { caption: `Control — ${altas.length} producto(s) en oferta, ordenados por vencimiento.` }
   );
 }

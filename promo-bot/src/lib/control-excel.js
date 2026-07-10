@@ -1,6 +1,9 @@
 // Arma el Excel de "control" con las altas en oferta, ordenadas por vencimiento.
+// Todo reporte lleva la fecha de generación (ver docs/convenciones.md).
 const XLSX = require('xlsx');
-const { parseVencimiento, diasHasta } = require('./fechas');
+const { parseVencimiento, diasHasta, fechaHoyArg } = require('./fechas');
+
+const COLUMNAS = ['Vencimiento', 'Días restantes', 'Producto', 'Proveedor', 'Cantidad', 'Lote', 'EAN', 'Código', 'Motivo', 'Fecha alta'];
 
 function construirExcelControl(altas) {
   // Ordenar por fecha de vencimiento (las fechas inválidas/ausentes van al final).
@@ -15,21 +18,29 @@ function construirExcelControl(altas) {
 
   const filas = ordenadas.map((a) => {
     const dias = diasHasta(parseVencimiento(a.vencimiento));
-    return {
-      Vencimiento: a.vencimiento || '',
-      'Días restantes': dias === null ? '' : dias,
-      Producto: a.producto || '',
-      Proveedor: a.proveedor || '',
-      Cantidad: Number(a.cantidad),
-      Lote: a.lote || '',
-      EAN: a.ean || '',
-      'Código': a.articulo_codigo || '',
-      Motivo: a.motivo || '',
-      'Fecha alta': a.fecha ? new Date(a.fecha).toISOString().slice(0, 10) : '',
-    };
+    return [
+      a.vencimiento || '',
+      dias === null ? '' : dias,
+      a.producto || '',
+      a.proveedor || '',
+      Number(a.cantidad),
+      a.lote || '',
+      a.ean || '',
+      a.articulo_codigo || '',
+      a.motivo || '',
+      a.fecha ? new Date(a.fecha).toISOString().slice(0, 10) : '',
+    ];
   });
 
-  const ws = XLSX.utils.json_to_sheet(filas);
+  const aoa = [
+    ['Control de ofertas en promoción'],
+    [`Generado: ${fechaHoyArg()}`],
+    [],
+    COLUMNAS,
+    ...filas,
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'En oferta');
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
