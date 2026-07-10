@@ -212,8 +212,11 @@ Cada fase deja el bot andando. Sin big-bang. La secuencia prioriza:
   `/alta` busca en el maestro de artículos.
 - **Área Calidad.** ✅ `/alta`, `/baja`, `/control` + avisos de vencimiento (§14). Revisada y endurecida
   (validación de fecha, anti doble-tap, avisos con reintento y recuperación) el 2026-07-10.
-- **Fase 3 — Cola + `/arqueo` real.** ⬅ *próximo.* Tabla `jobs`, wrapper del script Python con contrato JSON,
-  volumen persistente, entrega de los dos archivos por el chat. Validar que el arqueo **no venga vacío**.
+- **Fase 3 — `/arqueo` real.** ✅ (MVP) `/arqueo` en Tesorería recibe el Excel de Sigma, corre el motor
+  Python (`arqueo/runner.py` → contrato JSON) y devuelve el HTML del flujo. Gated por `requiereArea('tesoreria')`.
+  Deploy: `Dockerfile` con Node+Python. Corre **sincrónico y `sin_snapshot`** (sin cola ni volumen todavía).
+  El motor vive en `arqueo/src/masmelos/` como copia read-only de `masmelos-analytics` (ver `arqueo/COPIADO_DE.md`).
+  *Pendiente:* cola de `jobs` + volumen persistente para el snapshot acumulativo (§6), si el arqueo escala.
 - **Fase 4 — Áreas nuevas.** Ventas cuando tenga proceso definido; rol "comprador" con reporte general.
 - **Fase 5 — Fuentes futuras.** BigQuery (lectura) y, si hace falta, el worker on-prem para Sigma.
 - **Fase 6 — Endurecer.** Heartbeat/alertas del worker, backups verificados, session store persistente si escala.
