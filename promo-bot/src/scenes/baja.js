@@ -149,8 +149,8 @@ async function finalizarBaja(ctx) {
   if (alta.proveedor) {
     const r = await reportePorProveedor(alta.proveedor);
     if (r) {
-      await notificarComprador(recortarReporte(formatearReporteProveedor(r, null)));
-      avisado = true;
+      const enviados = await notificarComprador(recortarReporte(formatearReporteProveedor(r, null)));
+      avisado = enviados > 0;
     }
   }
 

@@ -167,9 +167,14 @@ async function cambiarPorcentajePromocion({ altaId, unidadesNuevoPct, nuevoPct }
 
     const diferencia = Number(alta.cantidad) - unidadesNuevoPct;
 
+    // La alta vieja pasa a representar SOLO lo que se cerró al % viejo (la diferencia): por eso
+    // se reduce `cantidad` a la diferencia además de marcarla como vendida. Si no, las unidades
+    // que siguen en promoción (que se re-insertan abajo) quedarían contadas dos veces en
+    // "unidades puestas" de los reportes, diluyendo la efectividad. Con esto la fila queda
+    // consistente: cantidad == cantidad_vendida + cantidad_remanente (= diferencia + 0).
     await client.query(
       `update bot.compras_altas
-          set fecha_baja = now(), cantidad_vendida = $2, cantidad_remanente = 0,
+          set fecha_baja = now(), cantidad = $2, cantidad_vendida = $2, cantidad_remanente = 0,
               motivo_baja = 'Cambio de % de promoción'
         where id = $1`,
       [altaId, diferencia]
@@ -265,11 +270,15 @@ async function reportePorProveedor(nombreProveedor, { desde } = {}) {
     grupos.get(clave).altas.push(a);
   }
 
-  const porProducto = [...grupos.values()].map((g) => ({
-    producto: g.producto,
-    altas: g.altas.length,
-    efectividad: calcularMetricas(g.altas).efectividad,
-  }));
+  const porProducto = [...grupos.values()].map((g) => {
+    const met = calcularMetricas(g.altas);
+    return {
+      producto: g.producto,
+      altas: g.altas.length,
+      efectividad: met.efectividad,
+      hayCerradas: met.puestasCerradas > 0, // si no, la efectividad 0% no significa nada
+    };
+  });
 
   return {
     proveedor: altas[altas.length - 1].proveedor,

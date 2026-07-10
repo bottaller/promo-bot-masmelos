@@ -7,7 +7,7 @@ function formatearReporteProveedor(r, desde) {
   const tasa = Math.round(m.tasaDescarte * 100);
   const hayCerradas = m.puestasCerradas > 0;
   const detalle = r.porProducto
-    .map((p) => `• ${p.producto}: ${p.altas} alta(s), ${p.efectividad}% efectividad`)
+    .map((p) => `• ${p.producto}: ${p.altas} alta(s), ${p.hayCerradas ? p.efectividad + '% efectividad' : 'sin promociones cerradas todavía'}`)
     .join('\n');
   const enPromo = m.abiertas > 0
     ? `${m.puestasAbiertas} unidades (${m.abiertas} alta${m.abiertas > 1 ? 's' : ''} abierta${m.abiertas > 1 ? 's' : ''})`
@@ -28,9 +28,10 @@ function formatearReporteProveedor(r, desde) {
   );
 }
 
-// Telegram corta los mensajes de más de 4096 caracteres.
+// Telegram corta los mensajes de más de 4096 caracteres. Mensaje neutro porque este reporte se
+// usa tanto en /reporte (a pedido) como en el aviso automático de /baja (donde nadie "buscó" nada).
 function recortarReporte(msg) {
-  return msg.length > 4000 ? msg.slice(0, 4000) + '\n…(reporte cortado, afiná la búsqueda)' : msg;
+  return msg.length > 4000 ? msg.slice(0, 4000) + '\n…(reporte recortado por longitud)' : msg;
 }
 
 module.exports = { formatearReporteProveedor, recortarReporte };
