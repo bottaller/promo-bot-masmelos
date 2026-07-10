@@ -3,6 +3,7 @@
 //   fecha_baja IS NULL  -> sigue en góndola ("abierta")
 //   fecha_baja NOT NULL -> cerrada, con cantidad_vendida / cantidad_remanente / motivo_baja
 const { pool } = require('./pool');
+const { fechaISO } = require('../lib/fechas');
 
 // Escapa los comodines de LIKE/ILIKE (% _ \) para que el texto del usuario no sobre-matchee.
 function escLike(s) {
@@ -137,41 +138,20 @@ function calcularMetricas(altas) {
   };
 }
 
-// Reporte de un producto: matchea por código, EAN (prefijo) o nombre.
-async function reportePorProducto(texto) {
-  const like = escLike(texto);
-  const { rows: altas } = await pool.query(
-    `select * from bot.compras_altas
-      where articulo_codigo = $1 or ean like $2 or producto ilike $3
-      order by fecha`,
-    [texto, like + '%', '%' + like + '%']
-  );
-  if (altas.length === 0) return null;
-
-  // ¿La búsqueda matcheó más de un producto distinto? Devolvemos la lista para que afine.
-  const distintos = new Map();
-  for (const a of altas) {
-    const clave = a.articulo_codigo || `n:${a.producto.toLowerCase()}`;
-    if (!distintos.has(clave)) distintos.set(clave, a.producto);
-  }
-  if (distintos.size > 1) {
-    return { varios: [...distintos.values()] };
-  }
-
-  const ultima = altas[altas.length - 1];
-  return {
-    producto: ultima.producto,
-    proveedor: ultima.proveedor,
-    metricas: calcularMetricas(altas),
-  };
-}
-
 // Reporte de un proveedor: métricas globales + desglose por producto.
-async function reportePorProveedor(texto) {
-  const like = escLike(texto);
+// nombreProveedor tiene que ser el nombre EXACTO (viene del maestro de artículos, resuelto por
+// código de proveedor), para no mezclar proveedores distintos por coincidencia parcial de nombre.
+// `desde` (opcional): Date -> filtra altas con fecha >= esa fecha (reporte de un lapso, no histórico).
+async function reportePorProveedor(nombreProveedor, { desde } = {}) {
+  const params = [nombreProveedor];
+  let condicion = 'lower(proveedor) = lower($1)';
+  if (desde) {
+    params.push(fechaISO(desde));
+    condicion += ` and fecha >= $${params.length}::date`;
+  }
   const { rows: altas } = await pool.query(
-    `select * from bot.compras_altas where proveedor ilike $1 order by fecha`,
-    ['%' + like + '%']
+    `select * from bot.compras_altas where ${condicion} order by fecha`,
+    params
   );
   if (altas.length === 0) return null;
 
@@ -206,6 +186,5 @@ module.exports = {
   marcarAvisoPorVencer,
   marcarAvisoVencido,
   registrarBaja,
-  reportePorProducto,
   reportePorProveedor,
 };

@@ -6,7 +6,7 @@ const { requiereArea } = require('../../middleware/authz');
 const CODIGO = 'compras';
 
 const comandos = [
-  { comando: 'reporte', descripcion: 'Ver reporte por producto o proveedor' },
+  { comando: 'reporte', descripcion: 'Ver reporte de promociones por proveedor' },
 ];
 
 function registrar(bot) {

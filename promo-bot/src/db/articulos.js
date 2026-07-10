@@ -70,4 +70,17 @@ async function contarArticulos() {
   return rows[0].n;
 }
 
-module.exports = { upsertArticulos, buscarPorEan, buscarArticulos, contarArticulos };
+// Busca el proveedor por su código exacto (proveedor_cod). Devuelve { proveedor_cod, proveedor }
+// o null si el código no existe en el maestro.
+async function buscarProveedorPorCodigo(codigo) {
+  const { rows } = await pool.query(
+    `select proveedor_cod, proveedor
+       from bot.articulos
+      where proveedor_cod = $1 and proveedor is not null
+      limit 1`,
+    [codigo]
+  );
+  return rows[0] || null;
+}
+
+module.exports = { upsertArticulos, buscarPorEan, buscarArticulos, contarArticulos, buscarProveedorPorCodigo };

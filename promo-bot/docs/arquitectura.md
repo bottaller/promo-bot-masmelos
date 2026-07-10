@@ -155,7 +155,7 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
 - **Autorización por comando:** cada comando declara su área (`requiereArea('calidad')`).
   Áreas y sus comandos hoy:
   - **Calidad:** `/alta` (poner un producto en oferta por vencimiento), `/baja` (retirarlo), `/control` (Excel de lo que está en oferta por vencimiento).
-  - **Compras:** `/reporte` (por producto o proveedor).
+  - **Compras:** `/reporte` (por proveedor, buscado por código de proveedor; histórico o por lapso de tiempo).
   - **Tesorería:** `/arqueo` (próximamente, Fase 3).
 - **Menú dinámico:** cada usuario ve **solo los comandos de sus áreas**.
 - **Comandos de admin:** `/usuarios` (dar de alta gente, asignar áreas/roles, hacer admin), `/actartic` (subir el maestro de artículos) y `/avisos` (disparar a mano el chequeo de vencimientos).

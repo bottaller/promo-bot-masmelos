@@ -50,4 +50,13 @@ function fechaHoyArgISO() {
   }).format(new Date());
 }
 
-module.exports = { parseVencimiento, formatoVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO };
+// Date -> texto AAAA-MM-DD (para filtros de rango en SQL, ::date). Usa los getters locales
+// (igual que formatoVencimiento) y no toISOString(), que convierte a UTC y puede correr el día.
+function fechaISO(fecha) {
+  const yyyy = fecha.getFullYear();
+  const mm = String(fecha.getMonth() + 1).padStart(2, '0');
+  const dd = String(fecha.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+module.exports = { parseVencimiento, formatoVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO, fechaISO };
