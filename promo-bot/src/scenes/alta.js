@@ -2,7 +2,7 @@ const { Scenes } = require('telegraf');
 const { buscarArticulos } = require('../db/articulos');
 const { crearAlta, historialProducto } = require('../db/compras');
 const { notificarComprador } = require('../notificar');
-const { respuesta, esCancelar, opciones, SI_NO } = require('../lib/wizard');
+const { respuesta, esCancelar, opciones, preguntar } = require('../lib/wizard');
 
 async function cancelar(ctx) {
   await ctx.reply('Alta cancelada.');
@@ -108,7 +108,7 @@ const altaWizard = new Scenes.WizardScene(
       return;
     }
     ctx.wizard.state.data.cantidad = cantidad;
-    await ctx.reply('¿Motivo?', opciones(['Vencimiento próximo', 'Exceso de stock', 'Otro']));
+    await preguntar(ctx, '¿Motivo? (elegí uno o escribí otro)', opciones(['Vencimiento próximo', 'Exceso de stock']));
     return ctx.wizard.next();
   },
   // 8: motivo -> confirmar (botones inline)
@@ -118,7 +118,8 @@ const altaWizard = new Scenes.WizardScene(
     if (!r) { await ctx.reply('Elegí o escribí el motivo.'); return; }
     ctx.wizard.state.data.motivo = r;
     const d = ctx.wizard.state.data;
-    await ctx.reply(
+    await preguntar(
+      ctx,
       'Confirmá el alta:\n\n' +
       `Producto: ${d.producto}\n` +
       `Proveedor: ${d.proveedor || '-'}\n` +
@@ -137,6 +138,8 @@ const altaWizard = new Scenes.WizardScene(
       await ctx.reply('Alta cancelada.');
       return ctx.scene.leave();
     }
+    if (ctx.wizard.state.guardando) return; // evita doble-tap: ya se está guardando
+    ctx.wizard.state.guardando = true;
     const d = ctx.wizard.state.data;
     const u = ctx.state.usuario;
 

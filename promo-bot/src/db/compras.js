@@ -1,6 +1,11 @@
 // Acceso a datos de Compras: promociones por vencimiento (altas/bajas) en Postgres.
 const { pool } = require('./pool');
 
+// Escapa los comodines de LIKE/ILIKE (% _ \) para que el texto del usuario no sobre-matchee.
+function escLike(s) {
+  return String(s).replace(/[\\%_]/g, '\\$&');
+}
+
 // --- Altas ---
 
 async function crearAlta(a) {
@@ -32,13 +37,14 @@ async function historialProducto({ articuloCodigo, producto }) {
 
 // Altas ABIERTAS que matchean el texto (código exacto, EAN por prefijo, o nombre contiene).
 async function buscarAltasAbiertas(texto, limite = 15) {
+  const like = escLike(texto);
   const { rows } = await pool.query(
     `select * from bot.compras_altas
       where estado = 'abierta'
-        and (articulo_codigo = $1 or ean like $1 || '%' or producto ilike '%' || $1 || '%')
+        and (articulo_codigo = $1 or ean like $2 or producto ilike $3)
       order by fecha
-      limit $2`,
-    [texto, limite]
+      limit $4`,
+    [texto, like + '%', '%' + like + '%', limite]
   );
   return rows;
 }
@@ -55,13 +61,23 @@ async function registrarBaja({ altaId, remanente, vendida, motivoBaja }) {
   const client = await pool.connect();
   try {
     await client.query('begin');
+    // Cerramos la alta solo si estaba abierta. Si ya estaba cerrada (doble baja / doble tap),
+    // rowCount = 0 y no registramos nada. Es idempotente.
+    const upd = await client.query(
+      `update bot.compras_altas set estado = 'cerrada' where id = $1 and estado = 'abierta'`,
+      [altaId]
+    );
+    if (upd.rowCount === 0) {
+      await client.query('rollback');
+      return { ok: false };
+    }
     await client.query(
       `insert into bot.compras_bajas (alta_id, cantidad_remanente, cantidad_vendida, motivo_baja)
        values ($1,$2,$3,$4)`,
       [altaId, remanente, vendida, motivoBaja ?? null]
     );
-    await client.query(`update bot.compras_altas set estado = 'cerrada' where id = $1`, [altaId]);
     await client.query('commit');
+    return { ok: true };
   } catch (e) {
     await client.query('rollback');
     throw e;
@@ -105,13 +121,25 @@ async function bajasDeAltas(altaIds) {
 
 // Reporte de un producto: matchea por código, EAN (prefijo) o nombre.
 async function reportePorProducto(texto) {
+  const like = escLike(texto);
   const { rows: altas } = await pool.query(
     `select * from bot.compras_altas
-      where articulo_codigo = $1 or ean like $1 || '%' or producto ilike '%' || $1 || '%'
+      where articulo_codigo = $1 or ean like $2 or producto ilike $3
       order by fecha`,
-    [texto]
+    [texto, like + '%', '%' + like + '%']
   );
   if (altas.length === 0) return null;
+
+  // ¿La búsqueda matcheó más de un producto distinto? Devolvemos la lista para que afine.
+  const distintos = new Map();
+  for (const a of altas) {
+    const clave = a.articulo_codigo || `n:${a.producto.toLowerCase()}`;
+    if (!distintos.has(clave)) distintos.set(clave, a.producto);
+  }
+  if (distintos.size > 1) {
+    return { varios: [...distintos.values()] };
+  }
+
   const bajas = await bajasDeAltas(altas.map((a) => a.id));
   const ultima = altas[altas.length - 1];
   return {
@@ -123,9 +151,10 @@ async function reportePorProducto(texto) {
 
 // Reporte de un proveedor: métricas globales + desglose por producto.
 async function reportePorProveedor(texto) {
+  const like = escLike(texto);
   const { rows: altas } = await pool.query(
-    `select * from bot.compras_altas where proveedor ilike '%' || $1 || '%' order by fecha`,
-    [texto]
+    `select * from bot.compras_altas where proveedor ilike $1 order by fecha`,
+    ['%' + like + '%']
   );
   if (altas.length === 0) return null;
   const bajas = await bajasDeAltas(altas.map((a) => a.id));

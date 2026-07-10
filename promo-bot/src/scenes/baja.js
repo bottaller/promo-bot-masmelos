@@ -1,7 +1,7 @@
 const { Scenes } = require('telegraf');
 const { buscarAltasAbiertas, registrarBaja } = require('../db/compras');
 const { notificarComprador } = require('../notificar');
-const { respuesta, esCancelar, opciones, SI_NO } = require('../lib/wizard');
+const { respuesta, esCancelar, opciones, preguntar, SI_NO } = require('../lib/wizard');
 
 async function cancelar(ctx) {
   await ctx.reply('Baja cancelada. No se registró nada.');
@@ -45,7 +45,7 @@ const bajaWizard = new Scenes.WizardScene(
     }
     if (abiertas.length === 1) {
       ctx.wizard.state.data.alta = abiertas[0];
-      await ctx.reply(`Encontré:\n${resumenAlta(abiertas[0])}\n\n¿Es esta la que querés dar de baja?`, SI_NO);
+      await preguntar(ctx, `Encontré:\n${resumenAlta(abiertas[0])}\n\n¿Es esta la que querés dar de baja?`, SI_NO);
       return ctx.wizard.selectStep(3);
     }
     ctx.wizard.state.opciones = abiertas;
@@ -64,7 +64,7 @@ const bajaWizard = new Scenes.WizardScene(
       return;
     }
     ctx.wizard.state.data.alta = ops[n - 1];
-    await ctx.reply(`Elegiste:\n${resumenAlta(ops[n - 1])}\n\n¿Es esta?`, SI_NO);
+    await preguntar(ctx, `Elegiste:\n${resumenAlta(ops[n - 1])}\n\n¿Es esta?`, SI_NO);
     return ctx.wizard.next();
   },
   // 3: confirmar producto
@@ -98,13 +98,10 @@ const bajaWizard = new Scenes.WizardScene(
 
     if (remanente === 0) {
       ctx.wizard.state.data.motivoBaja = 'vendido total';
-      await ctx.reply(resumenFinal(ctx.wizard.state.data, alta), SI_NO);
+      await preguntar(ctx, resumenFinal(ctx.wizard.state.data, alta), SI_NO);
       return ctx.wizard.selectStep(6);
     }
-    await ctx.reply(
-      '¿Qué pasó con el remanente?',
-      opciones(['Vencido / descartado', 'Devuelto a góndola normal'])
-    );
+    await preguntar(ctx, '¿Qué pasó con el remanente?', opciones(['Vencido / descartado', 'Devuelto a góndola normal']));
     return ctx.wizard.next();
   },
   // 5: motivo del remanente
@@ -113,7 +110,7 @@ const bajaWizard = new Scenes.WizardScene(
     if (esCancelar(r)) return cancelar(ctx);
     if (!r) { await ctx.reply('Elegí qué pasó con el remanente.'); return; }
     ctx.wizard.state.data.motivoBaja = r;
-    await ctx.reply(resumenFinal(ctx.wizard.state.data, ctx.wizard.state.data.alta), SI_NO);
+    await preguntar(ctx, resumenFinal(ctx.wizard.state.data, ctx.wizard.state.data.alta), SI_NO);
     return ctx.wizard.next();
   },
   // 6: confirmación final
@@ -124,6 +121,8 @@ const bajaWizard = new Scenes.WizardScene(
       await ctx.reply('Baja cancelada. No se registró nada.');
       return ctx.scene.leave();
     }
+    if (ctx.wizard.state.guardando) return; // evita doble-tap
+    ctx.wizard.state.guardando = true;
     return finalizarBaja(ctx);
   }
 );
@@ -132,7 +131,11 @@ async function finalizarBaja(ctx) {
   const d = ctx.wizard.state.data;
   const alta = d.alta;
 
-  await registrarBaja({ altaId: alta.id, remanente: d.remanente, vendida: d.vendido, motivoBaja: d.motivoBaja });
+  const res = await registrarBaja({ altaId: alta.id, remanente: d.remanente, vendida: d.vendido, motivoBaja: d.motivoBaja });
+  if (!res.ok) {
+    await ctx.reply('Esa promoción ya fue dada de baja.');
+    return ctx.scene.leave();
+  }
 
   const cantidad = Number(alta.cantidad);
   const efectividad = cantidad > 0 ? Math.round((d.vendido / cantidad) * 100) : 0;
