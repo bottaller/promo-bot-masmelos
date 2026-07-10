@@ -3,7 +3,7 @@
 const XLSX = require('xlsx');
 const { parseVencimiento, diasHasta, fechaHoyArg } = require('./fechas');
 
-const COLUMNAS = ['Vencimiento', 'Días restantes', 'Producto', 'Proveedor', 'Cantidad', 'Descuento %', 'Lote', 'EAN', 'Código', 'Motivo', 'Fecha alta'];
+const COLUMNAS = ['Vencimiento', 'Días restantes', 'Producto', 'Proveedor', 'Cantidad', 'Descuento %', 'EAN', 'Código', 'Motivo', 'Fecha alta'];
 
 function construirExcelControl(altas) {
   // Ordenar por fecha de vencimiento (las fechas inválidas/ausentes van al final).
@@ -25,7 +25,6 @@ function construirExcelControl(altas) {
       a.proveedor || '',
       Number(a.cantidad),
       a.descuento_pct === null || a.descuento_pct === undefined ? '' : Number(a.descuento_pct),
-      a.lote || '',
       a.ean || '',
       a.articulo_codigo || '',
       a.motivo || '',

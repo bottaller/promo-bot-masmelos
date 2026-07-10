@@ -12,15 +12,16 @@ function escLike(s) {
 
 // --- Altas ---
 
+// Nota: la columna "lote" existe en la tabla pero por ahora no se pide ni se completa (queda NULL).
 async function crearAlta(a) {
   const { rows } = await pool.query(
     `insert into bot.compras_altas
-       (usuario_id, usuario_nombre, articulo_codigo, ean, producto, proveedor, lote, vencimiento, cantidad, motivo, descuento_pct)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       (usuario_id, usuario_nombre, articulo_codigo, ean, producto, proveedor, vencimiento, cantidad, motivo, descuento_pct)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      returning id`,
     [
       a.usuarioId ?? null, a.usuarioNombre ?? null, a.articuloCodigo ?? null, a.ean ?? null,
-      a.producto, a.proveedor ?? null, a.lote ?? null, a.vencimiento ?? null, a.cantidad, a.motivo ?? null,
+      a.producto, a.proveedor ?? null, a.vencimiento ?? null, a.cantidad, a.motivo ?? null,
       a.descuentoPct ?? null,
     ]
   );
@@ -92,6 +93,40 @@ async function marcarAvisoVencido(altaIds) {
     `update bot.compras_altas set aviso_vencido = true where id = any($1::bigint[])`,
     [altaIds]
   );
+}
+
+// --- Reposición ---
+
+// Altas ABIERTAS que matchean el mismo producto (por código si hay, si no por nombre exacto)
+// y la MISMA fecha de vencimiento (ya normalizada a DD/MM/AAAA). Se usa en /reposicion: en vez
+// de crear otra alta, se le suma la cantidad nueva a la que ya está en promoción.
+async function buscarAltasParaReponer({ articuloCodigo, producto, vencimiento }) {
+  const { rows } = await pool.query(
+    `select * from bot.compras_altas
+      where fecha_baja is null
+        and vencimiento = $1
+        and (
+          ($2::text is not null and articulo_codigo = $2)
+          or ($2::text is null and lower(producto) = lower($3))
+        )
+      order by fecha`,
+    [vencimiento, articuloCodigo ?? null, producto]
+  );
+  return rows;
+}
+
+// Suma cantidad a una alta abierta existente (reposición). Atómico y a prueba de carrera: si la
+// alta ya se cerró justo antes de sumar (fecha_baja dejó de ser null), no actualiza nada y
+// devuelve null en vez de un número, para que el wizard pueda avisar en vez de mentir el total.
+async function sumarCantidadAlta({ altaId, cantidadAdicional }) {
+  const { rows } = await pool.query(
+    `update bot.compras_altas
+        set cantidad = cantidad + $2
+      where id = $1 and fecha_baja is null
+      returning cantidad`,
+    [altaId, cantidadAdicional]
+  );
+  return rows[0] ? rows[0].cantidad : null;
 }
 
 // --- Baja ---
@@ -181,6 +216,8 @@ module.exports = {
   crearAlta,
   historialProducto,
   buscarAltasAbiertas,
+  buscarAltasParaReponer,
+  sumarCantidadAlta,
   altasEnOferta,
   altasParaAviso,
   marcarAvisoPorVencer,

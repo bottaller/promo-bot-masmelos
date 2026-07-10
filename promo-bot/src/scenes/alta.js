@@ -60,7 +60,7 @@ const altaWizard = new Scenes.WizardScene(
     ctx.wizard.state.data.ean = art.ean_unidad || null;
     ctx.wizard.state.data.producto = art.nombre;
     ctx.wizard.state.data.proveedor = art.proveedor || null;
-    await ctx.reply(`Elegiste: ${art.nombre}\nProveedor: ${art.proveedor || '-'}\n\n¿Lote? (si no tiene, escribí "-")`);
+    await ctx.reply(`Elegiste: ${art.nombre}\nProveedor: ${art.proveedor || '-'}\n\n¿Fecha de vencimiento? (DD/MM/AAAA)`);
     return ctx.wizard.selectStep(5);
   },
   // 3: manual - nombre
@@ -78,19 +78,10 @@ const altaWizard = new Scenes.WizardScene(
     if (esCancelar(r)) return cancelar(ctx);
     if (!r) { await ctx.reply('Escribí el proveedor.'); return; }
     ctx.wizard.state.data.proveedor = r;
-    await ctx.reply('¿Lote? (si no tiene, escribí "-")');
-    return ctx.wizard.next();
-  },
-  // 5: lote
-  async (ctx) => {
-    const r = await respuesta(ctx);
-    if (esCancelar(r)) return cancelar(ctx);
-    if (!r) { await ctx.reply('Escribí el lote (o "-").'); return; }
-    ctx.wizard.state.data.lote = r;
     await ctx.reply('¿Fecha de vencimiento? (DD/MM/AAAA)');
     return ctx.wizard.next();
   },
-  // 6: vencimiento (se valida: una fecha imparseable deja el producto sin avisos para siempre)
+  // 5: vencimiento (se valida: una fecha imparseable deja el producto sin avisos para siempre)
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
@@ -109,7 +100,7 @@ const altaWizard = new Scenes.WizardScene(
     await ctx.reply(`Vence en ${dias} día(s).\n\n¿Cantidad que se pasa a promoción?`);
     return ctx.wizard.next();
   },
-  // 7: cantidad -> % de descuento
+  // 6: cantidad -> % de descuento
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
@@ -122,7 +113,7 @@ const altaWizard = new Scenes.WizardScene(
     await ctx.reply('¿Qué % de descuento tiene la promoción? (ej: 30)');
     return ctx.wizard.next();
   },
-  // 8: % de descuento -> motivo (botones inline)
+  // 7: % de descuento -> motivo (botones inline)
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
@@ -135,7 +126,7 @@ const altaWizard = new Scenes.WizardScene(
     await preguntar(ctx, '¿Motivo? (elegí uno o escribí otro)', opciones(['Vencimiento próximo', 'Exceso de stock']));
     return ctx.wizard.next();
   },
-  // 9: motivo -> confirmar (botones inline)
+  // 8: motivo -> confirmar (botones inline)
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
@@ -147,7 +138,6 @@ const altaWizard = new Scenes.WizardScene(
       'Confirmá el alta:\n\n' +
       `Producto: ${d.producto}\n` +
       `Proveedor: ${d.proveedor || '-'}\n` +
-      `Lote: ${d.lote}\n` +
       `Vencimiento: ${d.vencimiento}\n` +
       `Cantidad: ${d.cantidad}\n` +
       `Descuento: ${d.descuentoPct}%\n` +
@@ -156,7 +146,7 @@ const altaWizard = new Scenes.WizardScene(
     );
     return ctx.wizard.next();
   },
-  // 10: confirmar -> guardar
+  // 9: confirmar -> guardar
   async (ctx) => {
     const raw = await respuesta(ctx);
     if (raw === null) return; // botón viejo / doble-tap / no-texto: el paso sigue esperando
@@ -177,7 +167,6 @@ const altaWizard = new Scenes.WizardScene(
       ean: d.ean || null,
       producto: d.producto,
       proveedor: d.proveedor || null,
-      lote: d.lote,
       vencimiento: d.vencimiento,
       cantidad: d.cantidad,
       motivo: d.motivo,

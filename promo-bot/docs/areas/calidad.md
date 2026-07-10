@@ -15,7 +15,8 @@ tiran, para la próxima comprar menos o pedir descuento al proveedor.
 
 | Comando | Qué hace |
 |---------|----------|
-| `/alta` | Registra una **camada** puesta en oferta por vencimiento (producto, lote, vencimiento, cantidad, **% de descuento**, motivo). Busca el producto en el maestro (`bot.articulos`) por EAN/código/nombre, o se carga a mano. |
+| `/alta` | Registra una **camada** puesta en oferta por vencimiento (producto, vencimiento, cantidad, **% de descuento**, motivo). Busca el producto en el maestro (`bot.articulos`) por EAN/código/nombre, o se carga a mano. **Nota:** por ahora no pide lote (ver más abajo). |
+| `/reposicion` | Suma cantidad a una camada **ya abierta** del mismo producto con la **misma fecha de vencimiento**, en vez de crear otra alta. Si no hay ninguna camada abierta que matchee, avisa y sugiere `/alta`. |
 | `/baja` | Cierra una camada abierta: cuántas se vendieron y qué pasó con el remanente (descartado/vencido o devuelto a góndola normal). |
 | `/control` | Excel de **todo lo que está en oferta ahora**, ordenado por fecha de vencimiento. Lleva la fecha de generación (ver [convenciones.md](../convenciones.md)). |
 
@@ -28,6 +29,14 @@ guarda en la **misma fila** (modelo unificado, migración 006):
 - `fecha_baja NOT NULL` → cerrada, con `cantidad_vendida`, `cantidad_remanente`, `motivo_baja`.
 
 Flags de avisos (migración 005): `aviso_vencimiento_fecha` (por-vencer) y `aviso_vencido` (una vez).
+
+**Lote:** la columna existe en la tabla pero por ahora `/alta` no la pide (queda `NULL`). Se puede
+retomar más adelante sin migración nueva.
+
+**Reposición:** `/reposicion` busca una alta abierta con el mismo producto (por `articulo_codigo` si
+existe, si no por nombre exacto) y la misma `vencimiento`, y le suma la cantidad con un
+`UPDATE ... SET cantidad = cantidad + X` — no inserta una fila nueva. Como `/baja` lee la `cantidad`
+de esa misma fila, el cierre ya refleja el total acumulado sin ningún cambio adicional.
 
 ## Avisos de vencimiento
 
