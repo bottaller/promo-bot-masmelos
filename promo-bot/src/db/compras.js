@@ -150,7 +150,7 @@ async function sumarCantidadAlta({ altaId, cantidadAdicional }) {
 // al % nuevo.
 // Transacción atómica con lock de fila: si la alta ya se cerró justo antes (carrera con /baja),
 // no hace nada y devuelve null.
-async function cambiarPorcentajePromocion({ altaId, unidadesNuevoPct, nuevoPct }) {
+async function cambiarPorcentajePromocion({ altaId, unidadesNuevoPct, nuevoPct, cantidadEsperada }) {
   const client = await pool.connect();
   try {
     await client.query('begin');
@@ -162,7 +162,15 @@ async function cambiarPorcentajePromocion({ altaId, unidadesNuevoPct, nuevoPct }
     const alta = rows[0];
     if (!alta) {
       await client.query('rollback');
-      return null;
+      return { cerrada: true }; // se cerró justo antes (carrera con /baja)
+    }
+
+    // Guard de concurrencia optimista: si la cantidad cambió desde que el usuario confirmó
+    // (típicamente una /reposicion que sumó unidades entremedio), abortamos. Si no, recalcularíamos
+    // la diferencia sobre un total distinto y marcaríamos como "vendidas" unidades recién repuestas.
+    if (cantidadEsperada != null && Number(alta.cantidad) !== Number(cantidadEsperada)) {
+      await client.query('rollback');
+      return { cambiada: true, cantidadActual: Number(alta.cantidad) };
     }
 
     const diferencia = Number(alta.cantidad) - unidadesNuevoPct;

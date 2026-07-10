@@ -68,7 +68,14 @@ const cambioPromocionWizard = new Scenes.WizardScene(
 
     const elegida = ctx.wizard.state.data.altasPorId.get(r);
     if (!elegida) {
-      await ctx.reply('Elegí una promoción tocando alguno de los botones de la lista.');
+      // Escribió texto en vez de tocar un botón: respuesta() ya le sacó el teclado, así que
+      // volvemos a mostrar el menú (si no, quedaría sin botones que tocar, en un callejón sin salida).
+      const altas = [...ctx.wizard.state.data.altasPorId.values()];
+      await preguntar(
+        ctx,
+        'Tocá uno de los botones para elegir la promoción (o escribí "cancelar"):',
+        opciones(altas.map((a) => [labelAlta(a), String(a.id)]))
+      );
       return;
     }
     // Revalidar contra la base: puede haber pasado un rato desde que se armó el menú.
@@ -140,9 +147,17 @@ const cambioPromocionWizard = new Scenes.WizardScene(
       altaId: d.alta.id,
       unidadesNuevoPct: d.unidadesNuevoPct,
       nuevoPct: d.nuevoPct,
+      cantidadEsperada: Number(d.alta.cantidad),
     });
-    if (!resultado) {
+    if (resultado.cerrada) {
       await ctx.reply('Esa promoción se cerró justo antes del cambio (alguien hizo /baja mientras tanto). No se pudo aplicar.');
+      return ctx.scene.leave();
+    }
+    if (resultado.cambiada) {
+      await ctx.reply(
+        `La promoción cambió de cantidad mientras confirmabas (ahora tiene ${resultado.cantidadActual} unidades, ` +
+        'seguramente por una reposición). Volvé a hacer /cambiopromocion.'
+      );
       return ctx.scene.leave();
     }
 
