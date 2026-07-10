@@ -1,15 +1,21 @@
-// Wizard /cambiopromocion: cambia el % de descuento de una promoción vigente. Divide la alta en
-// dos por diferencia: lo que no alcanzó a venderse al % viejo pasa a una alta nueva con el % nuevo,
-// y la alta vieja queda cerrada marcando lo vendido al % viejo. Ver src/db/compras.js
-// (cambiarPorcentajePromocion) para el detalle de la transacción.
+// Wizard /cambiopromocion: cambia el % de descuento de una promoción vigente. En vez de buscar el
+// producto, arranca mostrando un menú con TODAS las promociones abiertas (botones) para elegir
+// directamente sobre cuál operar. Divide la alta en dos por diferencia: lo que no alcanzó a
+// venderse al % viejo pasa a una alta nueva con el % nuevo, y la alta vieja queda cerrada marcando
+// lo vendido al % viejo. Ver src/db/compras.js (cambiarPorcentajePromocion) para la transacción.
 const { Scenes } = require('telegraf');
-const { buscarAltasAbiertas, cambiarPorcentajePromocion } = require('../db/compras');
+const { altasEnOferta, altaAbiertaPorId, cambiarPorcentajePromocion } = require('../db/compras');
 const { notificarComprador } = require('../notificar');
 const { respuesta, esCancelar, parseUnidades, opciones, preguntar } = require('../lib/wizard');
+const { parseVencimiento } = require('../lib/fechas');
 
 async function cancelar(ctx) {
   await ctx.reply('Cambio de promoción cancelado.');
   return ctx.scene.leave();
+}
+
+function truncar(s, n) {
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
 function resumenAlta(a) {
@@ -17,56 +23,65 @@ function resumenAlta(a) {
   return `${a.producto} — ${a.cantidad} unidades actuales al ${pct} (vencimiento ${a.vencimiento})`;
 }
 
+// Label corto para el botón del menú (Telegram trunca los textos muy largos).
+function labelAlta(a) {
+  const pct = a.descuento_pct === null || a.descuento_pct === undefined ? 'sin %' : `${a.descuento_pct}%`;
+  return `${truncar(a.producto, 24)} — ${a.cantidad}u ${pct} (${a.vencimiento.slice(0, 5)})`;
+}
+
 async function pedirNuevoPct(ctx, alta) {
   ctx.wizard.state.data.alta = alta;
-  await ctx.reply(`Encontré:\n${resumenAlta(alta)}\n\n¿Qué nuevo % de descuento le vas a aplicar?`);
+  await ctx.reply(`Elegiste:\n${resumenAlta(alta)}\n\n¿Qué nuevo % de descuento le vas a aplicar?`);
 }
 
 const cambioPromocionWizard = new Scenes.WizardScene(
   'cambiopromocion-wizard',
-  // 0: pedir búsqueda de producto (entre las promociones vigentes)
+  // 0: mostrar el menú con todas las promociones vigentes
   async (ctx) => {
     ctx.wizard.state.data = {};
-    await ctx.reply(
-      'Cambio de % en una promoción vigente.\n\n' +
-      '¿Qué producto? Escribí el EAN, el código o parte del nombre.\n(o "cancelar" para salir)'
+    const abiertas = await altasEnOferta();
+    if (abiertas.length === 0) {
+      await ctx.reply('No hay ninguna promoción vigente en este momento.');
+      return ctx.scene.leave();
+    }
+    // Más próximas a vencer primero (las que más urge cambiar de precio).
+    const ordenadas = [...abiertas].sort((a, b) => {
+      const fa = parseVencimiento(a.vencimiento);
+      const fb = parseVencimiento(b.vencimiento);
+      if (fa && fb) return fa.getTime() - fb.getTime();
+      if (fa) return -1;
+      if (fb) return 1;
+      return 0;
+    });
+    ctx.wizard.state.data.altasPorId = new Map(ordenadas.map((a) => [String(a.id), a]));
+    await preguntar(
+      ctx,
+      'Cambio de % en una promoción vigente.\n\nElegí sobre cuál (o escribí "cancelar"):',
+      opciones(ordenadas.map((a) => [labelAlta(a), String(a.id)]))
     );
     return ctx.wizard.next();
   },
-  // 1: buscar promociones vigentes que matcheen
-  async (ctx) => {
-    const q = await respuesta(ctx);
-    if (esCancelar(q)) return cancelar(ctx);
-    if (!q) { await ctx.reply('Escribí el EAN, código o nombre.'); return; }
-
-    const abiertas = await buscarAltasAbiertas(q);
-    if (abiertas.length === 0) {
-      await ctx.reply(`No hay ninguna promoción vigente para "${q}".`);
-      return ctx.scene.leave();
-    }
-    if (abiertas.length === 1) {
-      await pedirNuevoPct(ctx, abiertas[0]);
-      return ctx.wizard.selectStep(3);
-    }
-    ctx.wizard.state.opciones = abiertas;
-    const lista = abiertas.map((a, i) => `${i + 1}) ${resumenAlta(a)}`).join('\n');
-    await ctx.reply(`Hay ${abiertas.length} promociones vigentes que matchean:\n\n${lista}\n\nRespondé con el número.`);
-    return ctx.wizard.next();
-  },
-  // 2: elegir cuál (solo si había más de una)
+  // 1: procesar la elección del menú
   async (ctx) => {
     const r = await respuesta(ctx);
+    if (r === null) return; // botón viejo / doble-tap: el paso sigue esperando
     if (esCancelar(r)) return cancelar(ctx);
-    const n = Number(r);
-    const ops = ctx.wizard.state.opciones || [];
-    if (!Number.isInteger(n) || n < 1 || n > ops.length) {
-      await ctx.reply('Elegí un número válido de la lista.');
+
+    const elegida = ctx.wizard.state.data.altasPorId.get(r);
+    if (!elegida) {
+      await ctx.reply('Elegí una promoción tocando alguno de los botones de la lista.');
       return;
     }
-    await pedirNuevoPct(ctx, ops[n - 1]);
+    // Revalidar contra la base: puede haber pasado un rato desde que se armó el menú.
+    const alta = await altaAbiertaPorId(elegida.id);
+    if (!alta) {
+      await ctx.reply('Esa promoción ya no está vigente (se cerró mientras tanto). Volvé a correr /cambiopromocion.');
+      return ctx.scene.leave();
+    }
+    await pedirNuevoPct(ctx, alta);
     return ctx.wizard.next();
   },
-  // 3: procesar nuevo % -> preguntar unidades
+  // 2: procesar nuevo % -> preguntar unidades
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
@@ -81,7 +96,7 @@ const cambioPromocionWizard = new Scenes.WizardScene(
     await ctx.reply(`¿A cuántas de esas ${cantidadActual} unidades le aplicás el ${nuevoPct}%?`);
     return ctx.wizard.next();
   },
-  // 4: procesar unidades al nuevo % -> confirmar (botones inline)
+  // 3: procesar unidades al nuevo % -> confirmar (botones inline)
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
@@ -109,7 +124,7 @@ const cambioPromocionWizard = new Scenes.WizardScene(
     );
     return ctx.wizard.next();
   },
-  // 5: confirmar -> guardar
+  // 4: confirmar -> guardar
   async (ctx) => {
     const raw = await respuesta(ctx);
     if (raw === null) return; // botón viejo / doble-tap / no-texto: el paso sigue esperando

@@ -63,6 +63,17 @@ async function altasEnOferta() {
   return rows;
 }
 
+// Una alta puntual, solo si sigue abierta. Se usa para revalidar justo antes de operar sobre
+// ella (p. ej. al elegirla de un menú armado unos segundos antes, por si alguien la cerró
+// mientras tanto con /baja).
+async function altaAbiertaPorId(id) {
+  const { rows } = await pool.query(
+    `select * from bot.compras_altas where id = $1 and fecha_baja is null`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
 // Altas abiertas para el chequeo de avisos: trae el telegram_id del que la cargó (solo si sigue
 // activo) y si ya se avisó "por vencer" hoy. La fecha de "hoy" se pasa desde JS en calendario
 // ARGENTINO (hoyISO), no current_date del server (UTC), para que el dedup coincida con la
@@ -276,6 +287,7 @@ module.exports = {
   sumarCantidadAlta,
   cambiarPorcentajePromocion,
   altasEnOferta,
+  altaAbiertaPorId,
   altasParaAviso,
   marcarAvisoPorVencer,
   marcarAvisoVencido,

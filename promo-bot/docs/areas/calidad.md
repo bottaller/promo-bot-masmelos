@@ -17,7 +17,7 @@ tiran, para la próxima comprar menos o pedir descuento al proveedor.
 |---------|----------|
 | `/alta` | Registra una **camada** puesta en oferta por vencimiento (producto, vencimiento, cantidad, **% de descuento**, motivo). Busca el producto en el maestro (`bot.articulos`) por EAN/código/nombre, o se carga a mano. **Nota:** por ahora no pide lote (ver más abajo). |
 | `/reposicion` | Suma cantidad a una camada **ya abierta** del mismo producto con la **misma fecha de vencimiento**, en vez de crear otra alta. Si no hay ninguna camada abierta que matchee, avisa y sugiere `/alta`. |
-| `/cambiopromocion` | Cambia el % de descuento de una camada **vigente**. Pregunta el % nuevo y a cuántas unidades de las actuales se le aplica; por diferencia, cierra la camada vieja marcando lo no alcanzado como vendido al % viejo, y abre una camada nueva con las unidades restantes al % nuevo. |
+| `/cambiopromocion` | Cambia el % de descuento de una camada **vigente**. Arranca mostrando un **menú con todas las promociones abiertas** (sin pedir código/SKU) para elegir directo sobre cuál; después pregunta el % nuevo y a cuántas unidades de las actuales se le aplica. Por diferencia, cierra la camada vieja marcando lo no alcanzado como vendido al % viejo, y abre una camada nueva con las unidades restantes al % nuevo. |
 | `/baja` | Cierra una camada abierta: cuántas se vendieron y qué pasó con el remanente (descartado/vencido o devuelto a góndola normal). |
 | `/control` | Excel de **todo lo que está en oferta ahora**, ordenado por fecha de vencimiento. Lleva la fecha de generación (ver [convenciones.md](../convenciones.md)). |
 
