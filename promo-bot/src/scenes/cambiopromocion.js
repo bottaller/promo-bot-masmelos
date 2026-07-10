@@ -5,7 +5,6 @@
 // lo vendido al % viejo. Ver src/db/compras.js (cambiarPorcentajePromocion) para la transacción.
 const { Scenes } = require('telegraf');
 const { altasEnOferta, altaAbiertaPorId, cambiarPorcentajePromocion } = require('../db/compras');
-const { notificarComprador } = require('../notificar');
 const { respuesta, esCancelar, parseUnidades, opciones, preguntar } = require('../lib/wizard');
 const { parseVencimiento } = require('../lib/fechas');
 
@@ -148,15 +147,6 @@ const cambioPromocionWizard = new Scenes.WizardScene(
     }
 
     const { altaVieja, diferencia } = resultado;
-    const mensajeComprador =
-      '🔀 Cambio de % en promoción por vencimiento\n\n' +
-      `Producto: ${altaVieja.producto}\n` +
-      `Proveedor: ${altaVieja.proveedor || '-'}\n` +
-      `Vendido al ${altaVieja.descuento_pct ?? '-'}%: ${diferencia} unidad(es)\n` +
-      `Sigue en promoción al ${d.nuevoPct}%: ${d.unidadesNuevoPct} unidad(es)\n` +
-      `Vencimiento: ${altaVieja.vencimiento}`;
-    if (altaVieja.proveedor) await notificarComprador(altaVieja.proveedor, mensajeComprador);
-
     await ctx.reply(
       `Cambio registrado: ${diferencia} unidad(es) vendidas al ${altaVieja.descuento_pct ?? '-'}%, ` +
       `${d.unidadesNuevoPct} unidad(es) siguen en promoción al ${d.nuevoPct}%.`

@@ -20,7 +20,7 @@ promo-bot/
 │   ├── admin/                ← /usuarios, /actartic (solo admin)
 │   ├── scenes/               ← wizards de Compras (alta, baja, reporte)
 │   ├── lib/                  ← parser del Excel de artículos
-│   └── notificar.js          ← avisos a compradores (config/proveedores.js)
+│   └── notificar.js          ← avisos a todo el equipo de Compras (rol "compras", sin config aparte)
 ├── db/migrations/            ← 001 acceso · 002 artículos · 003 compras
 ├── docs/                     ← documentación (empezá por arquitectura.md)
 ├── .env.example

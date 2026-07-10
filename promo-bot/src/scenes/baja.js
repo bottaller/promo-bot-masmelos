@@ -1,7 +1,8 @@
 const { Scenes } = require('telegraf');
-const { buscarAltasAbiertas, registrarBaja } = require('../db/compras');
+const { buscarAltasAbiertas, registrarBaja, reportePorProveedor } = require('../db/compras');
 const { notificarComprador } = require('../notificar');
 const { respuesta, esCancelar, parseUnidades, opciones, preguntar, SI_NO } = require('../lib/wizard');
+const { formatearReporteProveedor, recortarReporte } = require('../lib/reporte-proveedor');
 
 async function cancelar(ctx) {
   await ctx.reply('Baja cancelada. No se registró nada.');
@@ -142,19 +143,21 @@ async function finalizarBaja(ctx) {
     return ctx.scene.leave();
   }
 
-  const cantidad = Number(alta.cantidad);
-  const efectividad = cantidad > 0 ? Math.round((d.vendido / cantidad) * 100) : 0;
-  const mensajeComprador =
-    '📊 Resultado de promoción\n\n' +
-    `Producto: ${alta.producto}\n` +
-    `Proveedor: ${alta.proveedor || '-'}\n` +
-    `Puesto en promoción: ${alta.cantidad}\n` +
-    `Vendido: ${d.vendido}\n` +
-    `Remanente: ${d.remanente} (${d.motivoBaja})\n` +
-    `Efectividad: ${efectividad}%`;
-  if (alta.proveedor) await notificarComprador(alta.proveedor, mensajeComprador);
+  // Al comprador no le mandamos el resultado puntual de esta baja: le mandamos el reporte
+  // completo (histórico) del proveedor, igual que /reporte, ya actualizado con esta baja.
+  let avisado = false;
+  if (alta.proveedor) {
+    const r = await reportePorProveedor(alta.proveedor);
+    if (r) {
+      await notificarComprador(recortarReporte(formatearReporteProveedor(r, null)));
+      avisado = true;
+    }
+  }
 
-  await ctx.reply(`Baja registrada. Se vendieron ${d.vendido} de ${alta.cantidad} unidades.`);
+  await ctx.reply(
+    `Baja registrada. Se vendieron ${d.vendido} de ${alta.cantidad} unidades.` +
+    (avisado ? ' Se avisó al equipo de compras con el reporte actualizado del proveedor.' : '')
+  );
   return ctx.scene.leave();
 }
 

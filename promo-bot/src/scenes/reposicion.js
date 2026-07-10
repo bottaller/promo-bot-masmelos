@@ -4,7 +4,6 @@
 const { Scenes } = require('telegraf');
 const { buscarArticulos } = require('../db/articulos');
 const { buscarAltasParaReponer, sumarCantidadAlta } = require('../db/compras');
-const { notificarComprador } = require('../notificar');
 const { respuesta, esCancelar, parseUnidades, opciones, preguntar } = require('../lib/wizard');
 const { parseVencimiento, formatoVencimiento, diasHasta } = require('../lib/fechas');
 
@@ -181,19 +180,7 @@ const reposicionWizard = new Scenes.WizardScene(
       return ctx.scene.leave();
     }
 
-    const mensajeComprador =
-      '🔄 Reposición de promoción por vencimiento\n\n' +
-      `Producto: ${alta.producto}\n` +
-      `Proveedor: ${alta.proveedor || '-'}\n` +
-      `Se agregaron: ${d.cantidadAdicional} unidades más\n` +
-      `Total ahora en promoción: ${nuevoTotal} unidades\n` +
-      `Vencimiento: ${alta.vencimiento}`;
-    if (alta.proveedor) await notificarComprador(alta.proveedor, mensajeComprador);
-
-    await ctx.reply(
-      `Reposición registrada. Ahora hay ${nuevoTotal} unidades en promoción de este producto.` +
-      (alta.proveedor ? ` Se intentó notificar al comprador de "${alta.proveedor}".` : '')
-    );
+    await ctx.reply(`Reposición registrada. Ahora hay ${nuevoTotal} unidades en promoción de este producto.`);
     return ctx.scene.leave();
   }
 );

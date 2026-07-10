@@ -1,7 +1,6 @@
 const { Scenes } = require('telegraf');
 const { buscarArticulos } = require('../db/articulos');
 const { crearAlta, historialProducto } = require('../db/compras');
-const { notificarComprador } = require('../notificar');
 const { respuesta, esCancelar, parseUnidades, opciones, preguntar } = require('../lib/wizard');
 const { parseVencimiento, formatoVencimiento, diasHasta } = require('../lib/fechas');
 
@@ -175,21 +174,10 @@ const altaWizard = new Scenes.WizardScene(
     });
 
     const hist = await historialProducto({ articuloCodigo: d.articuloCodigo || null, producto: d.producto });
-    const mensajeComprador =
-      '⚠️ Producto pasado a promoción por vencimiento\n\n' +
-      `Producto: ${d.producto}\n` +
-      `Proveedor: ${d.proveedor || '-'}\n` +
-      `Cantidad: ${d.cantidad}\n` +
-      `Descuento: ${d.descuentoPct}%\n` +
-      `Motivo: ${d.motivo}\n` +
-      `Vencimiento: ${d.vencimiento}\n\n` +
-      `Historial: este producto lleva ${hist.veces} alta(s) en promoción, ${hist.unidades} unidades en total. ` +
-      'Tenelo en cuenta al recomprar.';
-    if (d.proveedor) await notificarComprador(d.proveedor, mensajeComprador);
-
     await ctx.reply(
-      `Alta registrada (id ${altaId}).` +
-      (d.proveedor ? ` Se intentó notificar al comprador de "${d.proveedor}".` : '')
+      `Alta registrada (id ${altaId}).\n\n` +
+      `Historial: este producto lleva ${hist.veces} alta(s) en promoción, ${hist.unidades} unidades en total. ` +
+      'Tenelo en cuenta al recomprar.'
     );
     return ctx.scene.leave();
   }

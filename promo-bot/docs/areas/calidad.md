@@ -47,6 +47,14 @@ nueva —mismo producto/proveedor/vencimiento/motivo— con las unidades restant
 nuevo. El histórico del producto queda con dos altas en vez de una, lo cual es correcto: refleja que
 hubo dos tramos con distinto %.
 
+**Aviso al equipo de Compras:** solo se avisa cuando se hace **`/baja`** (no en `/alta`,
+`/reposicion` ni `/cambiopromocion`). No manda el resultado puntual de esa baja: manda el **reporte
+completo del proveedor** (histórico, el mismo texto que arma `/reporte`, ver
+`src/lib/reporte-proveedor.js`), ya actualizado con la baja recién hecha. Va a **todos los usuarios
+con el rol `compras`** (sin importar de qué proveedor se trate — no hay mapeo por proveedor). Sale de
+`telegramIdsPorRol('compras')`, la misma tabla `bot.usuario_area` que usa todo lo demás; agregar o
+sacar gente es un `/usuarios agregar` / `/usuarios quitar`, sin tocar código ni archivos de config.
+
 ## Avisos de vencimiento
 
 Scheduler diario a las **9:00 hora Argentina**. Avisa a Calidad de lo que **vence mañana/hoy**, y al
@@ -70,10 +78,8 @@ Una revisión adversarial encontró y se corrigieron los críticos:
 
 Del review quedaron **medios** sin resolver (registrados en la memoria del proyecto):
 
-- Cantidad `1.000` (mil, notación argentina) se registra como `1`.
 - Si la DB falla justo después de guardar el alta, puede quedar un alta **duplicada**.
 - La lista de `/baja` trunca a 15 camadas sin avisar.
-- `/reporte` por proveedor mezcla proveedores por coincidencia parcial de nombre.
 - Motivos de baja tipeados a mano ("se venció") no cuentan como descarte.
 - El mismo producto cargado del maestro y a mano se parte en dos historiales.
 
