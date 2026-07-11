@@ -22,6 +22,10 @@ REPO_MOTOR="$HERE/src/masmelos"          # la copia vendoreada (en este repo)
 SRC_MOTOR="$ANALYTICS/src/masmelos"      # la fuente (masmelos-analytics)
 COPIADO="$HERE/COPIADO_DE.md"
 
+# Lo que se vendorea: SOLO el subset del arqueo. masmelos-analytics/src/masmelos
+# tiene además analysis/, clientes/, etc. que el bot no usa ni necesita.
+SUBSET="__init__.py config.py update_arqueo.py arqueo"
+
 if [ -z "$ANALYTICS" ]; then
   echo "Falta la ruta a masmelos-analytics."
   echo "  Como argumento:  bash arqueo/sync.sh $CMD /ruta/a/masmelos-analytics"
@@ -43,9 +47,13 @@ case "$CMD" in
     echo "Fuente (masmelos-analytics): $(branch_src) @ $(hash_src)"
     echo "Vendoreado (COPIADO_DE.md):  commit $(hash_vendor)"
     echo ""
-    if diff -r --strip-trailing-cr --exclude=__pycache__ "$SRC_MOTOR" "$REPO_MOTOR"; then
+    drift=0
+    for item in $SUBSET; do
+      diff -r --strip-trailing-cr --exclude=__pycache__ "$SRC_MOTOR/$item" "$REPO_MOTOR/$item" || drift=1
+    done
+    if [ "$drift" = "0" ]; then
       echo ""
-      echo "✓ EN SYNC — el motor del repo es igual al de masmelos-analytics (contenido)."
+      echo "✓ EN SYNC — el subset del arqueo del repo es igual al de masmelos-analytics (contenido)."
     else
       echo ""
       echo "✗ DRIFT — hay diferencias (ver arriba). Actualizá con:  bash arqueo/sync.sh sync"
@@ -53,9 +61,11 @@ case "$CMD" in
     fi
     ;;
   sync)
-    echo "Copiando el motor desde $SRC_MOTOR ..."
+    echo "Copiando el subset del arqueo desde $SRC_MOTOR ..."
     rm -rf "$REPO_MOTOR"
-    cp -r "$SRC_MOTOR" "$REPO_MOTOR"
+    mkdir -p "$REPO_MOTOR"
+    for item in $SUBSET; do cp -r "$SRC_MOTOR/$item" "$REPO_MOTOR/$item"; done
+    find "$REPO_MOTOR" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null
     H="$(hash_src)"; B="$(branch_src)"
     sed -i "s|^- \*\*Rama\*\*:.*|- **Rama**: \`$B\`|"     "$COPIADO"
     sed -i "s|^- \*\*Commit\*\*:.*|- **Commit**: \`$H\`|" "$COPIADO"

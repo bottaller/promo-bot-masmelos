@@ -28,26 +28,18 @@ Uso:
     python -m masmelos.update_arqueo --desde 2026-07-01 --hasta 2026-07-06
     python -m masmelos.update_arqueo exp.xlsx --sin-snapshot   # no acumular
 
-Como API (para envolverlo desde un bot u otro proceso — entra Excel, sale HTML):
-    from masmelos.update_arqueo import correr_arqueo
-    from masmelos.arqueo.parse import ArqueoUsuarioError
-    try:
-        res = correr_arqueo(["/ruta/export.xlsx"])
-        mandar_archivo(res["html"])
-    except ArqueoUsuarioError as e:
-        responder(str(e))   # mensaje apto para reenviar tal cual
-
 Razonamiento completo: docs/arqueo/README.md.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import json
 import logging
 import os
 import sys
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 
@@ -213,41 +205,44 @@ def _imprimir_flujo(grafo) -> None:
         print(f"  {r['destino']:<24} {r['categoria']:<14} $ {r['monto']:>15,.0f}")
 
 
-def correr_arqueo(exports: list | tuple = (), *, desde: str | None = None,
-                  hasta: str | None = None, sin_snapshot: bool = False) -> dict:
-    """Corre el arqueo completo y devuelve las rutas de los informes.
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Arqueo de caja desde el diario de movimientos de Sigma."
+    )
+    ap.add_argument("exports", nargs="*",
+                    help="Uno o más .xlsx exportados de Sigma. Si se omiten, "
+                         "se usa el snapshot local acumulado.")
+    ap.add_argument("--sin-snapshot", action="store_true",
+                    help="No acumular el export al snapshot local.")
+    ap.add_argument("--desde", type=str, default=None,
+                    help="Inicio de la ventana del reporte (YYYY-MM-DD).")
+    ap.add_argument("--hasta", type=str, default=None,
+                    help="Fin de la ventana del reporte (YYYY-MM-DD).")
+    ap.add_argument("--abrir", action="store_true",
+                    help="Abrir los informes (Excel + flujo HTML) al terminar. "
+                         "Lo usa arqueo.bat; por consola normalmente no hace falta.")
+    ap.add_argument("--json", action="store_true",
+                    help="Emitir una línea JSON final con las rutas ({ok, html, xlsx}); "
+                         "el resumen humano va a stderr. Para invocarlo desde un bot.")
+    args = ap.parse_args(argv)
 
-    Es la API para envolver el arqueo desde otro proceso — por ejemplo un bot
-    que recibe el export por chat y responde con el HTML del flujo:
-
-        from masmelos.update_arqueo import correr_arqueo
-        res = correr_arqueo(["/ruta/al/export.xlsx"])
-        mandar_archivo(res["html"])          # Control 2 (dashboard)
-
-    Errores esperables (archivo que no es el Diario, sin datos, ventana vacía,
-    fecha ilegible) salen como parse.ArqueoUsuarioError — subclase de
-    ValueError — con mensaje apto para reenviar al usuario tal cual. Capturá
-    ESA clase (no ValueError a secas, que también matchearía errores internos
-    de pandas). Todo lo demás es un bug y propaga su excepción original.
-
-    Devuelve un dict con:
-    - "xlsx" / "html": Paths de los dos informes (Control 1 / Control 2).
-    - "desde" / "hasta": la ventana efectiva del reporte.
-    - "log_dif" / "log_rev": estado de los logs acumulativos (ruta o aviso de
-      que quedó abierto en Excel y no se pudo escribir).
-    - "meta", "arqueo", "difc_res", "bolsines", "alertas", "grafo": los objetos
-      del cálculo (los usa main() para imprimir; un bot puede ignorarlos).
-    """
-    # Un string suelto se iteraría por CARACTERES ("C", ":", "/"…) — error
-    # fácil de cometer desde un wrapper; lo envolvemos en lista.
-    if isinstance(exports, (str, Path)):
-        exports = [exports]
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
     # 1. Cargar exports y/o snapshot.
     metas = []
     nuevos = None
-    for ruta in exports:
-        df_exp, meta_exp = parse.cargar_export(ruta)
+    for ruta in args.exports:
+        try:
+            df_exp, meta_exp = parse.cargar_export(ruta)
+        except Exception as e:  # noqa: BLE001 — cargar_export es el borde de entrada
+            # Cualquier fallo leyendo/validando el export es un problema del archivo
+            # que mandó el usuario (otro formato, no es el Diario de Sigma, corrupto).
+            # En --json lo devolvemos como error de usuario; sin --json, comportamiento
+            # de siempre (propaga con traceback).
+            if args.json:
+                print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+                return 0
+            raise
         metas.append(meta_exp)
         if nuevos is None:
             nuevos = df_exp
@@ -258,7 +253,7 @@ def correr_arqueo(exports: list | tuple = (), *, desde: str | None = None,
                 ignore_index=True,
             )
 
-    if nuevos is not None and not sin_snapshot:
+    if nuevos is not None and not args.sin_snapshot:
         base = parse.actualizar_snapshot(nuevos, config.ARQUEO_SNAPSHOT)
     elif nuevos is not None:
         base = nuevos
@@ -266,26 +261,19 @@ def correr_arqueo(exports: list | tuple = (), *, desde: str | None = None,
         base = pd.read_parquet(config.ARQUEO_SNAPSHOT)
         logger.info("Sin exports nuevos: uso el snapshot (%s filas)", len(base))
     else:
-        raise parse.ArqueoUsuarioError(
-            "No hay exports ni snapshot previo. Pasá al menos un .xlsx del "
-            "diario de movimientos de Sigma."
-        )
+        print("No hay exports ni snapshot previo. Pasá al menos un .xlsx del "
+              "diario de movimientos de Sigma.", file=sys.stderr)
+        return 1
 
     # 2. Ventana del reporte: lo que trajo el export nuevo, o lo que se pida.
     ref = nuevos if nuevos is not None else base
-    try:
-        desde = pd.to_datetime(desde) if desde else ref["fecha"].min()
-        hasta = pd.to_datetime(hasta) if hasta else ref["fecha"].max()
-    except ValueError as e:  # "ayer", "1/13/2026"… → jerga de pandas
-        raise parse.ArqueoUsuarioError(
-            "No entendí la fecha de la ventana. Usá el formato YYYY-MM-DD "
-            "(ej. --desde 2026-07-01)."
-        ) from e
+    desde = pd.to_datetime(args.desde) if args.desde else ref["fecha"].min()
+    hasta = pd.to_datetime(args.hasta) if args.hasta else ref["fecha"].max()
     df = base[(base["fecha"] >= desde) & (base["fecha"] <= hasta)].copy()
     if df.empty:
-        raise parse.ArqueoUsuarioError(
-            f"No hay movimientos entre {desde:%Y-%m-%d} y {hasta:%Y-%m-%d}."
-        )
+        print(f"No hay movimientos entre {desde:%Y-%m-%d} y {hasta:%Y-%m-%d}.",
+              file=sys.stderr)
+        return 1
 
     meta = {
         "desde": desde, "hasta": hasta,
@@ -330,9 +318,7 @@ def correr_arqueo(exports: list | tuple = (), *, desde: str | None = None,
     out_xlsx = excel.generar_excel(out_xlsx, meta, arqueo, medios, bolsines,
                                    difc_eventos, difc_res, tabla_alertas, cascada, usd)
     try:
-        # path explícito (no el default de la firma) para que se resuelva en
-        # runtime: los tests y otros procesos pueden redirigir las globales.
-        actualizar_log_diferencias(difc_eventos, path=DIF_LOG_PATH)
+        actualizar_log_diferencias(difc_eventos)
         log_msg = str(DIF_LOG_PATH)
     except PermissionError:
         log_msg = ("NO se actualizó — está abierto en Excel. Cerralo y volvé a "
@@ -349,7 +335,7 @@ def correr_arqueo(exports: list | tuple = (), *, desde: str | None = None,
             if pd.notna(e) and str(e).strip()
         } if len(log) else {}
     try:
-        log_aut = actualizar_log_autorizaciones(grafo["salidas"], path=AUTORIZ_LOG_PATH)
+        log_aut = actualizar_log_autorizaciones(grafo["salidas"])
         autoriz = _autoriz_dict(log_aut)
         aut_msg = str(AUTORIZ_LOG_PATH)
     except PermissionError:
@@ -366,62 +352,28 @@ def correr_arqueo(exports: list | tuple = (), *, desde: str | None = None,
     out_html = flujo_html.generar_flujo_html(
         mes_dir / f"flujo_{desde:%Y-%m-%d}_{hasta:%Y-%m-%d}.html", grafo, meta, autoriz)
 
-    return {
-        "xlsx": out_xlsx, "html": out_html,
-        "desde": desde, "hasta": hasta,
-        "log_dif": log_msg, "log_rev": aut_msg,
-        "meta": meta, "arqueo": arqueo, "difc_res": difc_res,
-        "bolsines": bolsines, "alertas": tabla_alertas, "grafo": grafo,
-    }
-
-
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
-        description="Arqueo de caja desde el diario de movimientos de Sigma."
-    )
-    ap.add_argument("exports", nargs="*",
-                    help="Uno o más .xlsx exportados de Sigma. Si se omiten, "
-                         "se usa el snapshot local acumulado.")
-    ap.add_argument("--sin-snapshot", action="store_true",
-                    help="No acumular el export al snapshot local.")
-    ap.add_argument("--desde", type=str, default=None,
-                    help="Inicio de la ventana del reporte (YYYY-MM-DD).")
-    ap.add_argument("--hasta", type=str, default=None,
-                    help="Fin de la ventana del reporte (YYYY-MM-DD).")
-    ap.add_argument("--abrir", action="store_true",
-                    help="Abrir los informes (Excel + flujo HTML) al terminar. "
-                         "Lo usa arqueo.bat; por consola normalmente no hace falta.")
-    args = ap.parse_args(argv)
-
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-
-    try:
-        res = correr_arqueo(args.exports, desde=args.desde, hasta=args.hasta,
-                            sin_snapshot=args.sin_snapshot)
-    except parse.ArqueoUsuarioError as e:
-        # SOLO los errores esperables con mensaje para el usuario (export
-        # inválido, sin datos, ventana vacía). ValueError a secas taparía
-        # errores internos de pandas — un bug real propaga con traceback.
-        print(str(e), file=sys.stderr)
-        return 1
-
-    _imprimir_resumen(res["meta"], res["arqueo"], res["difc_res"],
-                      res["bolsines"], res["alertas"])
-    _imprimir_flujo(res["grafo"])
-    print(f"\nExcel:  {res['xlsx']}")
-    print(f"Flujo:  {res['html']}")
-    print(f"Log dif.:    {res['log_dif']}")
-    print(f"Log autoriz: {res['log_rev']}")
+    # En --json el resumen humano va a stderr, para que stdout quede solo con la línea JSON.
+    with (contextlib.redirect_stdout(sys.stderr) if args.json else contextlib.nullcontext()):
+        _imprimir_resumen(meta, arqueo, difc_res, bolsines, tabla_alertas)
+        _imprimir_flujo(grafo)
+        print(f"\nExcel:  {out_xlsx}")
+        print(f"Flujo:  {out_html}")
+        print(f"Log dif.:    {log_msg}")
+        print(f"Log autoriz: {aut_msg}")
 
     # Abrir los informes con la app por defecto (Excel / navegador). Lo pide
     # arqueo.bat con --abrir; abre las rutas EXACTAS que se generaron, sin tener
     # que adivinar la subcarpeta del mes.
     if args.abrir and hasattr(os, "startfile"):
-        for f in (res["xlsx"], res["html"]):
+        for f in (out_xlsx, out_html):
             try:
                 os.startfile(f)  # noqa: S606 — Windows, ruta propia del script
             except OSError:
                 pass
+
+    if args.json:
+        print(json.dumps({"ok": True, "html": str(out_html), "xlsx": str(out_xlsx)},
+                         ensure_ascii=False))
     return 0
 
 

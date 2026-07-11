@@ -17,30 +17,12 @@ Formato del archivo (validado contra el export real de jul-2026):
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
-
-
-class ArqueoUsuarioError(ValueError):
-    """Error ESPERABLE con mensaje apto para reenviar tal cual al usuario
-    final (ej. un bot que recibe el Excel por chat): dice qué está mal y qué
-    hacer, sin traceback ni jerga. Hereda de ValueError para no romper a los
-    llamadores existentes.
-
-    Los llamadores (main(), un bot) deben capturar ESTA clase — no ValueError
-    a secas, que también matchearía errores internos de pandas (IntCastingNaN,
-    DateParseError…) cuyo mensaje no es para el usuario.
-    """
-
-
-class ExportInvalidoError(ArqueoUsuarioError):
-    """El archivo no es un export válido del "Diario de movimientos" de Sigma."""
-
 
 # Renombre posicional de las 18 columnas del export.
 COLUMNAS = [
@@ -59,82 +41,38 @@ _RE_PERIODO = re.compile(r"del\s+(\d{2}/\d{2}/\d{4})\s+al\s+(\d{2}/\d{2}/\d{4})"
 def cargar_export(path: str | Path) -> tuple[pd.DataFrame, dict]:
     """Lee un export del diario y devuelve (datos normalizados, metadatos).
 
-    Falla temprano (ExportInvalidoError, con mensaje apto para reenviar al
-    usuario) si el archivo no tiene la forma esperada: mejor cortar acá que
-    producir un arqueo silenciosamente incompleto.
+    Falla temprano (ValueError) si el archivo no tiene la forma esperada:
+    mejor cortar acá que producir un arqueo silenciosamente incompleto.
     """
     path = Path(path)
-    if not path.exists():
-        raise ExportInvalidoError(
-            f"No encuentro el archivo '{path}'. Revisá la ruta o el nombre."
-        )
-    try:
-        crudo = pd.read_excel(path, header=None)
-    except Exception as e:  # archivo corrupto, PDF renombrado, formato raro…
-        raise ExportInvalidoError(
-            f"No pude abrir '{path.name}' como Excel. Mandá el archivo .xlsx "
-            "tal como sale de Sigma (reporte 'Diario de movimientos contables')."
-        ) from e
+    crudo = pd.read_excel(path, header=None)
 
     if crudo.shape[1] != len(COLUMNAS):
-        raise ExportInvalidoError(
-            f"'{path.name}' tiene {crudo.shape[1]} columnas y el Diario de "
-            f"movimientos de Sigma trae {len(COLUMNAS)}. ¿Es otro reporte, o "
-            "cambió el formato en Sigma?"
+        raise ValueError(
+            f"El export tiene {crudo.shape[1]} columnas y se esperaban "
+            f"{len(COLUMNAS)}. ¿Cambió el formato del reporte en Sigma?"
         )
 
-    # El header "Mov." NO está en una fila fija: el título "Empresa: …" se
-    # wrapea a 2+ filas cuando el export incluye varias empresas (visto en el
-    # export real con 0006-0009). Se busca en las primeras filas.
-    header_idx = None
-    for i in range(min(10, len(crudo))):
-        if str(crudo.iloc[i, 0]).strip() == "Mov.":
-            header_idx = i
-            break
-    if header_idx is None:
-        raise ExportInvalidoError(
-            f"'{path.name}' no parece el 'Diario de movimientos' de Sigma "
-            "(no encontré la fila de encabezados que arranca con 'Mov.'). "
-            "Exportá ese reporte y volvé a mandarlo."
+    titulo_empresa = str(crudo.iloc[0, 0]) if pd.notna(crudo.iloc[0, 0]) else ""
+    titulo_periodo = str(crudo.iloc[1, 0]) if pd.notna(crudo.iloc[1, 0]) else ""
+    header = str(crudo.iloc[2, 0]).strip()
+    if header != "Mov.":
+        raise ValueError(
+            f"La fila 3 debería arrancar con el header 'Mov.' y trae {header!r}. "
+            "¿Es realmente un 'Diario de movimientos' de Sigma?"
         )
-    # Título: las filas antes del header. La empresa arranca con "Empresa:";
-    # el período es la fila que matchea "del DD/MM/YYYY al DD/MM/YYYY".
-    # El wrap de Sigma es un corte puro por ancho (puede partir MID-TOKEN, ej.
-    # "…0009-" / "HONRE_2_…") y cada fragmento conserva sus propios espacios,
-    # así que se reconstruye con "".join — un join con " " metería espacios
-    # espurios adentro de los nombres (verificado con el export real).
-    titulos = [str(crudo.iloc[i, 0]) for i in range(header_idx)
-               if pd.notna(crudo.iloc[i, 0])]
-    titulo_empresa = "".join(t for t in titulos if not _RE_PERIODO.search(t))
-    titulo_periodo = next((t for t in titulos if _RE_PERIODO.search(t)), "")
 
-    df = crudo.iloc[header_idx + 1:].copy()
+    df = crudo.iloc[3:].copy()
     df.columns = COLUMNAS
     df = df.dropna(subset=["mov"]).reset_index(drop=True)
-    if df.empty:
-        raise ExportInvalidoError(
-            f"'{path.name}' tiene el formato correcto pero está vacío (sin "
-            "movimientos). Revisá el rango de fechas con el que exportaste."
-        )
 
-    # La normalización también va bajo el paraguas de ExportInvalidoError: un
-    # archivo con la forma correcta pero contenido raro (fila de totales en
-    # `mov`, un bool perdido en `fecha`) tiraría TypeError/ValueError crudos de
-    # pandas — jerga que no es para el usuario.
-    try:
-        df["mov"] = df["mov"].astype("int64")
-        df["fecha"] = pd.to_datetime(df["fecha"]).dt.normalize()
-        df["ingreso"] = pd.to_datetime(df["ingreso"])
-        # `ult_modif` viene casi siempre vacío; normalizarlo a datetime nos deja
-        # comparar frescura por asiento en el snapshot (y detectar modificaciones).
-        df["ult_modif"] = pd.to_datetime(df["ult_modif"], errors="coerce")
-        df["cuenta_id"] = df["cuenta_id"].astype("int64")
-    except Exception as e:
-        raise ExportInvalidoError(
-            f"'{path.name}' tiene la forma del Diario de movimientos pero no "
-            "pude interpretar sus datos (¿una fila de totales u otro contenido "
-            "raro?). Re-exportá el reporte de Sigma sin modificarlo."
-        ) from e
+    df["mov"] = df["mov"].astype("int64")
+    df["fecha"] = pd.to_datetime(df["fecha"]).dt.normalize()
+    df["ingreso"] = pd.to_datetime(df["ingreso"])
+    # `ult_modif` viene casi siempre vacío; normalizarlo a datetime nos deja
+    # comparar frescura por asiento en el snapshot (y detectar modificaciones).
+    df["ult_modif"] = pd.to_datetime(df["ult_modif"], errors="coerce")
+    df["cuenta_id"] = df["cuenta_id"].astype("int64")
     for col in _NUMERICAS:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
     for col in ("comp", "concepto", "cuenta", "usuario"):
@@ -219,11 +157,7 @@ def actualizar_snapshot(df: pd.DataFrame, path: str | Path) -> pd.DataFrame:
     else:
         combinado = df.copy()
     combinado = combinado.sort_values(["mov", "ingreso"], kind="stable").reset_index(drop=True)
-    # Escritura atómica (tmp + replace): si el proceso muere a mitad de
-    # escritura, el snapshot anterior queda intacto en vez de un parquet trunco.
-    tmp = path.with_suffix(".parquet.tmp")
-    combinado.to_parquet(tmp, index=False)
-    os.replace(tmp, path)
+    combinado.to_parquet(path, index=False)
     logger.info("Snapshot %s: %s filas / %s asientos", path.name,
                 len(combinado), combinado["mov"].nunique())
     return combinado

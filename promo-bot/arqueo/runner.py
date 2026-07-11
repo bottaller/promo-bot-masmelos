@@ -1,50 +1,38 @@
-"""Puente Node -> motor de arqueo. Entra la ruta de un Excel, sale una línea JSON.
+"""Puente Node -> motor de arqueo. Llama al CLI del motor (su interfaz pública) con
+--json y deja que emita la línea JSON del contrato.
 
-Este archivo es PROPIO del repo promo-bot (no es parte del motor copiado, así que
-sí se puede editar acá). El bot Node lo ejecuta con:
+Este archivo es PROPIO del repo promo-bot (sí se edita acá). El bot Node lo ejecuta con:
 
     python arqueo/runner.py <ruta_del_excel>
 
 y lee la ÚLTIMA línea de stdout como JSON:
     {"ok": true,  "html": "<ruta>", "xlsx": "<ruta>"}
-    {"ok": false, "error": "<mensaje para el usuario>"}   # export inválido / sin datos
+    {"ok": false, "error": "<mensaje para el usuario>"}   # export inválido
 
-Ante un error inesperado (bug real), NO imprime JSON: propaga el traceback por
-stderr y sale con código != 0, para que el Node muestre un error genérico y quede
-el log completo.
+Ante un error inesperado (bug real), el motor propaga el traceback por stderr y sale
+con código != 0; el bot muestra un error genérico.
+
+NO importa funciones internas del motor: solo su CLI (`main` + `--json`). Así los
+refactors del motor no rompen el bot mientras el CLI mantenga el contrato --json.
 """
-import contextlib
-import json
 import os
 import sys
 
-# El paquete `masmelos` vive en arqueo/src/ (así config.py resuelve bien sus rutas
-# con parents[2] = arqueo/, donde escribe data/ y reports/).
+# El paquete `masmelos` vive en arqueo/src/ (config.py resuelve sus rutas con parents[2]).
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "src"))
 
+from masmelos.update_arqueo import main  # noqa: E402 — después de armar el sys.path
 
-def main() -> int:
+
+def _main() -> int:
     if len(sys.argv) < 2 or not sys.argv[1].strip():
-        print(json.dumps({"ok": False, "error": "Falta la ruta del Excel."}))
+        print('{"ok": false, "error": "Falta la ruta del Excel."}')
         return 0
-
-    ruta = sys.argv[1]
-    from masmelos.update_arqueo import correr_arqueo
-    from masmelos.arqueo.parse import ArqueoUsuarioError
-
-    try:
-        # El motor loguea/imprime su resumen: lo mandamos a stderr para dejar
-        # stdout limpio (solo la línea JSON del contrato).
-        with contextlib.redirect_stdout(sys.stderr):
-            res = correr_arqueo([ruta], sin_snapshot=True)
-    except ArqueoUsuarioError as e:
-        print(json.dumps({"ok": False, "error": str(e)}))
-        return 0
-
-    print(json.dumps({"ok": True, "html": str(res["html"]), "xlsx": str(res["xlsx"])}))
-    return 0
+    # --sin-snapshot: no acumular (no dependemos del disco persistente de Railway).
+    # --json: el motor imprime la línea JSON con las rutas; el resumen humano va a stderr.
+    return main([sys.argv[1], "--sin-snapshot", "--json"])
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_main())

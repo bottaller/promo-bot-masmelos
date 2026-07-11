@@ -305,6 +305,9 @@ _TEMPLATE = r"""<!doctype html><html lang="es"><head><meta charset="utf-8">
  .legend span { display: inline-flex; align-items: center; gap: 6px; }
  .dot { width: 14px; height: 5px; border-radius: 3px; display: inline-block; }
  .dot.dotp { width: 11px; height: 11px; border-radius: 3px; border: 1.5px solid #6366f1; }
+ .viewtoggle { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #475569; margin: 12px 4px 0; }
+ .viewtoggle button { font: inherit; padding: 3px 11px; border: 1px solid #cbd5e1; background: #fff; color: #475569; border-radius: 6px; cursor: pointer; }
+ .viewtoggle button.on { background: #0f172a; color: #fff; border-color: #0f172a; }
  h2 { font-size: 16px; font-weight: 600; margin: 6px 0 3px; }
  .tintro { font-size: 13px; color: #64748b; margin-bottom: 12px; }
  .sechead { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; font-weight: 600; color: #334155; margin: 18px 2px 8px; padding-bottom: 5px; border-bottom: 1px solid #e2e8f0; }
@@ -342,6 +345,7 @@ _TEMPLATE = r"""<!doctype html><html lang="es"><head><meta charset="utf-8">
  <div class="stat fuga"><div class="lbl">Salidas a considerar</div><div class="num" id="s4"></div></div>
 </div>
 <div class="card"><svg viewBox="0 0 %(ancho)d %(alto)d" id="svg"></svg></div>
+<div class="viewtoggle">Por nodo, mostrar: <button id="mPaso" class="on">cuánto pasó</button><button id="mQuedo">cuánto quedó</button></div>
 <div class="legend">
  <span><i class="dot" style="background:#94a3b8"></i> flujo interno</span>
  <span><i class="dot" style="background:#ea580c"></i> a considerar</span>
@@ -366,6 +370,11 @@ var fmtM = function(v){ var a=Math.abs(v);
  if(a>=1e3) return '$'+Math.round(v/1e3).toLocaleString('es-AR')+'K';
  return '$'+Math.round(v).toLocaleString('es-AR'); };
 var fmtF = function(v){ return '$'+Math.round(v).toLocaleString('es-AR'); };
+// Número que muestra cada nodo. 'paso' = lo que circuló (n.amount, el default);
+// 'quedo' = entró − salió (lo que se retuvo en ese nodo). El tamaño del nodo NO
+// cambia (sigue siendo la actividad); solo cambia el número.
+var modo='paso';
+function montoNodo(n){ return modo==='quedo' ? (n.entro-n.salio) : n.amount; }
 // Escapar texto libre (concepto/asociado/usuario/estado tipeados en Sigma)
 // antes de meterlo en innerHTML — evita que un '<' rompa o inyecte el arbol.
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -448,7 +457,7 @@ function render(eid){
   }
   var suf=n.exp?'  ⊕':(n.colapsar?'  ⊖':''), cy=n.h/2;
   var tl=el('text',{x:10,y:n.amount?cy-2:cy+4,'class':'nlbl'});tl.textContent=n.label+suf;g.appendChild(tl);
-  if(n.amount){var ta=el('text',{x:10,y:cy+13,'class':'namt'});ta.textContent=fmtM(n.amount)+(n.parked?' · parado':'');g.appendChild(ta);}
+  if(n.amount){var ta=el('text',{x:10,y:cy+13,'class':'namt'});ta.textContent=fmtM(montoNodo(n))+(n.parked?' · parado':'');g.appendChild(ta);}
   g.addEventListener('mousemove',function(e){
    if(drag)return;
    tip.style.opacity=1;tip.style.left=(e.clientX+12)+'px';tip.style.top=(e.clientY+12)+'px';
@@ -467,6 +476,12 @@ function render(eid){
 render('');
 var rb=document.getElementById('reset');
 if(rb)rb.addEventListener('click',function(e){e.preventDefault();render(curEid);});
+function setModo(m){ modo=m;
+ document.getElementById('mPaso').className=(m==='paso'?'on':'');
+ document.getElementById('mQuedo').className=(m==='quedo'?'on':'');
+ render(curEid); }
+document.getElementById('mPaso').addEventListener('click',function(){setModo('paso');});
+document.getElementById('mQuedo').addEventListener('click',function(){setModo('quedo');});
 document.getElementById('s1').textContent=fmtM(DATA.stats.entro);
 document.getElementById('s2').textContent=fmtM(DATA.stats.banco);
 document.getElementById('s3').textContent=fmtM(DATA.stats.fuera);
