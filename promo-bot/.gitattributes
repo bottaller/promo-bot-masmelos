@@ -4,3 +4,6 @@
 #      en los dos lugares, byte por byte), y
 #   2) el build Linux de Railway reciba los archivos con el formato correcto.
 arqueo/** text eol=lf
+
+# Los .xlsx son binarios: git no debe tocarles los saltos de línea (los corrompería).
+*.xlsx binary
