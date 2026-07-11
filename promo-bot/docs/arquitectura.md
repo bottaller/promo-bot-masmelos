@@ -119,7 +119,7 @@ schema `bot` **no** está en la lista de "Exposed schemas" de Supabase → la AP
 de la web no lo ve. El bot se conecta por **conexión directa de Postgres** (`pg` + connection string),
 que sí llega a `bot`. **No** usamos la API REST / `supabase-js` para el bot (eso reexpondría el schema).
 
-**Implementado (migraciones 001–003):**
+**Implementado (migraciones 001–010):**
 
 ```
 -- 001 acceso
@@ -135,13 +135,18 @@ bot.compras_altas  (id, fecha, usuario_id, articulo_codigo, ean, producto, prove
                     lote, vencimiento, cantidad, motivo,
                     fecha_baja, cantidad_vendida, cantidad_remanente, motivo_baja,
                     aviso_vencimiento_fecha, aviso_vencido)   -- 005: avisos de vencimiento
+-- 008–010 tesorería: conciliación diaria (saldos vs libro). Ver conciliacion.md.
+bot.tesoreria_saldos        (fecha, empresa, cuenta, moneda, monto, cargado_por)        -- realidad (aplicada)
+bot.tesoreria_movimientos   (fecha, empresa, cuenta_id, cuenta, debe, haber,           -- libro crudo (009, sin aplicar)
+                             debe_nominal, haber_nominal, cargado_por)
+bot.tesoreria_conciliacion  (fecha, empresa, cuenta, moneda, saldo_ayer, ingresos,     -- cruce (010, sin aplicar)
+                             egresos, saldo_teorico, saldo_real, diferencia, generado_por)
 ```
 
 **Futuro (se define cuando toque cada fase):**
 
 ```
 jobs           -- la cola: (id, tipo, area_id, solicitante, params, estado, resultado, ...)
-tesoreria_*    -- registro de arqueos
 ventas_* / calidad_*   -- NO se crean hasta tener un comando real
 ```
 
@@ -157,7 +162,7 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
   Áreas y sus comandos hoy:
   - **Calidad:** `/alta` (poner un producto en oferta por vencimiento), `/baja` (retirarlo), `/control` (Excel de lo que está en oferta por vencimiento).
   - **Compras:** `/reporte` (por proveedor, buscado por código de proveedor; histórico o por lapso de tiempo).
-  - **Tesorería:** `/flujos` (recibe el Excel de Sigma y devuelve el HTML del flujo del dinero — corre el motor Python, ver §6 y [areas/tesoreria.md](areas/tesoreria.md)).
+  - **Tesorería:** `/flujos` (recibe el Excel de Sigma y devuelve el HTML del flujo del dinero — corre el motor Python, ver §6 y [areas/tesoreria.md](areas/tesoreria.md)) y `/cierre` (cierre diario: carga los saldos del día; la conciliación saldos-vs-libro está en curso, ver [conciliacion.md](conciliacion.md)).
 - **Menú dinámico:** cada usuario ve **solo los comandos de sus áreas**.
 - **Comandos de admin:** `/usuarios` (dar de alta gente, asignar áreas/roles, hacer admin), `/actartic` (subir el maestro de artículos) y `/avisos` (disparar a mano el chequeo de vencimientos).
 - **Avisos proactivos:** un scheduler diario avisa a Calidad de lo que vence mañana/hoy y al creador + admins de lo ya vencido (ver §14).

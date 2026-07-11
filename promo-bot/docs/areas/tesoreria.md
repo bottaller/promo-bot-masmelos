@@ -1,7 +1,7 @@
 # Área Tesorería
 
-> Un doc por área. Este cubre **Tesorería**: el comando `/flujos`, el puente al motor Python y la
-> copia vendoreada del motor. Última actualización: **2026-07-10**.
+> Un doc por área. Este cubre **Tesorería**: los comandos `/flujos` y `/cierre`, el puente al motor
+> Python y la copia vendoreada del motor. Última actualización: **2026-07-11**.
 
 ## Qué hace
 
@@ -15,9 +15,20 @@ Excel y devuelve un **dashboard HTML** (el "Control 2 — Seguí la plata") list
 | Comando | Qué hace |
 |---------|----------|
 | `/flujos` | Pide el Excel del *"Diario de movimientos contables"* de Sigma (`.xlsx`), lo procesa y devuelve el HTML del flujo. Si el archivo no es un export válido, responde el mensaje de error de Sigma. |
+| `/cierre` | Cierre **diario**: pide el Excel *"Existencias al cierre"* y guarda los saldos del día en la DB, con control de cambios (confirmación + aviso a admins). Acepta días anteriores. La conciliación saldos-vs-libro está en curso. |
 
-**Flujo de uso:** `/flujos` → el bot pide el archivo → mandás el `.xlsx` como documento → te devuelve
-`flujo_<desde>_<hasta>.html` (el nombre lleva el período, según [convenciones.md](../convenciones.md)).
+**Flujo de uso (`/flujos`):** `/flujos` → el bot pide el archivo → mandás el `.xlsx` como documento →
+te devuelve `flujo_<desde>_<hasta>.html` (el nombre lleva el período, según
+[convenciones.md](../convenciones.md)).
+
+## Conciliación diaria (`/cierre`)
+
+`/cierre` es el arranque de la **conciliación de caja/bancos**: cada día compara la *realidad* (los
+saldos que carga el tesorero) contra el *libro* (los movimientos de Sigma), cuenta por cuenta, con la
+identidad `saldo_teórico = saldo_ayer + Σdebe − Σhaber`. Hoy `/cierre` carga los saldos; la fase que
+suma el libro (movimientos → conciliación → Excel de diferencias) y los comandos `/semanal`,
+`/mensual` y `/reportecierre` están en construcción. **El plan completo vive en
+[conciliacion.md](../conciliacion.md)** (fórmula, comandos, modelo de datos, mapeo cuenta↔libro).
 
 ## Acceso
 

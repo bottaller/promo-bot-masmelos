@@ -102,24 +102,50 @@ cada vez que se sube un libro, el sistema **actualiza los movimientos del perío
 ## 9. Modelo de datos (schema `bot`)
 
 ```
-tesoreria_saldos       (fecha, empresa, cuenta, moneda, monto, cargado_por)      -- ✅ hecho
-tesoreria_movimientos  (fecha, empresa, cuenta, ingresos, egresos)               -- ⬜ pendiente (del libro)
-tesoreria_conciliacion (fecha, empresa, cuenta, saldo_teorico, saldo_real,       -- ⬜ pendiente (para /reportecierre)
-                        diferencia, acumulada, generado_en)
+tesoreria_saldos       (fecha, empresa, cuenta, moneda, monto, cargado_por)          -- ✅ aplicada (008)
+tesoreria_movimientos  (fecha, empresa, cuenta_id, cuenta, debe, haber,              -- 🟡 migración 009 (sin aplicar)
+                        debe_nominal, haber_nominal, cargado_por)
+tesoreria_conciliacion (fecha, empresa, cuenta, moneda, saldo_ayer, ingresos,        -- 🟡 migración 010 (sin aplicar)
+                        egresos, saldo_teorico, saldo_real, diferencia, generado_por)
 ```
+
+`tesoreria_movimientos` guarda el libro **crudo por cuenta contable de Sigma** (`cuenta_id`), no
+pre-agregado a los 8 nombres de saldo. El mapeo cuenta→saldo y las sumas (la caja fuerte junta varias
+cajas, §10) se resuelven **al conciliar** — así, si el mapeo se corrige, no hay que re-importar el
+libro. `debe/haber` en ARS; `debe_nominal/haber_nominal` en USD (caja dólar).
 
 `tesoreria_conciliacion` guarda el resultado de cada cierre para que `/reportecierre <fecha>` lo
 recupere sin recalcular (y queda como registro de las diferencias). Se recalcula/actualiza cada vez
-que se corre un cierre de esa fecha (upsert).
+que se corre un cierre de esa fecha (upsert). La **`acumulada`** (diferencia corrida por cuenta) **no
+se guarda**: se calcula al leer (suma de `diferencia` hasta esa fecha) — materializarla se rompería
+con las cargas retroactivas.
 
 ## 10. Mapeo cuenta ↔ libro (a resolver con un libro real)
 
 Los saldos usan nombres ("Santander", "Supervielle", "Caja Fuerte Moreno"); el libro usa **códigos de
-cuenta de Sigma**. Hay que atar cada cuenta de saldos con la(s) del libro. Ojo especial:
-- **Caja Fuerte Moreno** junta el efectivo de varias cajas → hay que **sumar** los movimientos de esas
-  cajas del libro.
-- El `config.py` del motor ya tiene mapeados los bancos (Santander `111201014`, Supervielle
-  `111201015`), Mercado Pago, cheques y las cajas — se reutiliza.
+cuenta de Sigma** (`cuenta_id`). Mapeo derivado del `config.py` del motor (a validar con un libro real):
+
+| Cuenta del saldo | `cuenta_id` del libro | Estado |
+|---|---|:--|
+| Santander | `111201014` | ✅ claro |
+| Supervielle | `111201015` | ✅ claro |
+| Mercado Pago | `422101014` | ✅ claro |
+| Caja Dólar Tesorería (USD) | `111102006` (cols *Nominal*) | ✅ claro |
+| Caja Fuerte Moreno | `111101003` **¿+ cascada?** | ⚠️ a definir (§ pregunta) |
+| Cheques en Cartera A | una de `111401001 / 111401008 / 111401010` | ⚠️ a nombrar |
+| Cheques en Cartera B | otra de esas tres | ⚠️ a nombrar |
+| E-cheq en Cartera | la tercera | ⚠️ a nombrar |
+
+- **Caja Fuerte Moreno**: el motor la mapea a `111101003`, pero también existe una *cascada* de
+  efectivo (buzón `111100007`, puente `111100008`, fuerte `111101003`, gerencia `111101004`,
+  administración `111111019`). Falta definir si el saldo "caja fuerte" es solo la fuerte o el total que
+  duerme en la cascada.
+- **Cheques A/B/e-cheq**: son tres `cuenta_id` (`111401001`, `111401008`, `111401010`); cuál es cuál se
+  resuelve directo con el **nombre** que trae el libro al lado del código.
+- **Signo (Debe vs Haber)**: la fórmula asume que las 8 cuentas son **deudoras** (activo: el Debe las
+  sube). Bancos, cajas, cheques y USD lo son. **Mercado Pago** tiene código `422…` (atípico para un
+  activo): si en Sigma resultara **acreedora**, para esa cuenta se invierte el signo. Se valida con el
+  libro real; al guardar el libro crudo por cuenta, el ajuste no obliga a re-importar.
 
 ## 11. Estado
 
@@ -128,13 +154,17 @@ cuenta de Sigma**. Hay que atar cada cuenta de saldos con la(s) del libro. Ojo e
 - Parser del Excel de saldos con validación de fecha.
 - Plantilla `docs/plantillas/plantilla_saldos_HONRE.xlsx`.
 - `/cierre` fase saldos + **control de cambios** (confirmación + aviso a admins).
+- **Formato del libro y fórmula de conciliación decodificados del motor de `/flujos`** (`parse.py` da
+  las 18 columnas; `core.py::cascada_diaria` confirma `saldo = saldo_ayer + Σdebe − Σhaber`).
+- Migraciones **009** (`tesoreria_movimientos`) y **010** (`tesoreria_conciliacion`) escritas —
+  todavía **sin aplicar** (se aplican al validar con un libro real).
 
 **⬜ Pendiente:**
-- Fase 2 de `/cierre`: subir el **libro diario** → `tesoreria_movimientos` → **conciliación** →
-  `tesoreria_conciliacion` → Excel de salida.
+- Parser del **libro diario** en Node → `tesoreria_movimientos`.
+- La **conciliación** (mapeo + fórmula) → `tesoreria_conciliacion` → Excel de salida.
 - Comandos `/semanal` y `/mensual`.
 - Comando `/reportecierre <fecha>` (admin).
-- El **mapeo cuenta ↔ libro** (§10).
+- Cerrar el **mapeo cuenta ↔ libro** (§10) con un libro real: caja fuerte, cheques A/B, e-cheq.
 
 ## 12. Lo que falta para avanzar
 
