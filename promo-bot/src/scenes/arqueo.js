@@ -83,8 +83,10 @@ const arqueoWizard = new Scenes.WizardScene(
         await ctx.reply(res.error || 'No pude procesar el archivo.');
         return ctx.scene.leave();
       }
+      // El motor ya nombra el archivo con el período (flujo_<desde>_<hasta>.html),
+      // así el que lo recibe sabe de qué fechas es sin abrirlo (convenciones.md).
       await ctx.replyWithDocument(
-        { source: fs.readFileSync(res.html), filename: 'flujo_del_dinero.html' },
+        { source: fs.readFileSync(res.html), filename: path.basename(res.html) },
         { caption: 'Flujo del dinero — abrilo en el navegador.' }
       );
       return ctx.scene.leave();

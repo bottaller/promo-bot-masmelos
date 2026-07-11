@@ -1,0 +1,6 @@
+# El motor de arqueo (copia read-only de masmelos-analytics) y su wrapper se guardan
+# con saltos de línea LF, para que:
+#   1) el repo NO diverja de la copia fuente por el autocrlf de Git (que esté igual
+#      en los dos lugares, byte por byte), y
+#   2) el build Linux de Railway reciba los archivos con el formato correcto.
+arqueo/** text eol=lf
