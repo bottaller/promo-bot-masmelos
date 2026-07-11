@@ -13,7 +13,7 @@ datos por varias vías, los procesa (con scripts) y devuelve **reportes digerido
 por el mismo chat.
 
 Hoy arranca cubriendo **Compras** (promociones por vencimiento, lo que ya existe) y **Tesorería**
-(arqueo). Las demás áreas se enchufan después, sin rehacer nada.
+(flujo del dinero). Las demás áreas se enchufan después, sin rehacer nada.
 
 ---
 
@@ -73,7 +73,7 @@ El bot es un hub: los datos entran por tres vías (dos futuras).
 
 ---
 
-## 6. Flujo del `/arqueo` (Tesorería) ✅
+## 6. `/flujos` — el flujo del dinero (Tesorería) ✅
 
 **El sistema (Sigma) es una app de escritorio offline.** El bot no puede sacar el dato solo:
 un humano exporta de Sigma el reporte *"Diario de movimientos contables"* y le manda el `.xlsx`
@@ -81,9 +81,9 @@ al bot, en el área Tesorería. Detalle operativo en [areas/tesoreria.md](areas/
 
 ```
 Humano exporta "Diario de movimientos" de Sigma
-        │  /arqueo → manda el .xlsx   (requiereArea('tesoreria') = admin o rol tesorería)
+        │  /flujos → manda el .xlsx   (requiereArea('tesoreria') = admin o rol tesorería)
         ▼
-Bot Node (src/scenes/arqueo.js): baja el archivo a un temp
+Bot Node (src/scenes/flujos.js): baja el archivo a un temp
         ▼
 spawn("python", ["arqueo/runner.py", ruta])          ← puente Node→Python (§9)
         ▼
@@ -94,11 +94,12 @@ runner.py imprime una línea JSON: {"ok":true,"html":"...","xlsx":"..."}
 Bot: lee el HTML y lo manda por el chat (o, si el export es inválido, el mensaje de error)
 ```
 
-**Contrato con el script** ✅ — implementado en `arqueo/runner.py` (propio del repo, no es parte del
-motor copiado). Llama `correr_arqueo(sin_snapshot=True)` e imprime una **línea final JSON** con las
-rutas (`{"ok":true,"html":"...","xlsx":"..."}`) o `{"ok":false,"error":"<mensaje al usuario>"}` para
-errores esperables (export inválido). El Node lee la última línea de stdout; ante un crash real, el
-runner propaga traceback por stderr y sale ≠ 0.
+**Contrato Node↔motor** ✅ — el bot (`arqueo/runner.py`) ejecuta el **CLI del motor**
+(`python -m masmelos.update_arqueo <excel> --sin-snapshot --json`), que imprime una **línea final
+JSON** con las rutas (`{"ok":true,"html":"...","xlsx":"..."}`) o `{"ok":false,"error":"<mensaje al
+usuario>"}` para errores esperables (export inválido). El Node lee la última línea de stdout; ante un
+crash real, sale ≠ 0 con traceback por stderr. El bot **no depende de funciones internas del motor**
+(solo del contrato `--json` del CLI), así los refactors del motor no lo rompen.
 
 ### Snapshot / estado persistente (diferido)
 
@@ -156,7 +157,7 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
   Áreas y sus comandos hoy:
   - **Calidad:** `/alta` (poner un producto en oferta por vencimiento), `/baja` (retirarlo), `/control` (Excel de lo que está en oferta por vencimiento).
   - **Compras:** `/reporte` (por proveedor, buscado por código de proveedor; histórico o por lapso de tiempo).
-  - **Tesorería:** `/arqueo` (recibe el Excel de Sigma y devuelve el HTML del flujo del dinero — corre el motor Python, ver §6 y [areas/tesoreria.md](areas/tesoreria.md)).
+  - **Tesorería:** `/flujos` (recibe el Excel de Sigma y devuelve el HTML del flujo del dinero — corre el motor Python, ver §6 y [areas/tesoreria.md](areas/tesoreria.md)).
 - **Menú dinámico:** cada usuario ve **solo los comandos de sus áreas**.
 - **Comandos de admin:** `/usuarios` (dar de alta gente, asignar áreas/roles, hacer admin), `/actartic` (subir el maestro de artículos) y `/avisos` (disparar a mano el chequeo de vencimientos).
 - **Avisos proactivos:** un scheduler diario avisa a Calidad de lo que vence mañana/hoy y al creador + admins de lo ya vencido (ver §14).
@@ -166,7 +167,7 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
 
 ## 9. Ejecución de scripts Python (el puente Node → Python) ✅
 
-Implementado para el `/arqueo` (`src/scenes/arqueo.js` + `arqueo/runner.py`):
+Implementado para el `/flujos` (`src/scenes/flujos.js` + `arqueo/runner.py`):
 
 - El bot lanza el script como proceso aparte (`child_process.spawn`), con **timeout** (3 min) y captura de `stdout`.
 - Le pasa el input por argumento (la ruta del Excel descargado a un temp).
@@ -215,7 +216,7 @@ Cada fase deja el bot andando. Sin big-bang. La secuencia prioriza:
   `/alta` busca en el maestro de artículos.
 - **Área Calidad.** ✅ `/alta`, `/baja`, `/control` + avisos de vencimiento (§14). Revisada y endurecida
   (validación de fecha, anti doble-tap, avisos con reintento y recuperación) el 2026-07-10.
-- **Fase 3 — `/arqueo` real.** ✅ (MVP) `/arqueo` en Tesorería recibe el Excel de Sigma, corre el motor
+- **Fase 3 — `/flujos` real.** ✅ (MVP) `/flujos` en Tesorería recibe el Excel de Sigma, corre el motor
   Python (`arqueo/runner.py` → contrato JSON) y devuelve el HTML del flujo. Gated por `requiereArea('tesoreria')`.
   Deploy: `Dockerfile` con Node+Python. Corre **sincrónico y `sin_snapshot`** (sin cola ni volumen todavía).
   El motor vive en `arqueo/src/masmelos/` como copia read-only de `masmelos-analytics` (ver `arqueo/COPIADO_DE.md`).

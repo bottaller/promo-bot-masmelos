@@ -1,12 +1,12 @@
 # Área Tesorería
 
-> Un doc por área. Este cubre **Tesorería**: el comando `/arqueo`, el puente al motor Python y la
+> Un doc por área. Este cubre **Tesorería**: el comando `/flujos`, el puente al motor Python y la
 > copia vendoreada del motor. Última actualización: **2026-07-10**.
 
 ## Qué hace
 
-El **arqueo de caja**: cada mañana el tesorero exporta de **Sigma** (el ERP de escritorio, offline)
-el reporte *"Diario de movimientos contables"* y lo procesa para revisar el **flujo del dinero** —
+El **flujo del dinero**: cada mañana el tesorero exporta de **Sigma** (el ERP de escritorio, offline)
+el reporte *"Diario de movimientos contables"* y lo procesa para ver **cómo se movió la plata** —
 qué entró a cada caja, qué salió del circuito de custodia, y qué diferencias hubo. El bot recibe ese
 Excel y devuelve un **dashboard HTML** (el "Control 2 — Seguí la plata") listo para abrir en el navegador.
 
@@ -14,21 +14,21 @@ Excel y devuelve un **dashboard HTML** (el "Control 2 — Seguí la plata") list
 
 | Comando | Qué hace |
 |---------|----------|
-| `/arqueo` | Pide el Excel del *"Diario de movimientos contables"* de Sigma (`.xlsx`), lo procesa y devuelve el HTML del flujo. Si el archivo no es un export válido, responde el mensaje de error de Sigma. |
+| `/flujos` | Pide el Excel del *"Diario de movimientos contables"* de Sigma (`.xlsx`), lo procesa y devuelve el HTML del flujo. Si el archivo no es un export válido, responde el mensaje de error de Sigma. |
 
-**Flujo de uso:** `/arqueo` → el bot pide el archivo → mandás el `.xlsx` como documento → te devuelve
+**Flujo de uso:** `/flujos` → el bot pide el archivo → mandás el `.xlsx` como documento → te devuelve
 `flujo_<desde>_<hasta>.html` (el nombre lleva el período, según [convenciones.md](../convenciones.md)).
 
 ## Acceso
 
-`/arqueo` está gated por `requiereArea('tesoreria')` = **admin o rol `tesoreria`** (la misma tabla
+`/flujos` está gated por `requiereArea('tesoreria')` = **admin o rol `tesoreria`** (la misma tabla
 `bot.usuarios` / `bot.usuario_area` que todo el resto). No hay allowlist aparte. Para habilitar a
 alguien: `/usuarios agregar <id> tesoreria`. El paso donde se recibe el documento **re-chequea** el
 rol, por si se lo quitan a mitad de camino (es data financiera).
 
 ## El puente Node → Python
 
-El motor del arqueo está en Python; el bot es Node. El comando ([`src/scenes/arqueo.js`](../../src/scenes/arqueo.js)):
+El motor del arqueo está en Python; el bot es Node. El comando ([`src/scenes/flujos.js`](../../src/scenes/flujos.js)):
 
 1. Baja el Excel a un directorio temporal.
 2. Ejecuta `spawn("python", ["arqueo/runner.py", <ruta>])` con timeout de 3 min.
@@ -38,14 +38,15 @@ El motor del arqueo está en Python; el bot es Node. El comando ([`src/scenes/ar
 4. Manda el HTML por el chat (o el mensaje de error). Ante un crash real, el runner sale ≠ 0 con
    traceback por stderr y el bot responde un error genérico.
 
-`arqueo/runner.py` es **propio del repo** (sí se edita acá): envuelve `correr_arqueo(sin_snapshot=True)`
-del motor y arma esa línea JSON. Ver §6 y §9 de [arquitectura.md](../arquitectura.md).
+`arqueo/runner.py` es **propio del repo** (sí se edita acá): ejecuta el **CLI del motor**
+(`python -m masmelos.update_arqueo <excel> --sin-snapshot --json`), que ya emite esa línea JSON — no
+importa funciones internas del motor. Ver §6 y §9 de [arquitectura.md](../arquitectura.md).
 
 ## El motor (copia vendoreada, read-only)
 
 `arqueo/src/masmelos/` (10 archivos) es una **copia read-only** del motor real, que vive en el repo
 `github.com/Renzoca6/masmelos-analytics`. **No se edita acá:** si el motor cambia, se arregla allá y se
-re-copia. Detalle y regla en [`arqueo/COPIADO_DE.md`](../../arqueo/COPIADO_DE.md).
+re-copia. Detalle y regla en [`arqueo/COPIADO_DE.md`](../../flujos/COPIADO_DE.md).
 
 Para mantener la copia sincronizada hay un script **local** (no corre en Railway):
 

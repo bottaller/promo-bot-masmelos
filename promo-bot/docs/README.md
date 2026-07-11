@@ -6,14 +6,14 @@ al lado del código va un `README.md` corto que apunta acá.
 ## Índice
 
 - [**arquitectura.md**](arquitectura.md) — visión del sistema, decisiones tomadas y por qué, stack,
-  fuentes de datos, flujo del arqueo, modelo de datos, multi-área, hosting y plan por fases.
+  fuentes de datos, flujo del dinero, modelo de datos, multi-área, hosting y plan por fases.
   **Empezá por acá.**
 - [**convenciones.md**](convenciones.md) — reglas transversales (ej.: todo reporte lleva la fecha de generación).
 - [**areas/calidad.md**](areas/calidad.md) — el área Calidad: `/alta`, `/reposicion`, `/cambiopromocion`, `/baja`, `/control` y los avisos de vencimiento.
-- [**areas/tesoreria.md**](areas/tesoreria.md) — el área Tesorería: `/arqueo` (motor Python), el puente Node→Python y la copia vendoreada del motor.
+- [**areas/tesoreria.md**](areas/tesoreria.md) — el área Tesorería: `/flujos` (motor Python), el puente Node→Python y la copia vendoreada del motor.
 
 **Estado (2026-07-10):** Fases 0–3 (MVP) hechas — control de acceso, maestro de artículos, Compras en
-Postgres (sin Google Sheets), área **Calidad** operativa y endurecida, y **Tesorería** con `/arqueo`
+Postgres (sin Google Sheets), área **Calidad** operativa y endurecida, y **Tesorería** con `/flujos`
 integrado (recibe el Excel de Sigma, corre el motor Python y devuelve el HTML del flujo). Detalle en
 §6, §9, §12 y §14 de [arquitectura.md](arquitectura.md).
 
