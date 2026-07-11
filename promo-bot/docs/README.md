@@ -11,6 +11,7 @@ al lado del código va un `README.md` corto que apunta acá.
 - [**convenciones.md**](convenciones.md) — reglas transversales (ej.: todo reporte lleva la fecha de generación).
 - [**areas/calidad.md**](areas/calidad.md) — el área Calidad: `/alta`, `/reposicion`, `/cambiopromocion`, `/baja`, `/control` y los avisos de vencimiento.
 - [**areas/tesoreria.md**](areas/tesoreria.md) — el área Tesorería: `/flujos` (motor Python), el puente Node→Python y la copia vendoreada del motor.
+- [**conciliacion.md**](conciliacion.md) — plan de la **conciliación diaria** de Tesorería (`/cierre`, saldos vs libro, semanal/mensual, `/reportecierre`).
 
 **Estado (2026-07-10):** Fases 0–3 (MVP) hechas — control de acceso, maestro de artículos, Compras en
 Postgres (sin Google Sheets), área **Calidad** operativa y endurecida, y **Tesorería** con `/flujos`
