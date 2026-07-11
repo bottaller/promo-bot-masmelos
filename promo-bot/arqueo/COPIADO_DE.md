@@ -17,8 +17,21 @@ este `COPIADO_DE.md`, y el bot Node que lo invoca (`../src/scenes/arqueo.js`).
 
 ## Cómo volver a copiar (cuando el motor cambie)
 
-Desde `masmelos-analytics` (rama `dev`), copiar estos 10 archivos conservando la
-estructura, sobre `promo-bot/arqueo/src/masmelos/`:
+**La forma fácil** — usá el script (corre en tu PC, donde tenés el checkout de masmelos-analytics):
+
+```bash
+# Ver si están desincronizados (no toca nada):
+bash arqueo/sync.sh check /ruta/a/masmelos-analytics
+# Re-copiar el motor y estampar el commit en este archivo:
+bash arqueo/sync.sh sync  /ruta/a/masmelos-analytics
+# (o exportá MASMELOS_ANALYTICS=/ruta/... y omitís el path)
+```
+
+Después revisás con `git diff` y commiteás. El script es **solo local**; en Railway se deploya
+la copia ya commiteada.
+
+**A mano** (lo que hace el script): desde `masmelos-analytics`, copiar estos 10 archivos
+conservando la estructura, sobre `promo-bot/arqueo/src/masmelos/`:
 
 ```
 src/masmelos/__init__.py
