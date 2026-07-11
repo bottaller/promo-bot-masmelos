@@ -1,0 +1,69 @@
+# Área Tesorería
+
+> Un doc por área. Este cubre **Tesorería**: el comando `/arqueo`, el puente al motor Python y la
+> copia vendoreada del motor. Última actualización: **2026-07-10**.
+
+## Qué hace
+
+El **arqueo de caja**: cada mañana el tesorero exporta de **Sigma** (el ERP de escritorio, offline)
+el reporte *"Diario de movimientos contables"* y lo procesa para revisar el **flujo del dinero** —
+qué entró a cada caja, qué salió del circuito de custodia, y qué diferencias hubo. El bot recibe ese
+Excel y devuelve un **dashboard HTML** (el "Control 2 — Seguí la plata") listo para abrir en el navegador.
+
+## Comando
+
+| Comando | Qué hace |
+|---------|----------|
+| `/arqueo` | Pide el Excel del *"Diario de movimientos contables"* de Sigma (`.xlsx`), lo procesa y devuelve el HTML del flujo. Si el archivo no es un export válido, responde el mensaje de error de Sigma. |
+
+**Flujo de uso:** `/arqueo` → el bot pide el archivo → mandás el `.xlsx` como documento → te devuelve
+`flujo_<desde>_<hasta>.html` (el nombre lleva el período, según [convenciones.md](../convenciones.md)).
+
+## Acceso
+
+`/arqueo` está gated por `requiereArea('tesoreria')` = **admin o rol `tesoreria`** (la misma tabla
+`bot.usuarios` / `bot.usuario_area` que todo el resto). No hay allowlist aparte. Para habilitar a
+alguien: `/usuarios agregar <id> tesoreria`. El paso donde se recibe el documento **re-chequea** el
+rol, por si se lo quitan a mitad de camino (es data financiera).
+
+## El puente Node → Python
+
+El motor del arqueo está en Python; el bot es Node. El comando ([`src/scenes/arqueo.js`](../../src/scenes/arqueo.js)):
+
+1. Baja el Excel a un directorio temporal.
+2. Ejecuta `spawn("python", ["arqueo/runner.py", <ruta>])` con timeout de 3 min.
+3. Lee la **última línea de stdout** como JSON — el contrato:
+   - `{"ok": true,  "html": "...", "xlsx": "..."}`
+   - `{"ok": false, "error": "<mensaje al usuario>"}` (export inválido / sin datos)
+4. Manda el HTML por el chat (o el mensaje de error). Ante un crash real, el runner sale ≠ 0 con
+   traceback por stderr y el bot responde un error genérico.
+
+`arqueo/runner.py` es **propio del repo** (sí se edita acá): envuelve `correr_arqueo(sin_snapshot=True)`
+del motor y arma esa línea JSON. Ver §6 y §9 de [arquitectura.md](../arquitectura.md).
+
+## El motor (copia vendoreada, read-only)
+
+`arqueo/src/masmelos/` (10 archivos) es una **copia read-only** del motor real, que vive en el repo
+`github.com/Renzoca6/masmelos-analytics`. **No se edita acá:** si el motor cambia, se arregla allá y se
+re-copia. Detalle y regla en [`arqueo/COPIADO_DE.md`](../../arqueo/COPIADO_DE.md).
+
+Para mantener la copia sincronizada hay un script **local** (no corre en Railway):
+
+```bash
+bash arqueo/sync.sh check /ruta/a/masmelos-analytics   # ¿hay drift? (no toca nada)
+bash arqueo/sync.sh sync  /ruta/a/masmelos-analytics   # re-copia + estampa el commit
+```
+
+## Deploy (Railway)
+
+El motor necesita Python (pandas/numpy/openpyxl), así que el deploy usa un **`Dockerfile`** (en
+`promo-bot/`) con Node **y** Python en la misma imagen. En Railway: **Root Directory = `promo-bot`** y
+**Builder = Dockerfile**. La primera imagen tarda más (instala pandas). Variables: ninguna nueva
+(`PYTHON_BIN` default `python`, que el Dockerfile provee).
+
+## Pendientes
+
+- **Probar el ida-y-vuelta real** por Telegram en Railway (local ya anda: Excel → HTML de ~57 KB en ~8s).
+- **Snapshot acumulativo:** hoy corre `sin_snapshot` (no guarda historia). Para acumular haría falta un
+  **volumen persistente** de Railway (la FS es efímera) + la **cola de `jobs`** para serializar corridas.
+- El bot manda solo el **HTML**; el Excel (Control 1, 7 hojas) se genera pero no se envía — se puede sumar.

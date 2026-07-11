@@ -73,41 +73,41 @@ El bot es un hub: los datos entran por tres vías (dos futuras).
 
 ---
 
-## 6. Flujo del `/arqueo` (Tesorería)
+## 6. Flujo del `/arqueo` (Tesorería) ✅
 
 **El sistema (Sigma) es una app de escritorio offline.** El bot no puede sacar el dato solo:
-un humano exporta de Sigma el reporte *"Diario de movimientos contables"* y le manda el `.xlsx`.
+un humano exporta de Sigma el reporte *"Diario de movimientos contables"* y le manda el `.xlsx`
+al bot, en el área Tesorería. Detalle operativo en [areas/tesoreria.md](areas/tesoreria.md).
 
 ```
 Humano exporta "Diario de movimientos" de Sigma
-        │  (manda el .xlsx al bot, área Tesorería)
+        │  /arqueo → manda el .xlsx   (requiereArea('tesoreria') = admin o rol tesorería)
         ▼
-Bot Node: descarga el archivo → encola un job "arqueo"
+Bot Node (src/scenes/arqueo.js): baja el archivo a un temp
         ▼
-Worker: python -m masmelos.update_arqueo <ruta.xlsx>
+spawn("python", ["arqueo/runner.py", ruta])          ← puente Node→Python (§9)
         ▼
-Script: genera arqueo_<ventana>.xlsx (7 hojas) + flujo_<ventana>.html
-        y actualiza el snapshot acumulado (diario_contable.parquet)
+Motor Python (masmelos, copia read-only): genera flujo_<desde>_<hasta>.html (+ el xlsx)
         ▼
-Bot: agarra esos 2 archivos y los manda por el chat
+runner.py imprime una línea JSON: {"ok":true,"html":"...","xlsx":"..."}
+        ▼
+Bot: lee el HTML y lo manda por el chat (o, si el export es inválido, el mensaje de error)
 ```
 
-**Contrato con el script (a agregar):** el script hoy imprime texto para humano. Se le suma
-**una línea final en JSON** con las rutas generadas, p.ej.
-`{"ok": true, "excel": "reports/arqueo/2026-07/arqueo_...xlsx", "flujo": "...html"}`,
-para que el bot agarre los archivos exactos sin parsear el texto. El `stdout` legible queda igual.
+**Contrato con el script** ✅ — implementado en `arqueo/runner.py` (propio del repo, no es parte del
+motor copiado). Llama `correr_arqueo(sin_snapshot=True)` e imprime una **línea final JSON** con las
+rutas (`{"ok":true,"html":"...","xlsx":"..."}`) o `{"ok":false,"error":"<mensaje al usuario>"}` para
+errores esperables (export inválido). El Node lee la última línea de stdout; ante un crash real, el
+runner propaga traceback por stderr y sale ≠ 0.
 
-### ⚠️ Estado persistente (importante)
+### Snapshot / estado persistente (diferido)
 
-El script tiene **memoria**: el snapshot `diario_contable.parquet` y los logs acumulativos
-(`diferencias_log.csv`, `revision_log.csv`). **Railway borra el disco en cada redeploy/reinicio.**
-Sin persistencia, el arqueo pierde su historia.
-
-- **Solución v1:** **volumen persistente de Railway** montado en `data/` y `reports/`. El script queda igual.
-- **Solución futura:** mover el snapshot a una tabla de Postgres (los movimientos contables pasan a
-  ser parte de la base real, consultables y con backup).
-
-La cola de jobs (D7) hace que los arqueos corran **de a uno**, evitando que dos corridas pisen el snapshot.
+El motor **puede** acumular estado (snapshot `diario_contable.parquet` + logs), y **Railway borra el
+disco en cada redeploy**. El MVP lo esquiva corriendo con **`sin_snapshot=True`**: cada arqueo procesa
+solo el Excel que se manda, sin acumular; el HTML se manda y se descarta. Cuando el arqueo necesite
+historia acumulativa: **volumen persistente de Railway** (montado en `arqueo/data` y `arqueo/reports`)
+o mover el snapshot a Postgres. La **cola de `jobs`** (D7) serializaría las corridas para no pisar el
+snapshot — innecesaria mientras sea `sin_snapshot`.
 
 ---
 
@@ -156,7 +156,7 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
   Áreas y sus comandos hoy:
   - **Calidad:** `/alta` (poner un producto en oferta por vencimiento), `/baja` (retirarlo), `/control` (Excel de lo que está en oferta por vencimiento).
   - **Compras:** `/reporte` (por proveedor, buscado por código de proveedor; histórico o por lapso de tiempo).
-  - **Tesorería:** `/arqueo` (próximamente, Fase 3).
+  - **Tesorería:** `/arqueo` (recibe el Excel de Sigma y devuelve el HTML del flujo del dinero — corre el motor Python, ver §6 y [areas/tesoreria.md](areas/tesoreria.md)).
 - **Menú dinámico:** cada usuario ve **solo los comandos de sus áreas**.
 - **Comandos de admin:** `/usuarios` (dar de alta gente, asignar áreas/roles, hacer admin), `/actartic` (subir el maestro de artículos) y `/avisos` (disparar a mano el chequeo de vencimientos).
 - **Avisos proactivos:** un scheduler diario avisa a Calidad de lo que vence mañana/hoy y al creador + admins de lo ya vencido (ver §14).
@@ -164,13 +164,16 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
 
 ---
 
-## 9. Ejecución de scripts Python (el puente Node → Python)
+## 9. Ejecución de scripts Python (el puente Node → Python) ✅
 
-- El bot lanza el script como proceso aparte (`child_process.spawn`), con **timeout** y captura de `stdout`.
-- Le pasa el input por argumento (p.ej. la ruta del Excel descargado).
+Implementado para el `/arqueo` (`src/scenes/arqueo.js` + `arqueo/runner.py`):
+
+- El bot lanza el script como proceso aparte (`child_process.spawn`), con **timeout** (3 min) y captura de `stdout`.
+- Le pasa el input por argumento (la ruta del Excel descargado a un temp).
 - El script escribe su salida en archivos y **cierra con una línea JSON** con las rutas (ver §6).
-- El bot lee esa línea, agarra los archivos y los manda; si el script sale con código ≠ 0, avisa el error.
-- En Railway, Node y Python conviven en la misma imagen (Dockerfile) con `pip install -r requirements.txt`.
+- El bot lee esa línea, agarra el HTML y lo manda; si el script sale con código ≠ 0 o no hay JSON, avisa un error genérico.
+- En Railway, Node y Python conviven en la misma imagen (**`Dockerfile`** con ambos runtimes) con `pip install -r arqueo/requirements.txt`.
+- El motor Python vive **vendoreado** en `arqueo/src/masmelos/` (copia read-only de `masmelos-analytics`, ver [areas/tesoreria.md](areas/tesoreria.md) y `arqueo/COPIADO_DE.md`).
 
 ---
 

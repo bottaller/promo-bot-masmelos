@@ -41,11 +41,14 @@ de esa misma fila, el cierre ya refleja el total acumulado sin ningún cambio ad
 
 **Cambio de % de promoción:** el modelo no permite dos porcentajes en la misma fila (una fila = un
 solo resultado final), así que `/cambiopromocion` **divide la alta en dos** dentro de una
-transacción: cierra la alta vieja (`fecha_baja`, `cantidad_vendida` = la diferencia, `motivo_baja`
-= `'Cambio de % de promoción'` para no contarla como descarte real en los reportes) y crea una alta
+transacción (con `SELECT … FOR UPDATE`, y aborta si otra operación cambió la cantidad entremedio):
+cierra la alta vieja (`fecha_baja`, `cantidad` y `cantidad_vendida` = la diferencia, `cantidad_remanente`
+= 0, `motivo_baja` = `'Cambio de % de promoción'` para no contarla como descarte real) y crea una alta
 nueva —mismo producto/proveedor/vencimiento/motivo— con las unidades restantes y el `descuento_pct`
-nuevo. El histórico del producto queda con dos altas en vez de una, lo cual es correcto: refleja que
-hubo dos tramos con distinto %.
+nuevo. **Ojo:** la `cantidad` de la vieja se reduce a la diferencia (no queda en el total original); si
+no, las unidades que siguen en promoción se contarían dos veces en "unidades puestas" y diluirían la
+efectividad del reporte. El histórico del producto queda con dos altas: una cerrada (lo del % viejo) y
+otra que se cierra después con el resultado al % nuevo.
 
 **Aviso al equipo de Compras:** solo se avisa cuando se hace **`/baja`** (no en `/alta`,
 `/reposicion` ni `/cambiopromocion`). No manda el resultado puntual de esa baja: manda el **reporte
