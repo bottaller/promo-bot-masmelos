@@ -13,12 +13,14 @@ al lado del código va un `README.md` corto que apunta acá.
 - [**areas/tesoreria.md**](areas/tesoreria.md) — el área Tesorería: `/flujos` (motor Python), el puente Node→Python y la copia vendoreada del motor.
 - [**conciliacion.md**](conciliacion.md) — plan de la **conciliación diaria** de Tesorería (`/cierre`, saldos vs libro, semanal/mensual, `/reportecierre`).
 
-**Estado (2026-07-11):** Fases 0–3 (MVP) hechas — control de acceso, maestro de artículos, Compras en
+**Estado (2026-07-12):** Fases 0–3 (MVP) hechas — control de acceso, maestro de artículos, Compras en
 Postgres (sin Google Sheets), área **Calidad** operativa y endurecida, y **Tesorería** con `/flujos`
 integrado (recibe el Excel de Sigma, corre el motor Python y devuelve el HTML del flujo). Detalle en
-§6, §9, §12 y §14 de [arquitectura.md](arquitectura.md). **En curso:** la **conciliación diaria** de
-Tesorería (`/cierre` ya carga los saldos; el cruce contra el libro está en construcción — ver
-[conciliacion.md](conciliacion.md)).
+§6, §9, §12 y §14 de [arquitectura.md](arquitectura.md). **Nuevo (en `dev`):** el **sistema de control
+diario** de Tesorería — `/cierre` (saldos + libro → concilia con tolerancia al timing, alerta por
+acumulado, seguridad y auditoría), `/semanal`, `/mensual` y `/reportecierre`. Tablas aplicadas en
+Supabase; validado con una semana real. Falta mergear a `main` para deployar. Ver
+[conciliacion.md](conciliacion.md).
 
 ## Por venir (se escriben cuando se construye cada parte)
 

@@ -1,7 +1,7 @@
 # Conciliación de Tesorería — Plan
 
 > Plan de la **conciliación diaria de caja/bancos** (área Tesorería). Documento vivo — se actualiza a
-> medida que se construye. Última actualización: **2026-07-11**.
+> medida que se construye. Última actualización: **2026-07-12**.
 
 ## 1. Objetivo
 
@@ -38,22 +38,31 @@ diferencia = saldo_real_hoy − saldo_teórico
 
 | Comando | Quién | Qué hace |
 |---|---|---|
-| **`/cierre`** | Tesorería | Cierre **diario**. Subís saldos + libro del día → guarda saldos (con control de cambios) → concilia → devuelve el Excel. Acepta días anteriores (usa la fecha del Excel). |
-| **`/semanal`** | Tesorería | Cierre **semanal**. Re-subís el libro de la semana (para captar ajustes) → concilia el período contra los saldos guardados → Excel. |
+| **`/cierre`** | Tesorería | Cierre **diario**. Subís saldos + libro del día → guarda saldos (con control de cambios) → concilia → devuelve el reporte con las diferencias y el acumulado. Avisa a los admins si hay 🔴. Acepta días anteriores (usa la fecha del Excel). |
+| **`/semanal`** | Tesorería | Cierre **semanal**. Subís el libro de la semana (los saldos ya están de los diarios) → concilia el período contra los saldos guardados. **No toca el diario.** |
 | **`/mensual`** | Tesorería | Cierre **mensual** (el exhaustivo). Igual que el semanal, sobre el mes. |
 | **`/reportecierre <fecha>`** | Admin | Recupera un cierre **pasado**: los saldos, movimientos y diferencias que quedaron registrados de esa fecha. |
-
-*(Nombres tentativos — se pueden ajustar.)*
 
 ## 4. El flujo diario (`/cierre`)
 
 1. Subís el Excel de **saldos** ("Existencias al cierre").
-2. Subís el **libro diario** del día (export de Sigma). *(Fase 2 — hoy solo se carga el saldo.)*
+2. Subís el **libro diario** del día (export de Sigma).
 3. El sistema:
    - **Guarda los saldos** en `tesoreria_saldos` (con control de cambios, ver §5).
-   - Del libro saca **ingresos y egresos por cuenta** y los guarda en `tesoreria_movimientos`.
-   - **Concilia** (la cuenta de §2) y **registra el resultado** en `tesoreria_conciliacion`.
-   - Devuelve un **Excel** con toda la conciliación (ver §8).
+   - **Guarda el libro** (por cuenta y día) en `tesoreria_movimientos`.
+   - **Concilia** (la cuenta de §2), calcula el **acumulado** por cuenta y **registra el resultado** en
+     `tesoreria_conciliacion`.
+   - Deja un rastro de **auditoría** (`tesoreria_auditoria`) y devuelve el **reporte** (ver §8), avisando
+     a los admins si alguna cuenta queda en 🔴.
+
+### Cierres con hueco (findes / feriados)
+
+El "ayer" de un cierre es **el último saldo cargado**, no el día calendario anterior. Así, el cierre del
+**lunes** se compara contra el saldo del **viernes** (saldosAnteriores). Para ese cierre, el libro que
+subís tiene que **cubrir todo el hueco**: del sábado (o viernes) al lunes — así entran los movimientos
+del finde. El sistema usa solo el tramo `(último saldo, hoy]` del libro, así que si el export incluye
+también el viernes, **no lo doble-cuenta**. (El 9/7 fue feriado: por eso ese día no tiene libro y el
+cierre del 10 abarca 8→10.)
 
 ## 5. Control de cambios (✅ hecho)
 
@@ -174,8 +183,7 @@ Umbrales calibrables en `conciliacion.js` (`UMBRAL_ACUMULADO`, `DIAS_TOLERANCIA_
 - `/cierre` fase saldos + **control de cambios** (confirmación + aviso a admins).
 - **Formato del libro y fórmula de conciliación decodificados del motor de `/flujos`** (`parse.py` da
   las 18 columnas; `core.py::cascada_diaria` confirma `saldo = saldo_ayer + Σdebe − Σhaber`).
-- Migraciones **009** (`tesoreria_movimientos`) y **010** (`tesoreria_conciliacion`) escritas —
-  todavía **sin aplicar** (se aplican al validar con un libro real).
+- Migraciones **008/009/010/011** (saldos, movimientos, conciliación, auditoría) **aplicadas en Supabase**.
 - Parser del libro en Node (`src/lib/libro-excel.js`) — **endurecido con archivos reales**: acepta 16 y
   18 columnas y el título de empresa partido en varias filas (busca el header "Mov.").
 - **Motor de conciliación** (`src/lib/conciliacion.js`): `conciliar()` (modelo de **cuentas de control**
@@ -187,7 +195,7 @@ Umbrales calibrables en `conciliacion.js` (`UMBRAL_ACUMULADO`, `DIAS_TOLERANCIA_
   (`src/lib/reporte-cierre.js`) + **capa de seguridad** (movimientos a cuentas sensibles: retiros de
   socios/gerencia, desvío de caja, reintegros inter-empresa).
 - **Capa DB** (`src/db/tesoreria.js`): saldos, movimientos, conciliación, **historial para el acumulado**
-  y **auditoría** (append-only). Migraciones 009/010/011.
+  y **auditoría** (append-only). **Validada de punta a punta contra Postgres real** (tipos, upserts, FKs).
 - **Comandos** (`src/areas/tesoreria/`): `/cierre` (diario: saldos + libro → concilia, guarda, avisa 🔴),
   `/semanal` y `/mensual` (solo libro, no tocan el diario), `/reportecierre <fecha>` (admin).
 - **Tests**: `test/tesoreria-conciliacion.test.js` (16 casos, incl. la regresión del bug multi-día).
@@ -200,15 +208,18 @@ Umbrales calibrables en `conciliacion.js` (`UMBRAL_ACUMULADO`, `DIAS_TOLERANCIA_
   detección de ida-y-vuelta por flujo bruto, y auditoría de `/reportecierre`.
 
 **⬜ Pendiente:**
-- **Aplicar las migraciones 009/010/011** en Supabase (`node src/db/run-migration.js <archivo>`).
-- Probar el ida y vuelta real por Telegram (no se pudo testear la DB en vivo desde el entorno de dev).
+- **Probar el ida y vuelta real por Telegram** (subir saldos + libro a `/cierre` con un día real).
+- **Mergear `dev` → `main`** para deployar (las migraciones ya están aplicadas, así que el merge es seguro).
 - Confirmar con el tesorero el **e-cheq** grumoso y a dónde liquida **Visa Crédito** (detalles menores).
-- Feature de **grupo** ya implementada; queda calibrar los **umbrales** con más meses de datos.
-- (Opcional) Excel de salida además del mensaje; `/semanal`/`/mensual` con varios libros por período.
-- Comandos `/semanal`, `/mensual` y `/reportecierre <fecha>` (admin).
+- Calibrar los **umbrales** (`UMBRAL_ACUMULADO`, `DIAS_TOLERANCIA_TIMING`) con más meses de datos.
+- (Opcional) aviso "el libro no cubre el finde"; Excel de salida además del mensaje; `/semanal`/`/mensual`
+  con varios libros por período; nota "se resolvió la diferencia de ayer"; materialidad para no mostrar
+  centavos como 🟡.
 
-## 12. Lo que falta para avanzar
+## 12. Operación del día a día
 
-Un **libro diario de ejemplo** (export de Sigma de un día que ya tenga saldos: 2, 3, 6 o 7/7). Con eso
-se define de dónde salen `ingresos/egresos por cuenta`, se arma el mapeo (§10) y se valida la
-conciliación con **números reales** antes de construir la fase 2.
+- **Todos los días**: `/cierre` con los **saldos** ("Existencias al cierre") + el **libro** del día.
+- **Findes/feriados**: el lunes el libro tiene que cubrir el hueco (sábado→lunes); el sistema compara
+  contra el saldo del viernes (§4).
+- **Semanal/mensual**: `/semanal` o `/mensual` con el libro del período — los saldos ya están.
+- **Auditar**: `/reportecierre DD/MM/AAAA` (admin) para recuperar un cierre pasado.

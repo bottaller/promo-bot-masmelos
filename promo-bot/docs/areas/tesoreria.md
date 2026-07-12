@@ -1,7 +1,7 @@
 # Área Tesorería
 
 > Un doc por área. Este cubre **Tesorería**: los comandos `/flujos` y `/cierre`, el puente al motor
-> Python y la copia vendoreada del motor. Última actualización: **2026-07-11**.
+> Python y la copia vendoreada del motor. Última actualización: **2026-07-12**.
 
 ## Qué hace
 
