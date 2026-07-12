@@ -8,20 +8,26 @@ const { parseVencimiento } = require('./fechas');
 // Errores "esperables" con mensaje para el tesorero (los distingue de un bug real).
 class SaldosError extends Error {}
 
-// Cuentas que esperamos en la plantilla -> su moneda por defecto.
+// Cuentas que esperamos en la plantilla. La CLAVE es el nombre normalizado (para
+// matchear lo que venga en el Excel sin importar mayúsculas/acentos/espacios); se
+// guarda el `nombre` CANÓNICO (no lo que tipeó el usuario) para que el mismo saldo
+// no se duplique por diferencias de capitalización, y su `moneda` por defecto.
 const CUENTAS = new Map([
-  ['caja fuerte moreno', 'ARS'],
-  ['santander', 'ARS'],
-  ['supervielle', 'ARS'],
-  ['mercadopago', 'ARS'],
-  ['cheques en cartera a', 'ARS'],
-  ['cheques en cartera b', 'ARS'],
-  ['e-cheq en cartera', 'ARS'],
-  ['caja dólar tesorería', 'USD'],
+  ['caja fuerte moreno',   { nombre: 'Caja Fuerte Moreno',   moneda: 'ARS' }],
+  ['santander',            { nombre: 'Santander',            moneda: 'ARS' }],
+  ['supervielle',          { nombre: 'Supervielle',          moneda: 'ARS' }],
+  ['mercadopago',          { nombre: 'Mercadopago',          moneda: 'ARS' }],
+  ['cheques en cartera a', { nombre: 'Cheques en Cartera A', moneda: 'ARS' }],
+  ['cheques en cartera b', { nombre: 'Cheques en Cartera B', moneda: 'ARS' }],
+  ['e-cheq en cartera',    { nombre: 'E-cheq en Cartera',    moneda: 'ARS' }],
+  ['caja dólar tesorería', { nombre: 'Caja Dólar Tesorería', moneda: 'USD' }],
 ]);
 
+// Normaliza un rótulo para el match: NFC (acentos precompuestos), trim, minúsculas y
+// colapsa espacios internos. Sin NFC, un acento descompuesto (NFD, típico de macOS)
+// no igualaría la clave y la cuenta se perdería en silencio.
 function norm(s) {
-  return String(s == null ? '' : s).trim().toLowerCase();
+  return String(s == null ? '' : s).normalize('NFC').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 // Un monto puede venir como número nativo (lo normal en Excel) o como texto
@@ -72,14 +78,17 @@ function parsearSaldos(buffer) {
   const vistas = new Set();
   for (const r of filas) {
     const clave = norm(r[0]);
-    if (!CUENTAS.has(clave) || vistas.has(clave)) continue; // ignora Total, instrucciones, etc.
+    const def = CUENTAS.get(clave);
+    if (!def || vistas.has(clave)) continue; // ignora Total, instrucciones, etc.
     vistas.add(clave);
     const monto = parseMonto(r[1]);
     if (monto === null) {
-      throw new SaldosError(`La cuenta "${String(r[0]).trim()}" no tiene un saldo válido. Completá todos los saldos (poné 0 si la cuenta no tiene).`);
+      throw new SaldosError(`La cuenta "${def.nombre}" no tiene un saldo válido. Completá todos los saldos (poné 0 si la cuenta no tiene).`);
     }
-    const moneda = (r[2] && String(r[2]).trim().toUpperCase()) || CUENTAS.get(clave);
-    saldos.push({ cuenta: String(r[0]).trim(), moneda, monto });
+    const moneda = (r[2] && String(r[2]).trim().toUpperCase()) || def.moneda;
+    // Guardamos el nombre CANÓNICO (no lo que tipeó el usuario): así el mismo saldo
+    // no se duplica si cambia la capitalización, y matchea el mapeo de la conciliación.
+    saldos.push({ cuenta: def.nombre, moneda, monto });
   }
 
   if (saldos.length === 0) {

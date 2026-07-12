@@ -15,15 +15,17 @@ const { parseVencimiento, fechaISO } = require('./fechas');
 // Errores "esperables" con mensaje para el tesorero (los distingue de un bug real).
 class LibroError extends Error {}
 
-// Posición de las 18 columnas del export (renombre POSICIONAL como en parse.py:
-// la fila 3 de headers a veces trae encoding roto, así que no se confía en el nombre).
+// Posición de las columnas del export (renombre POSICIONAL como en parse.py: la fila 3
+// de headers a veces trae encoding roto, así que no se confía en el nombre).
+// El export estándar de Sigma trae 16 columnas (Mov. … Ingreso). Una variante con
+// "Últ.Modif./Últ.Usuario" al final trae 18. Solo usamos las primeras 12 (0-11,
+// idénticas en ambas), así que aceptamos 16+ columnas.
 const COL = {
   mov: 0, fecha: 1, comp: 2, concepto: 3, cuenta_id: 4, cuenta: 5,
   cc: 6, centro_costo: 7, debe: 8, haber: 9, debe_nominal: 10, haber_nominal: 11,
   comprobante: 12, cuenta_asociada: 13, usuario: 14, ingreso: 15,
-  ult_modif: 16, ult_usuario: 17,
 };
-const N_COLUMNAS = 18;
+const MIN_COLUMNAS = 16;
 
 const _RE_PERIODO = /del\s+(\d{2}\/\d{2}\/\d{4})\s+al\s+(\d{2}\/\d{2}\/\d{4})/i;
 
@@ -81,24 +83,36 @@ function parsearLibro(buffer) {
   }
 
   const ancho = XLSX.utils.decode_range(ws['!ref']).e.c + 1;
-  if (ancho !== N_COLUMNAS) {
+  if (ancho < MIN_COLUMNAS) {
     throw new LibroError(
-      `El export tiene ${ancho} columnas y se esperaban ${N_COLUMNAS}. ¿Cambió el formato del reporte en Sigma?`
+      `El export tiene ${ancho} columnas y se esperaban al menos ${MIN_COLUMNAS}. ¿Cambió el formato del reporte en Sigma?`
     );
   }
 
   const filas = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
 
-  // Fila 1: "Empresa: 0008-HONRE_2,...". Fila 2: "...del DD/MM/YYYY al DD/MM/YYYY".
-  // Fila 3: headers, arranca con "Mov.". (Índices 0/1/2.)
-  const tituloEmpresa = norm(filas[0] && filas[0][0]);
-  const tituloPeriodo = norm(filas[1] && filas[1][0]);
-  const header = norm(filas[2] && filas[2][0]);
-  if (header !== 'Mov.') {
-    throw new LibroError(
-      `La fila 3 debería arrancar con "Mov." y trae "${header}". ¿Es realmente un "Diario de movimientos" de Sigma?`
-    );
+  // Normalmente el header "Mov." está en la fila 3, pero cuando el export incluye MUCHAS
+  // empresas el título "Empresa: ..." se parte en varias filas y empuja todo hacia abajo.
+  // Por eso BUSCAMOS la fila del header en vez de asumir su posición.
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(filas.length, 40); i++) {
+    if (norm(filas[i] && filas[i][0]) === 'Mov.') { headerIdx = i; break; }
   }
+  if (headerIdx === -1) {
+    throw new LibroError('No encontré la fila de encabezados ("Mov."). ¿Es realmente un "Diario de movimientos" de Sigma?');
+  }
+
+  // El título de período ("...del DD/MM/YYYY al DD/MM/YYYY") y el de empresa están en las
+  // filas anteriores al header (el de empresa puede ocupar varias).
+  let tituloPeriodo = '';
+  const partesEmpresa = [];
+  for (let i = 0; i < headerIdx; i++) {
+    const t = norm(filas[i] && filas[i][0]);
+    if (!t) continue;
+    if (_RE_PERIODO.test(t)) tituloPeriodo = t;
+    else partesEmpresa.push(t);
+  }
+  const tituloEmpresa = partesEmpresa.join('');
 
   // Agregación por (fecha ISO, cuenta_id).
   const acc = new Map(); // clave `${fISO}|${cuenta_id}` -> {fecha, cuenta_id, cuenta, debe, haber, debe_nominal, haber_nominal}
@@ -106,7 +120,7 @@ function parsearLibro(buffer) {
   let maxFecha = null;
   let nFilas = 0;
 
-  for (let i = 3; i < filas.length; i++) {
+  for (let i = headerIdx + 1; i < filas.length; i++) {
     const r = filas[i];
     const mov = parseEntero(r[COL.mov]);
     if (mov === null) continue; // fila sin Mov. (totales, blancos, pie) -> se ignora, como dropna(mov) en parse.py

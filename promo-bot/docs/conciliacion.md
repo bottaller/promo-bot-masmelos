@@ -120,32 +120,35 @@ que se corre un cierre de esa fecha (upsert). La **`acumulada`** (diferencia cor
 se guarda**: se calcula al leer (suma de `diferencia` hasta esa fecha) — materializarla se rompería
 con las cargas retroactivas.
 
-## 10. Mapeo cuenta ↔ libro (a resolver con un libro real)
+## 10. Mapeo cuenta ↔ libro (validado con una semana real, 01–10/07/2026)
 
-Los saldos usan nombres ("Santander", "Supervielle", "Caja Fuerte Moreno"); el libro usa **códigos de
-cuenta de Sigma** (`cuenta_id`). Mapeo derivado del `config.py` del motor (a validar con un libro real):
+Los saldos usan nombres; el libro usa **códigos de cuenta de Sigma** (`cuenta_id`). Mapeo **confirmado
+corriendo la conciliación contra una semana real**: cada cuenta cierra a residuos de timing (millones
+sobre flujos de cientos de millones por cuenta).
 
-| Cuenta del saldo | `cuenta_id` del libro | Estado |
-|---|---|:--|
-| Santander | `111201014` | ✅ claro |
-| Supervielle | `111201015` | ✅ claro |
-| Mercado Pago | `422101014` | ✅ claro |
-| Caja Dólar Tesorería (USD) | `111102006` (cols *Nominal*) | ✅ claro |
-| Caja Fuerte Moreno | `111101003` **¿+ cascada?** | ⚠️ a definir (§ pregunta) |
-| Cheques en Cartera A | una de `111401001 / 111401008 / 111401010` | ⚠️ a nombrar |
-| Cheques en Cartera B | otra de esas tres | ⚠️ a nombrar |
-| E-cheq en Cartera | la tercera | ⚠️ a nombrar |
+| Cuenta del saldo | `cuenta_id` del libro | Residuo 01→10 |
+|---|---|--:|
+| Santander | `111201014` | −3,6M (timing) |
+| Supervielle | `111201015` | −1,1M (timing) |
+| Mercado Pago | `422101014` + tarjetas `111301002` `111304001` `111305001` `111302002` `111303001` | +1,7M ✅ |
+| Caja Fuerte Moreno | `111101003` (sola) | +3,1M (timing) |
+| Caja Dólar Tesorería | `111102005` + `111102006` (cols *Nominal*, USD) | ≈0 ✅ |
+| Cheques en Cartera A+B | `111401001` (grupo) | 0 ✅ |
+| E-cheq en Cartera | `111401008` / `111401010` | −7,6M ⚠️ a confirmar |
 
-- **Caja Fuerte Moreno**: el motor la mapea a `111101003`, pero también existe una *cascada* de
-  efectivo (buzón `111100007`, puente `111100008`, fuerte `111101003`, gerencia `111101004`,
-  administración `111111019`). Falta definir si el saldo "caja fuerte" es solo la fuerte o el total que
-  duerme en la cascada.
-- **Cheques A/B/e-cheq**: son tres `cuenta_id` (`111401001`, `111401008`, `111401010`); cuál es cuál se
-  resuelve directo con el **nombre** que trae el libro al lado del código.
-- **Signo (Debe vs Haber)**: la fórmula asume que las 8 cuentas son **deudoras** (activo: el Debe las
-  sube). Bancos, cajas, cheques y USD lo son. **Mercado Pago** tiene código `422…` (atípico para un
-  activo): si en Sigma resultara **acreedora**, para esa cuenta se invierte el signo. Se valida con el
-  libro real; al guardar el libro crudo por cuenta, el ajuste no obliga a re-importar.
+- **Mercado Pago = MP + tarjetas del Point** (Visa Débito, Mastercard, Amex, Naranja, Cabal). **Visa
+  Crédito (`111301001`) NO entra** (liquida a otro lado). Sumar las tarjetas bajó el desfase semanal de
+  **+51,8M a +1,7M**.
+- **Caja Fuerte = sola** (`111101003`): la cascada (buzón+puente+…) daba +13,7M; sola cierra.
+- **Cheques**: A y B son una división manual de la única cartera de Sigma (`111401001`) → se concilian
+  como **grupo** (suma A+B); B está siempre en 0. Falta la feature de "grupo" en el motor (hoy B queda
+  `sin_mapeo`).
+- **E-cheq**: las cuentas `ECHEQ` (`111401008`/`111401010`) traen un Debe de más y no cierran; **a
+  confirmar** cómo se registran (queda `pendiente`).
+- **Signo**: las 8 cuentas son **deudoras** (el Debe las sube). Mercado Pago (`422…`) **confirmado
+  deudor** por el Debe de las cobranzas.
+- **Las diferencias son timing** (un depósito/transferencia que en el banco ya pasó pero se asienta 1-3
+  días después). El número que importa es el **acumulado por cuenta**: si tiende a cero → sano.
 
 ## 11. Estado
 
@@ -158,13 +161,21 @@ cuenta de Sigma** (`cuenta_id`). Mapeo derivado del `config.py` del motor (a val
   las 18 columnas; `core.py::cascada_diaria` confirma `saldo = saldo_ayer + Σdebe − Σhaber`).
 - Migraciones **009** (`tesoreria_movimientos`) y **010** (`tesoreria_conciliacion`) escritas —
   todavía **sin aplicar** (se aplican al validar con un libro real).
+- Parser del libro en Node (`src/lib/libro-excel.js`) — **endurecido con archivos reales**: acepta 16 y
+  18 columnas y el título de empresa partido en varias filas (busca el header "Mov.").
+- **Motor de conciliación** (`src/lib/conciliacion.js`): función pura `conciliar()` + el `MAPEO`.
+  Estados por cuenta: `ok` / `revisar` / `sin_mapeo` / `sin_saldo_ayer` / `sin_saldo_hoy`.
+  Revisado con una pasada adversarial multi-agente (3 hallazgos reales corregidos: cuenta con
+  movimientos sin saldo cargado, normalización Unicode/espacios, y nombre de cuenta canónico).
+- **Mapeo validado contra una semana real** (01–10/07/2026, §10): todas las cuentas cierran a residuos
+  de timing. Se resolvió MP (=MP+tarjetas), caja fuerte (sola), USD (dos cajas) y cheques A+B.
 
 **⬜ Pendiente:**
-- Parser del **libro diario** en Node → `tesoreria_movimientos`.
-- La **conciliación** (mapeo + fórmula) → `tesoreria_conciliacion` → Excel de salida.
-- Comandos `/semanal` y `/mensual`.
-- Comando `/reportecierre <fecha>` (admin).
-- Cerrar el **mapeo cuenta ↔ libro** (§10) con un libro real: caja fuerte, cheques A/B, e-cheq.
+- Capa DB: guardar movimientos del libro + guardar/leer la conciliación.
+- **Enchufar** `conciliar()` a `/cierre` (2º paso: recibir el libro) → `tesoreria_conciliacion` → Excel de salida.
+- Feature de **grupo** en el motor (para cheques A+B contra una sola cuenta del libro).
+- Cerrar **e-cheq** (§10) y confirmar a dónde liquida **Visa Crédito**.
+- Comandos `/semanal`, `/mensual` y `/reportecierre <fecha>` (admin).
 
 ## 12. Lo que falta para avanzar
 
