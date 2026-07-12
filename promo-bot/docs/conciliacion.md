@@ -134,7 +134,7 @@ sobre flujos de cientos de millones por cuenta).
 | Caja Fuerte Moreno | `111101003` (sola) | +3,1M (timing) |
 | Caja Dólar Tesorería | `111102005` + `111102006` (cols *Nominal*, USD) | ≈0 ✅ |
 | Cheques en Cartera A+B | `111401001` (grupo) | 0 ✅ |
-| E-cheq en Cartera | `111401008` / `111401010` | −7,6M ⚠️ a confirmar |
+| E-cheq en Cartera | `111401010` (ECHEQ HONRE) | timing propio (grumoso) |
 
 - **Mercado Pago = MP + tarjetas del Point** (Visa Débito, Mastercard, Amex, Naranja, Cabal). **Visa
   Crédito (`111301001`) NO entra** (liquida a otro lado). Sumar las tarjetas bajó el desfase semanal de
@@ -143,12 +143,27 @@ sobre flujos de cientos de millones por cuenta).
 - **Cheques**: A y B son una división manual de la única cartera de Sigma (`111401001`) → se concilian
   como **grupo** (suma A+B); B está siempre en 0. Falta la feature de "grupo" en el motor (hoy B queda
   `sin_mapeo`).
-- **E-cheq**: las cuentas `ECHEQ` (`111401008`/`111401010`) traen un Debe de más y no cierran; **a
-  confirmar** cómo se registran (queda `pendiente`).
+- **E-cheq** → `111401010` (ECHEQ HONRE): su neto semanal (4.801.078 − 2.501.439 = 2.299.639) es el
+  saldo final. Es de bajo volumen y sus asientos son grumosos (a veces el libro los carga tarde) → puede
+  mostrar timing propio. `111401008` ("ECHEQ" sin HONRE) es de otra empresa: NO entra.
+- **Visa Crédito** (`111301001`): Debe en la semana, Haber 0 → es una **cuenta a cobrar** (Visa liquida
+  a ~18 días). Bien afuera de MP; la plata todavía no llegó a ninguna caja/banco.
 - **Signo**: las 8 cuentas son **deudoras** (el Debe las sube). Mercado Pago (`422…`) **confirmado
   deudor** por el Debe de las cobranzas.
-- **Las diferencias son timing** (un depósito/transferencia que en el banco ya pasó pero se asienta 1-3
-  días después). El número que importa es el **acumulado por cuenta**: si tiende a cero → sano.
+
+### El acumulado y el timing (el corazón del control)
+
+La **diferencia de un día** casi siempre es **timing** (un depósito/transferencia que en el banco ya
+pasó pero se asienta 1-3 días después) y **se da vuelta sola**. Ejemplo real: el 3/7 una transferencia
+Santander→Supervielle de 150M ya estaba en el banco pero se asentó el 6/7 → el 3/7 dio −150M y el 6/7
++150M, netos ≈ 0. Por eso lo que **alarma no es la diferencia del día sino el ACUMULADO por cuenta**:
+
+- 🟢 `ok`: cierra. · 🟡 `timing`: hay diferencia pero el acumulado está sano (bajo umbral).
+- 🟠 `revisar`: acumulado alto pero reciente → probable depósito/transferencia en tránsito.
+- 🔴 `alerta`: acumulado alto y **persistente** (más de `DIAS_TOLERANCIA_TIMING` cierres) → no se
+  resuelve solo, hay que perseguirlo. Se avisa a los admins.
+
+Umbrales calibrables en `conciliacion.js` (`UMBRAL_ACUMULADO`, `DIAS_TOLERANCIA_TIMING`).
 
 ## 11. Estado
 
@@ -163,18 +178,33 @@ sobre flujos de cientos de millones por cuenta).
   todavía **sin aplicar** (se aplican al validar con un libro real).
 - Parser del libro en Node (`src/lib/libro-excel.js`) — **endurecido con archivos reales**: acepta 16 y
   18 columnas y el título de empresa partido en varias filas (busca el header "Mov.").
-- **Motor de conciliación** (`src/lib/conciliacion.js`): función pura `conciliar()` + el `MAPEO`.
-  Estados por cuenta: `ok` / `revisar` / `sin_mapeo` / `sin_saldo_ayer` / `sin_saldo_hoy`.
-  Revisado con una pasada adversarial multi-agente (3 hallazgos reales corregidos: cuenta con
-  movimientos sin saldo cargado, normalización Unicode/espacios, y nombre de cuenta canónico).
-- **Mapeo validado contra una semana real** (01–10/07/2026, §10): todas las cuentas cierran a residuos
-  de timing. Se resolvió MP (=MP+tarjetas), caja fuerte (sola), USD (dos cajas) y cheques A+B.
+- **Motor de conciliación** (`src/lib/conciliacion.js`): `conciliar()` (modelo de **cuentas de control**
+  con grupos y cuentas compuestas), `acumularCuenta()` (acumulado + persistencia) y `evaluarCuenta()`
+  (niveles ok/timing/revisar/alerta con tolerancia al timing).
+- **Mapeo validado contra una semana real** (01–10/07/2026, §10): MP (=MP+tarjetas), caja fuerte (sola),
+  USD (dos cajas), cheques A+B (grupo), e-cheq (111401010). Visa Crédito confirmada afuera (a cobrar).
+- **Orquestación** (`src/lib/control-tesoreria.js` `procesarCierre()`) + **reporte Telegram**
+  (`src/lib/reporte-cierre.js`) + **capa de seguridad** (movimientos a cuentas sensibles: retiros de
+  socios/gerencia, desvío de caja, reintegros inter-empresa).
+- **Capa DB** (`src/db/tesoreria.js`): saldos, movimientos, conciliación, **historial para el acumulado**
+  y **auditoría** (append-only). Migraciones 009/010/011.
+- **Comandos** (`src/areas/tesoreria/`): `/cierre` (diario: saldos + libro → concilia, guarda, avisa 🔴),
+  `/semanal` y `/mensual` (solo libro, no tocan el diario), `/reportecierre <fecha>` (admin).
+- **Tests**: `test/tesoreria-conciliacion.test.js` (16 casos, incl. la regresión del bug multi-día).
+  Validado end-to-end simulando la semana real: todas las cuentas a timing salvo lo esperado.
+- **Revisión adversarial multi-agente** (22 agentes): 10 hallazgos reales corregidos, entre ellos dos
+  ALTA — (1) la carga **retroactiva/fuera de orden** corrompía el acumulado: ahora el acumulado se
+  **re-encadena desde los saldos y movimientos guardados** (robusto al orden); (2) sobrescribir saldos
+  ya cargados ahora **audita y avisa a los admins en el acto** (append-only), no diferido. También:
+  tolerancia de timing a 3 días, cheques-grupo con fila faltante, período que puede llegar a 🔴,
+  detección de ida-y-vuelta por flujo bruto, y auditoría de `/reportecierre`.
 
 **⬜ Pendiente:**
-- Capa DB: guardar movimientos del libro + guardar/leer la conciliación.
-- **Enchufar** `conciliar()` a `/cierre` (2º paso: recibir el libro) → `tesoreria_conciliacion` → Excel de salida.
-- Feature de **grupo** en el motor (para cheques A+B contra una sola cuenta del libro).
-- Cerrar **e-cheq** (§10) y confirmar a dónde liquida **Visa Crédito**.
+- **Aplicar las migraciones 009/010/011** en Supabase (`node src/db/run-migration.js <archivo>`).
+- Probar el ida y vuelta real por Telegram (no se pudo testear la DB en vivo desde el entorno de dev).
+- Confirmar con el tesorero el **e-cheq** grumoso y a dónde liquida **Visa Crédito** (detalles menores).
+- Feature de **grupo** ya implementada; queda calibrar los **umbrales** con más meses de datos.
+- (Opcional) Excel de salida además del mensaje; `/semanal`/`/mensual` con varios libros por período.
 - Comandos `/semanal`, `/mensual` y `/reportecierre <fecha>` (admin).
 
 ## 12. Lo que falta para avanzar

@@ -15,18 +15,22 @@
 -- Idempotente.
 -- ============================================================
 
+-- Los numéricos son NULLABLE a propósito: una cuenta sin saldo del día anterior (primer
+-- día) o sin saldo cargado hoy no tiene teórico/diferencia — guardar 0 mentiría.
 create table if not exists bot.tesoreria_conciliacion (
   id             bigint      generated always as identity primary key,
   fecha          date        not null,
   empresa        text        not null default 'HONRE',
   cuenta         text        not null,                   -- 'Caja Fuerte Moreno', 'Santander', ...
   moneda         text        not null default 'ARS',     -- 'ARS' | 'USD'
-  saldo_ayer     numeric     not null default 0,         -- cierre del día anterior (o 0 si no hay)
-  ingresos       numeric     not null default 0,         -- Σ Debe del libro mapeado a esta cuenta
-  egresos        numeric     not null default 0,         -- Σ Haber del libro mapeado a esta cuenta
-  saldo_teorico  numeric     not null default 0,         -- saldo_ayer + ingresos − egresos
-  saldo_real     numeric     not null default 0,         -- de tesoreria_saldos
-  diferencia     numeric     not null default 0,         -- saldo_real − saldo_teorico
+  saldo_ayer     numeric,                                -- cierre del día anterior (null si no hay)
+  ingresos       numeric,                                -- Σ Debe del libro mapeado a esta cuenta
+  egresos        numeric,                                -- Σ Haber del libro mapeado a esta cuenta
+  saldo_teorico  numeric,                                -- saldo_ayer + ingresos − egresos
+  saldo_real     numeric,                                -- de tesoreria_saldos
+  diferencia     numeric,                                -- saldo_real − saldo_teorico (null = no conciliada)
+  estado         text,                                   -- 'ok'|'revisar'|'sin_saldo_ayer'|'sin_saldo_hoy'
+  nivel          text,                                   -- 'ok'|'timing'|'revisar'|'alerta' (con el acumulado)
   generado_por   bigint      references bot.usuarios(id),
   generado_en    timestamptz not null default now(),
   -- Re-correr el cierre de un día pisa su conciliación (upsert por esta clave).

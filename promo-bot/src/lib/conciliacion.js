@@ -1,130 +1,188 @@
-// Motor de la conciliación diaria de Tesorería (función pura, testeable).
+// Motor de conciliación diaria de Tesorería (control / seguridad / auditoría).
 //
-// La idea, por cuenta:
+// La idea, por CUENTA DE CONTROL:
 //     saldo_teorico = saldo_ayer + ingresos − egresos
 //     diferencia    = saldo_real − saldo_teorico
-// donde ingresos/egresos salen del libro (Σ Debe / Σ Haber de las cuentas de Sigma
-// que mapean a esa cuenta de saldo). Convención confirmada por el motor de /flujos
-// (arqueo/core.py::cascada_diaria).
+// donde ingresos/egresos salen del libro (Σ Debe / Σ Haber de las cuentas de Sigma que
+// componen esa cuenta de control). Convención confirmada con el motor de /flujos y
+// VALIDADA contra una semana real (01–10/07/2026): todo cierra a residuos de timing.
 //
-// El mapeo cuenta_de_saldo → cuenta(s) del libro vive acá abajo (MAPEO). Es config de
-// negocio, VALIDADA contra una semana real (01–10/07/2026, ver docs/conciliacion.md §10);
-// se ajusta sin re-importar nada (los movimientos se guardan crudos por cuenta_id).
+// Una "cuenta de control" agrupa:
+//   - saldoKeys: uno o varios renglones del Excel de saldos (ej. Cheques A + B), y
+//   - libroIds:  una o varias cuentas contables de Sigma (ej. MP + las tarjetas del Point).
+// Así se resuelven de forma uniforme los grupos (cheques A+B → una sola cuenta del libro)
+// y las cuentas compuestas (MP = MP + tarjetas, USD = las dos cajas dólar).
 
-// --- Mapeo cuenta de saldo → cuenta(s) contables del libro (cuenta_id de Sigma) ---
-// clave  = nombre normalizado (norm()); debe coincidir con el nombre canónico que
-//          guarda saldos-excel.js (mismas 8 cuentas).
-// nombre = display canónico (para las filas que emite el motor).
-// deudora=true: cuenta de activo, el Debe la sube (ingresos=Debe, egresos=Haber).
-// nominal=true: se arquea por las columnas *Nominal* (USD), no por las de ARS.
-// pendiente=true: mapeo sin cerrar; la conciliación de esa cuenta se marca 'sin_mapeo'
-//                 en vez de inventar una diferencia.
-const MAPEO = {
-  'santander':            { nombre: 'Santander',            cuentas: [111201014], moneda: 'ARS', deudora: true },
-  'supervielle':          { nombre: 'Supervielle',          cuentas: [111201015], moneda: 'ARS', deudora: true },
-  // Mercado Pago (Point): junta MP + las tarjetas que liquidan en MP — Visa Débito
-  // (111301002), Mastercard (111304001), Amex (111305001), Naranja (111302002), Cabal
-  // (111303001). Visa Crédito (111301001) NO entra (liquida a otro lado). Con esto el
-  // acumulado semanal pasó de +51,8M a +1,7M. Deudora: la cobranza entra por el Debe.
-  'mercadopago':          { nombre: 'Mercadopago',          cuentas: [422101014, 111301002, 111304001, 111305001, 111302002, 111303001], moneda: 'ARS', deudora: true },
-  // Caja Dólar Tesorería = las DOS cajas dólar (111102005 + 111102006): el traspaso entre
-  // ellas es interno y se netea. Se arquea en USD (columnas Nominal).
-  'caja dólar tesorería': { nombre: 'Caja Dólar Tesorería', cuentas: [111102005, 111102006], moneda: 'USD', deudora: true, nominal: true },
-  // Caja Fuerte: confirmado que es SOLA (111101003), no la cascada (la cascada daba +13,7M).
-  'caja fuerte moreno':   { nombre: 'Caja Fuerte Moreno',   cuentas: [111101003], moneda: 'ARS', deudora: true },
-  // Cheques en Cartera A: la cartera física (111401001). A y B comparten esta cuenta y B
-  // está siempre en 0; al cablear /cierre habrá que AGRUPAR A+B (por ahora B queda
-  // 'sin_mapeo' para no doble-contar).
-  'cheques en cartera a': { nombre: 'Cheques en Cartera A', cuentas: [111401001], moneda: 'ARS', deudora: true },
-  'cheques en cartera b': { nombre: 'Cheques en Cartera B', cuentas: [], moneda: 'ARS', deudora: true, pendiente: true },
-  // E-Cheq: las cuentas ECHEQ (111401008 / 111401010) todavía no cierran (traen un Debe de
-  // más); pendiente de confirmar cómo se registran los e-cheq.
-  'e-cheq en cartera':    { nombre: 'E-cheq en Cartera',    cuentas: [], moneda: 'ARS', deudora: true, pendiente: true },
-};
+// ---------------------------------------------------------------------------
+// Mapeo cuenta de control ↔ (renglones de saldo, cuentas del libro)  [validado]
+// ---------------------------------------------------------------------------
+// saldoKeys: nombres normalizados (norm()) tal como los guarda saldos-excel.js.
+// libroIds : cuenta_id de Sigma. deudora=true → activo (Debe la sube). nominal=true → USD.
+// grupo/clave: se identifica por `nombre`.
+const CUENTAS_CONTROL = [
+  { nombre: 'Caja Fuerte Moreno', saldoKeys: ['caja fuerte moreno'], libroIds: [111101003], moneda: 'ARS', deudora: true },
+  { nombre: 'Santander',          saldoKeys: ['santander'],          libroIds: [111201014], moneda: 'ARS', deudora: true },
+  { nombre: 'Supervielle',        saldoKeys: ['supervielle'],        libroIds: [111201015], moneda: 'ARS', deudora: true },
+  // Mercado Pago (Point) = MP + tarjetas que liquidan en MP. Visa Crédito (111301001) NO
+  // entra: es cuenta a cobrar (Visa liquida a ~18 días), la plata todavía no está en MP.
+  { nombre: 'Mercado Pago',       saldoKeys: ['mercadopago'],        libroIds: [422101014, 111301002, 111304001, 111305001, 111302002, 111303001], moneda: 'ARS', deudora: true },
+  // Cheques en Cartera: A y B son una división manual de la única cartera de Sigma; se
+  // concilian como GRUPO (suma de los dos renglones) contra 111401001.
+  { nombre: 'Cheques en Cartera', saldoKeys: ['cheques en cartera a', 'cheques en cartera b'], libroIds: [111401001], moneda: 'ARS', deudora: true },
+  // E-Cheq: la cuenta ECHEQ HONRE (111401010); su neto semanal = el saldo. Bajo volumen y
+  // asientos grumosos (a veces el libro los carga tarde) → puede mostrar timing propio.
+  { nombre: 'E-Cheq en Cartera',  saldoKeys: ['e-cheq en cartera'],  libroIds: [111401010], moneda: 'ARS', deudora: true },
+  // Caja Dólar Tesorería = las DOS cajas dólar (el traspaso entre ellas es interno). USD.
+  { nombre: 'Caja Dólar Tesorería', saldoKeys: ['caja dólar tesorería'], libroIds: [111102005, 111102006], moneda: 'USD', deudora: true, nominal: true },
+];
 
-// Tolerancia de redondeo: por debajo de esto la cuenta "cierra".
+// Tolerancia de redondeo: por debajo, la cuenta "cierra".
 const TOLERANCIA = 1;
 
-// Normaliza un nombre de cuenta igual que saldos-excel.js (NFC + trim + minúsculas +
-// colapsa espacios), para que el match con MAPEO sea robusto.
+// Umbral del ACUMULADO por moneda: por encima de esto la cuenta entra "en observación".
+// Es el número que importa — la diferencia de UN día sola casi siempre es timing.
+// Calibrable con más historia.
+const UMBRAL_ACUMULADO = { ARS: 5_000_000, USD: 3_000 };
+
+// Cuántos cierres seguidos puede estar el acumulado por encima del umbral antes de ALARMAR.
+// El timing (un depósito/transferencia que en el banco ya pasó pero se asienta 1-3 días
+// después) se resuelve solo en pocos días; si el acumulado NO baja en más de estos
+// cierres, ya no es timing: es un problema real (control / seguridad). En 3 para cubrir toda
+// la ventana documentada de 1-3 días (con 2, un timing legítimo de 3 días daba un 🔴 falso).
+const DIAS_TOLERANCIA_TIMING = 3;
+
+// ¿El acumulado de esta cuenta está por encima del umbral de su moneda?
+function sobreUmbral(acumulado, moneda) {
+  const umbral = UMBRAL_ACUMULADO[moneda] ?? UMBRAL_ACUMULADO.ARS;
+  return Math.abs(Number(acumulado) || 0) >= umbral;
+}
+
 function norm(s) {
   return String(s == null ? '' : s).normalize('NFC').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-// Ingresos/egresos del libro para una cuenta del mapeo (suma sus cuenta_id).
-function movimientosDeCuenta(cfg, movPorCuenta) {
-  let ingresos = 0;
-  let egresos = 0;
-  let hubo = false;
-  for (const cid of cfg.cuentas) {
-    const m = movPorCuenta.get(cid);
+// [{cuenta, monto}] -> Map(norm(cuenta) -> monto sumado)
+function mapaSaldos(saldos) {
+  const m = new Map();
+  for (const s of saldos) {
+    const k = norm(s.cuenta);
+    m.set(k, (m.get(k) || 0) + Number(s.monto));
+  }
+  return m;
+}
+
+// Ingresos/egresos del libro para una cuenta de control (suma sus libroIds).
+function movimientosDe(cuenta, movPorId) {
+  let ingresos = 0, egresos = 0, hubo = false;
+  for (const id of cuenta.libroIds) {
+    const m = movPorId.get(id);
     if (!m) continue;
-    const debe = Number(cfg.nominal ? m.debe_nominal : m.debe) || 0;
-    const haber = Number(cfg.nominal ? m.haber_nominal : m.haber) || 0;
+    const debe = Number(cuenta.nominal ? m.debe_nominal : m.debe) || 0;
+    const haber = Number(cuenta.nominal ? m.haber_nominal : m.haber) || 0;
     if (debe !== 0 || haber !== 0) hubo = true;
-    if (cfg.deudora) { ingresos += debe; egresos += haber; }
+    if (cuenta.deudora) { ingresos += debe; egresos += haber; }
     else { ingresos += haber; egresos += debe; }
   }
   return { ingresos, egresos, hubo };
 }
 
-// Concilia un día. Recibe:
-//   saldosAyer: [{cuenta, moneda, monto}]  (cierre del día anterior; puede faltar)
-//   saldosHoy:  [{cuenta, moneda, monto}]  (lo que cargó el tesorero hoy)
-//   movimientos:[{cuenta_id, debe, haber, debe_nominal, haber_nominal}]  (del libro, ese día)
-//   mapeo: opcional (default MAPEO)
-// Devuelve una fila por cuenta de saldosHoy, MÁS una fila por cada cuenta mapeada que
-// tuvo movimientos en el libro pero el tesorero no cargó hoy (estado 'sin_saldo_hoy',
-// para que nunca quede plata moviéndose sin aparecer en el reporte):
+// Concilia UN período (un día en el cierre diario; un lapso en el semanal/mensual).
+//   saldosAyer/saldosHoy: [{cuenta, moneda, monto}] (inicio y fin del período)
+//   movimientos: [{cuenta_id, debe, haber, debe_nominal, haber_nominal}] (todo el período)
+// Devuelve una fila por cuenta de control:
 //   {cuenta, moneda, saldo_ayer, ingresos, egresos, saldo_teorico, saldo_real, diferencia, estado}
-//   estado: 'ok' | 'revisar' | 'sin_mapeo' | 'sin_saldo_ayer' | 'sin_saldo_hoy'
-function conciliar({ saldosAyer = [], saldosHoy = [], movimientos = [], mapeo = MAPEO }) {
-  // cuenta_id se coerciona a Number: el parser del libro lo emite como número, pero un
-  // futuro lector de la DB (bigint) lo traería como string — así matchea igual.
-  const movPorCuenta = new Map(movimientos.map((m) => [Number(m.cuenta_id), m]));
-  const ayerPorCuenta = new Map(saldosAyer.map((s) => [norm(s.cuenta), Number(s.monto)]));
-  const presentesHoy = new Set(saldosHoy.map((s) => norm(s.cuenta)));
+//   estado: 'ok' | 'revisar' | 'sin_saldo_ayer' | 'sin_saldo_hoy'
+function conciliar({ saldosAyer = [], saldosHoy = [], movimientos = [], cuentas = CUENTAS_CONTROL }) {
+  // Agregamos por cuenta_id SUMANDO: un período puede traer varias entradas de la misma
+  // cuenta (varios días — findes, feriados, o el cierre semanal/mensual). Un Map directo
+  // pisaría todo menos la última y perdería movimientos.
+  const movPorId = new Map();
+  for (const m of movimientos) {
+    const id = Number(m.cuenta_id);
+    const e = movPorId.get(id) || { debe: 0, haber: 0, debe_nominal: 0, haber_nominal: 0 };
+    e.debe += Number(m.debe) || 0;
+    e.haber += Number(m.haber) || 0;
+    e.debe_nominal += Number(m.debe_nominal) || 0;
+    e.haber_nominal += Number(m.haber_nominal) || 0;
+    movPorId.set(id, e);
+  }
+  const ayer = mapaSaldos(saldosAyer);
+  const hoy = mapaSaldos(saldosHoy);
 
-  const filas = saldosHoy.map((s) => {
-    const clave = norm(s.cuenta);
-    const cfg = mapeo[clave];
-    const saldo_real = Number(s.monto);
-    const base = { cuenta: s.cuenta, moneda: s.moneda };
+  const filas = [];
+  for (const c of cuentas) {
+    // Para cuentas-grupo (varios saldoKeys, ej. Cheques A+B) exigimos TODOS los renglones:
+    // si falta uno, el saldo sería parcial y generaría una diferencia fantasma → mejor
+    // marcar 'sin_saldo_*' que conciliar con la mitad.
+    const presenteHoy = c.saldoKeys.every((k) => hoy.has(k));
+    const presenteAyer = c.saldoKeys.every((k) => ayer.has(k));
+    const saldo_real = c.saldoKeys.reduce((a, k) => a + (hoy.get(k) || 0), 0);
+    const saldo_ayer = c.saldoKeys.reduce((a, k) => a + (ayer.get(k) || 0), 0);
+    const { ingresos, egresos, hubo } = movimientosDe(c, movPorId);
+    const base = { cuenta: c.nombre, moneda: c.moneda };
 
-    // Cuenta sin mapeo confirmado: no inventamos diferencia.
-    if (!cfg || cfg.pendiente || !cfg.cuentas || cfg.cuentas.length === 0) {
-      const saldo_ayer = ayerPorCuenta.has(clave) ? ayerPorCuenta.get(clave) : null;
-      return { ...base, saldo_ayer, ingresos: null, egresos: null, saldo_teorico: null, saldo_real, diferencia: null, estado: 'sin_mapeo' };
+    if (!presenteHoy) {
+      if (!hubo && !presenteAyer) continue; // nada que reportar
+      filas.push({ ...base, saldo_ayer: presenteAyer ? saldo_ayer : null, ingresos, egresos, saldo_teorico: null, saldo_real: null, diferencia: null, estado: 'sin_saldo_hoy' });
+      continue;
     }
-
-    const { ingresos, egresos } = movimientosDeCuenta(cfg, movPorCuenta);
-
-    // Sin saldo de ayer no hay teórico (primer día de esa cuenta en el sistema).
-    if (!ayerPorCuenta.has(clave)) {
-      return { ...base, saldo_ayer: null, ingresos, egresos, saldo_teorico: null, saldo_real, diferencia: null, estado: 'sin_saldo_ayer' };
+    if (!presenteAyer) {
+      filas.push({ ...base, saldo_ayer: null, ingresos, egresos, saldo_teorico: null, saldo_real, diferencia: null, estado: 'sin_saldo_ayer' });
+      continue;
     }
-
-    const saldo_ayer = ayerPorCuenta.get(clave);
     const saldo_teorico = saldo_ayer + ingresos - egresos;
     const diferencia = saldo_real - saldo_teorico;
     const estado = Math.abs(diferencia) < TOLERANCIA ? 'ok' : 'revisar';
-    return { ...base, saldo_ayer, ingresos, egresos, saldo_teorico, saldo_real, diferencia, estado };
-  });
-
-  // Segundo barrido: cuentas mapeadas que se movieron en el libro pero NO se cargaron
-  // hoy. Sin esto, esa plata quedaría sin conciliar y el día "cerraría" sin señal.
-  for (const [clave, cfg] of Object.entries(mapeo)) {
-    if (presentesHoy.has(clave) || cfg.pendiente || !cfg.cuentas || cfg.cuentas.length === 0) continue;
-    const { ingresos, egresos, hubo } = movimientosDeCuenta(cfg, movPorCuenta);
-    if (!hubo) continue; // sin movimientos y sin saldo -> no hay nada que reportar
-    const saldo_ayer = ayerPorCuenta.has(clave) ? ayerPorCuenta.get(clave) : null;
-    filas.push({
-      cuenta: cfg.nombre, moneda: cfg.moneda, saldo_ayer, ingresos, egresos,
-      saldo_teorico: null, saldo_real: null, diferencia: null, estado: 'sin_saldo_hoy',
-    });
+    filas.push({ ...base, saldo_ayer, ingresos, egresos, saldo_teorico, saldo_real, diferencia, estado });
   }
-
   return filas;
 }
 
-module.exports = { conciliar, MAPEO, TOLERANCIA };
+// Clasifica una cuenta a partir de su diferencia del día y su acumulado. El corazón del
+// control: la diferencia de UN día casi siempre es timing y se da vuelta; lo que alarma es
+// que el ACUMULADO quede alto durante VARIOS cierres (ya no se resuelve solo).
+//   acumulado        = acumulado por cuenta incluyendo este cierre.
+//   diasSobreUmbral  = cierres SEGUIDOS (incl. hoy) con el acumulado por encima del umbral.
+// Devuelve {nivel: 'ok'|'timing'|'revisar'|'alerta', motivo}.
+//   ok      🟢  cierra.
+//   timing  🟡  hay diferencia pero el acumulado está sano (por debajo del umbral).
+//   revisar 🟠  acumulado alto pero reciente → probable depósito/transferencia en tránsito.
+//   alerta  🔴  acumulado alto y persistente → no se resuelve, hay que perseguirlo.
+function evaluarCuenta({ diferencia, acumulado, moneda, diasSobreUmbral = 0 }) {
+  const dif = Math.abs(Number(diferencia) || 0);
+  if (!sobreUmbral(acumulado, moneda)) {
+    return dif < TOLERANCIA
+      ? { nivel: 'ok', motivo: 'cierra' }
+      : { nivel: 'timing', motivo: 'diferencia normal, acumulado sano' };
+  }
+  if (diasSobreUmbral <= DIAS_TOLERANCIA_TIMING) {
+    return { nivel: 'revisar', motivo: `acumulado alto (${diasSobreUmbral} cierre/s) — posible depósito/transferencia en tránsito` };
+  }
+  return { nivel: 'alerta', motivo: `acumulado alto hace ${diasSobreUmbral} cierres — no se resuelve, revisar` };
+}
+
+// Evaluación para los controles de PERÍODO (semanal/mensual): acá no hay "próximo cierre"
+// que resuelva el timing — un residuo que sobrevivió todo el período ya es algo a mirar.
+// Por eso una diferencia neta del período por encima del umbral es alerta directamente.
+function evaluarPeriodo({ diferencia, moneda }) {
+  const dif = Number(diferencia) || 0;
+  if (Math.abs(dif) < TOLERANCIA) return { nivel: 'ok', motivo: 'cierra en el período' };
+  if (!sobreUmbral(dif, moneda)) return { nivel: 'timing', motivo: 'diferencia chica del período (dentro de lo normal)' };
+  return { nivel: 'alerta', motivo: 'el residuo sobrevivió todo el período — revisar ya' };
+}
+
+// Dada la serie ORDENADA de diferencias de una cuenta (incluyendo el cierre de hoy),
+// devuelve {acumulado, diasSobreUmbral}. `diasSobreUmbral` = cierres SEGUIDOS al final de
+// la serie con el acumulado corrido por encima del umbral (0 si el último cierra sano).
+//   serie: [{fecha, diferencia}] ascendente por fecha.
+function acumularCuenta(serie, moneda) {
+  let acumulado = 0;
+  let diasSobreUmbral = 0;
+  for (const d of serie) {
+    acumulado += Number(d.diferencia) || 0;
+    diasSobreUmbral = sobreUmbral(acumulado, moneda) ? diasSobreUmbral + 1 : 0;
+  }
+  return { acumulado, diasSobreUmbral };
+}
+
+module.exports = { conciliar, evaluarCuenta, evaluarPeriodo, sobreUmbral, acumularCuenta, CUENTAS_CONTROL, TOLERANCIA, UMBRAL_ACUMULADO, DIAS_TOLERANCIA_TIMING, norm };

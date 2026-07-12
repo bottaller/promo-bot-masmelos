@@ -15,20 +15,24 @@ Excel y devuelve un **dashboard HTML** (el "Control 2 — Seguí la plata") list
 | Comando | Qué hace |
 |---------|----------|
 | `/flujos` | Pide el Excel del *"Diario de movimientos contables"* de Sigma (`.xlsx`), lo procesa y devuelve el HTML del flujo. Si el archivo no es un export válido, responde el mensaje de error de Sigma. |
-| `/cierre` | Cierre **diario**: pide el Excel *"Existencias al cierre"* y guarda los saldos del día en la DB, con control de cambios (confirmación + aviso a admins). Acepta días anteriores. La conciliación saldos-vs-libro está en curso. |
+| `/cierre` | Cierre **diario**: pide los saldos (*"Existencias al cierre"*) **y** el libro del día, concilia realidad vs libro por cuenta, guarda todo y devuelve el reporte con las diferencias y el acumulado. Avisa a los admins si hay una cuenta en 🔴. |
+| `/semanal` | Control **semanal**: mandás el libro de la semana (los saldos ya están de los cierres diarios), concilia el período. **No modifica** los cierres diarios. |
+| `/mensual` | Control **mensual**: ídem, sobre el mes. |
+| `/reportecierre <fecha>` | (**admin**) Recupera un cierre guardado de esa fecha, con el acumulado a esa fecha. |
 
 **Flujo de uso (`/flujos`):** `/flujos` → el bot pide el archivo → mandás el `.xlsx` como documento →
 te devuelve `flujo_<desde>_<hasta>.html` (el nombre lleva el período, según
 [convenciones.md](../convenciones.md)).
 
-## Conciliación diaria (`/cierre`)
+## Conciliación diaria (`/cierre`) — control, seguridad y auditoría
 
-`/cierre` es el arranque de la **conciliación de caja/bancos**: cada día compara la *realidad* (los
-saldos que carga el tesorero) contra el *libro* (los movimientos de Sigma), cuenta por cuenta, con la
-identidad `saldo_teórico = saldo_ayer + Σdebe − Σhaber`. Hoy `/cierre` carga los saldos; la fase que
-suma el libro (movimientos → conciliación → Excel de diferencias) y los comandos `/semanal`,
-`/mensual` y `/reportecierre` están en construcción. **El plan completo vive en
-[conciliacion.md](../conciliacion.md)** (fórmula, comandos, modelo de datos, mapeo cuenta↔libro).
+Cada día compara la *realidad* (los saldos que carga el tesorero) contra el *libro* (los movimientos de
+Sigma), cuenta por cuenta, con `saldo_teórico = saldo_ayer + ingresos − egresos`. La diferencia de un
+día suele ser **timing** (algo que en el banco ya pasó pero se asienta 1-3 días después); lo que
+importa y alarma es el **acumulado por cuenta** cuando **no se resuelve** en varios cierres. Además
+marca los movimientos a **cuentas sensibles** (retiros de socios/gerencia, desvío de caja, reintegros
+inter-empresa) y deja un **rastro de auditoría** de cada acción. **Detalle completo (fórmula, niveles,
+mapeo cuenta↔libro validado, modelo de datos) en [conciliacion.md](../conciliacion.md).**
 
 ## Acceso
 
