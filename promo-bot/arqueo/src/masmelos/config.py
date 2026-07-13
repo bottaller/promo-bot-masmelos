@@ -325,6 +325,15 @@ ARQUEO_CAJAS_CASCADA: dict[int, str] = {
 # el importe en ARS depende de la cotización del día.
 ARQUEO_CTA_USD = 111102006
 
+# Todas las cajas en dólares, para el mini-flujo "Seguí los dólares" (Control 2).
+# Se arquean por las columnas *Nominal* (USD). 111102006 es la caja FÍSICA del negocio
+# (la que se cuenta a diario, = ARQUEO_CTA_USD); 111102005 es adonde van los dólares
+# cuando SALEN del negocio (caja de un socio). El orden acá define el orden del flujo.
+ARQUEO_CTAS_USD: dict[int, str] = {
+    111102006: "Caja Dólar Tesorería",
+    111102005: "Caja Dolares",
+}
+
 # Cuentas donde se registran las diferencias de arqueo. El criterio histórico
 # es DESVIO DE CAJA; desde jul-2026 algunas diferencias chicas y las pruebas
 # van a AJUSTES Y REDONDEOS — el reporte las lee de las dos y alerta para
