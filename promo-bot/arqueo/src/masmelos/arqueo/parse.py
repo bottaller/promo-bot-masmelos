@@ -5,12 +5,18 @@ este módulo es deliberadamente defensivo: valida la forma del archivo antes de
 confiar en él, y mantiene un snapshot local acumulativo para que los exports
 sucesivos (que se solapan) no dupliquen asientos.
 
-Formato del archivo (validado contra el export real de jul-2026):
-- Fila 1: "Empresa: 0008-HONRE_2,0009-..." — el export NO trae columna de
-  empresa por asiento, solo este título. Limitación conocida (ver README).
-- Fila 2: "Diario de movimientos contables del DD/MM/YYYY al DD/MM/YYYY".
-- Fila 3: headers (a veces con encoding roto en "Últ.Modif."), por eso el
-  renombre es POSICIONAL y no por nombre.
+Formato del archivo (validado contra exports reales de jul-2026):
+- Filas de título: "Empresa: 0008-HONRE_2,0009-..." — el export NO trae columna
+  de empresa por asiento, solo este título (que con muchas empresas se parte en
+  VARIAS filas). Limitación conocida: el diario debería ser de UNA empresa
+  (ver README).
+- Título de período: "Diario de movimientos contables del DD/MM/YYYY al
+  DD/MM/YYYY".
+- Fila de headers arrancando con "Mov." (a veces con encoding roto en
+  "Últ.Modif."), por eso el renombre es POSICIONAL y no por nombre. NO se asume
+  su posición: se BUSCA la fila del "Mov." (el título de empresa la corre).
+- Ancho: 16 columnas (Mov. … Ingreso) el export estándar; 18 si incluye
+  "Últ.Modif./Últ.Usuario" al final. Se aceptan 16+; las 2 extra son opcionales.
 - Datos: partida doble — las filas de un mismo `Mov.` balancean Debe = Haber.
 """
 
@@ -24,13 +30,18 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Renombre posicional de las 18 columnas del export.
-COLUMNAS = [
+# Renombre POSICIONAL de las columnas del export. Las primeras 16 (Mov. …
+# Ingreso) son el export estándar de Sigma; una variante agrega
+# "Últ.Modif./Últ.Usuario" al final (18 en total). Aceptamos 16+ y sintetizamos
+# las 2 extra si faltan (solo las usa el snapshot y la alerta de modificaciones).
+COLUMNAS_BASE = [
     "mov", "fecha", "comp", "concepto", "cuenta_id", "cuenta",
     "cc", "centro_costo", "debe", "haber", "debe_nominal", "haber_nominal",
     "comprobante", "cuenta_asociada", "usuario", "ingreso",
-    "ult_modif", "ult_usuario",
 ]
+COLUMNAS_EXTRA = ["ult_modif", "ult_usuario"]
+COLUMNAS = COLUMNAS_BASE + COLUMNAS_EXTRA
+MIN_COLUMNAS = len(COLUMNAS_BASE)  # 16
 
 # Columnas que el resto del pipeline asume con estos dtypes.
 _NUMERICAS = ["debe", "haber", "debe_nominal", "haber_nominal"]
@@ -47,32 +58,70 @@ def cargar_export(path: str | Path) -> tuple[pd.DataFrame, dict]:
     path = Path(path)
     crudo = pd.read_excel(path, header=None)
 
-    if crudo.shape[1] != len(COLUMNAS):
+    ncols = crudo.shape[1]
+    if ncols < MIN_COLUMNAS:
         raise ValueError(
-            f"El export tiene {crudo.shape[1]} columnas y se esperaban "
-            f"{len(COLUMNAS)}. ¿Cambió el formato del reporte en Sigma?"
+            f"El export tiene {ncols} columnas y se esperaban al menos "
+            f"{MIN_COLUMNAS}. ¿Cambió el formato del reporte en Sigma?"
         )
 
-    titulo_empresa = str(crudo.iloc[0, 0]) if pd.notna(crudo.iloc[0, 0]) else ""
-    titulo_periodo = str(crudo.iloc[1, 0]) if pd.notna(crudo.iloc[1, 0]) else ""
-    header = str(crudo.iloc[2, 0]).strip()
-    if header != "Mov.":
+    # El header "Mov." suele estar en la fila 3, pero cuando el export incluye
+    # MUCHAS empresas el título "Empresa: ..." se parte en varias filas y empuja
+    # todo hacia abajo. Por eso BUSCAMOS la fila del header en vez de asumirla.
+    header_idx = None
+    for i in range(min(len(crudo), 40)):
+        v = crudo.iat[i, 0]
+        if isinstance(v, str) and v.strip() == "Mov.":
+            header_idx = i
+            break
+    if header_idx is None:
         raise ValueError(
-            f"La fila 3 debería arrancar con el header 'Mov.' y trae {header!r}. "
+            "No encontré la fila de encabezados ('Mov.'). "
             "¿Es realmente un 'Diario de movimientos' de Sigma?"
         )
 
-    df = crudo.iloc[3:].copy()
-    df.columns = COLUMNAS
-    df = df.dropna(subset=["mov"]).reset_index(drop=True)
+    # Título de período ("...del DD/MM/YYYY al DD/MM/YYYY") y de empresa: en las
+    # filas anteriores al header (el de empresa puede ocupar varias).
+    titulo_periodo = ""
+    partes_empresa = []
+    for i in range(header_idx):
+        v = crudo.iat[i, 0]
+        if not isinstance(v, str) or not v.strip():
+            continue
+        t = v.strip()
+        if _RE_PERIODO.search(t):
+            titulo_periodo = t
+        else:
+            partes_empresa.append(t)
+    titulo_empresa = "".join(partes_empresa)
 
+    # Datos: desde la fila siguiente al header. Nombramos SOLO las columnas
+    # presentes (16 estándar, 18 con Últ.Modif./Últ.Usuario) y descartamos las
+    # sobrantes; si faltan las 2 opcionales, se sintetizan vacías para que el
+    # pipeline (alerta de modificaciones, snapshot) no rompa.
+    df = crudo.iloc[header_idx + 1:, : len(COLUMNAS)].copy()
+    df.columns = COLUMNAS[: df.shape[1]]
+    if "ult_modif" not in df.columns:
+        df["ult_modif"] = pd.NaT
+    if "ult_usuario" not in df.columns:
+        df["ult_usuario"] = ""
+
+    # Filas sin un `Mov.` entero (títulos intercalados, totales, pie) no son
+    # asientos: coerción a numérico + dropna, robusto a footers.
+    df["mov"] = pd.to_numeric(df["mov"], errors="coerce")
+    df = df.dropna(subset=["mov"]).reset_index(drop=True)
     df["mov"] = df["mov"].astype("int64")
-    df["fecha"] = pd.to_datetime(df["fecha"]).dt.normalize()
-    df["ingreso"] = pd.to_datetime(df["ingreso"])
-    # `ult_modif` viene casi siempre vacío; normalizarlo a datetime nos deja
-    # comparar frescura por asiento en el snapshot (y detectar modificaciones).
-    df["ult_modif"] = pd.to_datetime(df["ult_modif"], errors="coerce")
+
+    df["cuenta_id"] = pd.to_numeric(df["cuenta_id"], errors="coerce")
+    df = df.dropna(subset=["cuenta_id"]).reset_index(drop=True)
     df["cuenta_id"] = df["cuenta_id"].astype("int64")
+
+    df["fecha"] = pd.to_datetime(df["fecha"]).dt.normalize()
+    df["ingreso"] = pd.to_datetime(df["ingreso"], errors="coerce")
+    # `ult_modif` viene casi siempre vacío (y ausente en el export de 16 cols);
+    # normalizarlo a datetime nos deja comparar frescura por asiento en el
+    # snapshot (y detectar modificaciones).
+    df["ult_modif"] = pd.to_datetime(df["ult_modif"], errors="coerce")
     for col in _NUMERICAS:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
     for col in ("comp", "concepto", "cuenta", "usuario"):
