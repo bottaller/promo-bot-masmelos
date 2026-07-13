@@ -4,7 +4,7 @@ Los archivos de `src/masmelos/` son una **COPIA** del motor de arqueo, del repo:
 
 - **Repo**: https://github.com/Renzoca6/masmelos-analytics
 - **Rama**: `main`
-- **Commit**: `178b8fe`
+- **Commit**: `b899385`
 
 ## ⚠️ Regla de una sola dirección
 

@@ -580,8 +580,11 @@ def _render_usd(fusd: dict | None) -> str:
         cot = ""
         if m.get("cotizacion"):
             cot = " · $" + f"{m['cotizacion']:,.0f}".replace(",", ".")
+        # Fecha defensiva: un asiento sin fecha (NaT) no debe tumbar TODO el HTML
+        # (mismo criterio que el lado en pesos). strftime sobre NaT lanza ValueError.
+        fstr = f"{m['fecha']:%d/%m}" if pd.notna(m["fecha"]) else ""
         filas.append(
-            f'<div class="row usdrow"><span class="when">{m["fecha"]:%d/%m}</span>'
+            f'<div class="row usdrow"><span class="when">{fstr}</span>'
             f'<span><span class="cpt">{html.escape(m["concepto"])}</span><br>'
             f'<span class="who">{html.escape(m["origen"])} → {html.escape(m["destino"])}{cot}</span></span>'
             f'<span class="ramt">{_fmt_usd(m["usd"])}</span></div>')

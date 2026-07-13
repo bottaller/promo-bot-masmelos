@@ -295,13 +295,17 @@ def construir_flujo_usd(df: pd.DataFrame) -> dict:
             saldo[str(cid)] = saldo.get(str(cid), 0.0) - u
 
         if recibe and entrega:
-            # Transferencia entre cajas dólar (ej. 006 → 005). En la práctica es 1→1
-            # con montos iguales; si se partiera, el monto RECIBIDO reparte bien. El
-            # origen textual es la caja que entrega (siempre una en estos asientos).
-            o_cid = entrega[0][0]
-            for (d_cid, d_u, d_ars) in recibe:
-                edges[(str(o_cid), str(d_cid))] = edges.get((str(o_cid), str(d_cid)), 0.0) + d_u
-                _mov(fecha, concepto, usuario, ctas[o_cid], ctas[d_cid], d_u, d_ars)
+            # Transferencia entre cajas dólar (ej. 006 → 005). En la práctica es 1→1 con
+            # montos iguales, pero soportamos varias cajas de cada lado: cada caja que
+            # entrega se reparte entre las que reciben, en proporción a lo recibido. Así
+            # conserva el total (Σ entrega == Σ recibe en el asiento) y ninguna caja se
+            # pierde del diagrama si algún día hay 3+ cajas dólar en ARQUEO_CTAS_USD.
+            total_recibe = sum(d_u for _, d_u, _ in recibe) or 1.0
+            for (o_cid, o_u, _o_ars) in entrega:
+                for (d_cid, d_u, d_ars) in recibe:
+                    monto = o_u * d_u / total_recibe
+                    edges[(str(o_cid), str(d_cid))] = edges.get((str(o_cid), str(d_cid)), 0.0) + monto
+                    _mov(fecha, concepto, usuario, ctas[o_cid], ctas[d_cid], monto, d_ars)
         elif recibe:
             for (d_cid, d_u, d_ars) in recibe:
                 edges[(COMPRA, str(d_cid))] = edges.get((COMPRA, str(d_cid)), 0.0) + d_u
