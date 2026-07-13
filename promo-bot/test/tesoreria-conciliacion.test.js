@@ -38,13 +38,18 @@ t('MP = MP + tarjetas (menos Visa Crédito)', () => {
   const mp = byName(r, 'Mercado Pago');
   assert.strictEqual(mp.ingresos, 150); assert.strictEqual(mp.diferencia, 0);
 });
-t('USD por columnas nominal (dos cajas)', () => {
+t('USD por columnas nominal: SOLO la caja física 006 (la 005 no cuenta)', () => {
+  // 2750 USD salen de la caja física del negocio (006 haber) hacia la otra caja (005 debe).
+  // El control es SOLO la 006: el saldo real baja a 0, y la entrada a la 005 se ignora.
   const r = conciliar({
-    saldosAyer: [S('Caja Dólar Tesorería', 2750, 'USD')], saldosHoy: [S('Caja Dólar Tesorería', 2750, 'USD')],
-    movimientos: [M(111102006, 0, 3987500, 0, 2750), M(111102005, 3987500, 0, 2750, 0)],
+    saldosAyer: [S('Caja Dólar Tesorería', 2750, 'USD')], saldosHoy: [S('Caja Dólar Tesorería', 0, 'USD')],
+    movimientos: [M(111102006, 0, 3987500, 0, 2750), M(111102005, 3987500, 0, 2750, 0)], // la 005 NO cuenta
   });
   const usd = byName(r, 'Caja Dólar Tesorería');
-  assert.strictEqual(usd.moneda, 'USD'); assert.strictEqual(usd.diferencia, 0);
+  assert.strictEqual(usd.moneda, 'USD');
+  assert.strictEqual(usd.ingresos, 0);    // la entrada a la 005 no suma
+  assert.strictEqual(usd.egresos, 2750);  // solo la salida de la caja física
+  assert.strictEqual(usd.diferencia, 0);  // 2750 - 2750 = 0 = saldo real
 });
 t('REGRESIÓN multi-día: suma (no pisa) movimientos de la misma cuenta', () => {
   // 3 entradas de la misma cuenta (3 días) deben SUMARSE.

@@ -141,7 +141,7 @@ sobre flujos de cientos de millones por cuenta).
 | Supervielle | `111201015` | −1,1M (timing) |
 | Mercado Pago | `422101014` + tarjetas `111301002` `111304001` `111305001` `111302002` `111303001` | +1,7M ✅ |
 | Caja Fuerte Moreno | `111101003` (sola) | +3,1M (timing) |
-| Caja Dólar Tesorería | `111102005` + `111102006` (cols *Nominal*, USD) | ≈0 ✅ |
+| Caja Dólar Tesorería | `111102006` **sola** (col *Nominal*, USD) | 0 ✅ |
 | Cheques en Cartera A+B | `111401001` (grupo) | 0 ✅ |
 | E-cheq en Cartera | `111401010` (ECHEQ HONRE) | timing propio (grumoso) |
 
@@ -157,6 +157,13 @@ sobre flujos de cientos de millones por cuenta).
   mostrar timing propio. `111401008` ("ECHEQ" sin HONRE) es de otra empresa: NO entra.
 - **Visa Crédito** (`111301001`): Debe en la semana, Haber 0 → es una **cuenta a cobrar** (Visa liquida
   a ~18 días). Bien afuera de MP; la plata todavía no llegó a ninguna caja/banco.
+- **Caja Dólar Tesorería = SOLO la caja física del negocio (`111102006`)**. Hay una **segunda** caja
+  dólar, `111102005` "Caja Dolares", adonde va la plata **cuando sale del negocio**: es otra caja real,
+  con su propio dinero, y su saldo **no se carga** en el Excel. El mapeo original sumaba las dos (teoría:
+  "el traspaso entre ellas es interno"), pero como el saldo solo cubre la 006, todo lo que se acumulaba en
+  la 005 (**+US$51.100** en la semana real, solo Debe, nunca Haber) caía como diferencia. Sacada la 005,
+  la caja física cierra en **$0 exacto todos los días** (13/07/2026). Si en el futuro se quiere controlar
+  la 005, va como **cuenta de control propia**, con su propio renglón de saldo.
 - **Signo**: las 8 cuentas son **deudoras** (el Debe las sube). Mercado Pago (`422…`) **confirmado
   deudor** por el Debe de las cobranzas.
 
@@ -190,7 +197,8 @@ Umbrales calibrables en `conciliacion.js` (`UMBRAL_ACUMULADO`, `DIAS_TOLERANCIA_
   con grupos y cuentas compuestas), `acumularCuenta()` (acumulado + persistencia) y `evaluarCuenta()`
   (niveles ok/timing/revisar/alerta con tolerancia al timing).
 - **Mapeo validado contra una semana real** (01–10/07/2026, §10): MP (=MP+tarjetas), caja fuerte (sola),
-  USD (dos cajas), cheques A+B (grupo), e-cheq (111401010). Visa Crédito confirmada afuera (a cobrar).
+  USD (**solo la caja física 111102006**; la 005 "Caja Dolares" es plata que salió del negocio, aparte),
+  cheques A+B (grupo), e-cheq (111401010). Visa Crédito confirmada afuera (a cobrar).
 - **Orquestación** (`src/lib/control-tesoreria.js` `procesarCierre()`) + **reporte Telegram**
   (`src/lib/reporte-cierre.js`) + **capa de seguridad** (movimientos a cuentas sensibles: retiros de
   socios/gerencia, desvío de caja, reintegros inter-empresa).

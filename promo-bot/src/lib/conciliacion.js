@@ -32,8 +32,13 @@ const CUENTAS_CONTROL = [
   // E-Cheq: la cuenta ECHEQ HONRE (111401010); su neto semanal = el saldo. Bajo volumen y
   // asientos grumosos (a veces el libro los carga tarde) → puede mostrar timing propio.
   { nombre: 'E-Cheq en Cartera',  saldoKeys: ['e-cheq en cartera'],  libroIds: [111401010], moneda: 'ARS', deudora: true },
-  // Caja Dólar Tesorería = las DOS cajas dólar (el traspaso entre ellas es interno). USD.
-  { nombre: 'Caja Dólar Tesorería', saldoKeys: ['caja dólar tesorería'], libroIds: [111102005, 111102006], moneda: 'USD', deudora: true, nominal: true },
+  // Caja Dólar Tesorería = SOLO la caja física del negocio (111102006), que es la que el
+  // tesorero cuenta y carga a diario. La otra caja dólar (111102005 "Caja Dolares") es adonde
+  // va la plata cuando SALE del negocio: es otra caja real, con su propio dinero, y su saldo NO
+  // se carga en el Excel. Sumarla acá metía como "diferencia" todo lo que se le iba acumulando
+  // (US$51.100 en la semana real) — ver conciliacion.md §USD. Si algún día se quiere controlar
+  // la 005, va como cuenta de control PROPIA (con su propio renglón de saldo).
+  { nombre: 'Caja Dólar Tesorería', saldoKeys: ['caja dólar tesorería'], libroIds: [111102006], moneda: 'USD', deudora: true, nominal: true },
 ];
 
 // Tolerancia de redondeo: por debajo, la cuenta "cierra".
