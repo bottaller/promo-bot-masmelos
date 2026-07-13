@@ -22,6 +22,12 @@ function tieneAccesoTesoreria(u) {
   return !!(u && (u.es_admin || (u.areas && u.areas.includes('tesoreria'))));
 }
 function fmt(m) { return Math.round(Number(m)).toLocaleString('es-AR'); }
+// Escapa texto libre (nombre de empresa/cuenta, usuario) antes de meterlo en un mensaje con
+// parse_mode:'HTML'. Sin esto, una razón social o cuenta con &, < o > hace que Telegram
+// rechace el mensaje ('can't parse entities') y el reply tire.
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 // Cuentas de saldo que cambiaron respecto de lo ya guardado.
 function calcularCambios(existentes, nuevos) {
@@ -34,7 +40,7 @@ function calcularCambios(existentes, nuevos) {
   return cambios;
 }
 function detalleCambios(cambios) {
-  return cambios.map((c) => `• ${c.cuenta}: ${c.anterior === null ? '(nuevo)' : fmt(c.anterior)} → ${fmt(c.nuevo)} ${c.moneda}`).join('\n');
+  return cambios.map((c) => `• ${escapeHtml(c.cuenta)}: ${c.anterior === null ? '(nuevo)' : fmt(c.anterior)} → ${fmt(c.nuevo)} ${escapeHtml(c.moneda)}`).join('\n');
 }
 const NIVEL_ORD = { ok: 0, timing: 1, revisar: 2, alerta: 3 };
 function peorNivel(filas) {
@@ -63,7 +69,7 @@ async function textoPedirLibro(datos) {
   const prev = await saldosAnteriores({ fecha: datos.fecha, empresa: datos.empresa });
   if (!prev.fecha) {
     return (
-      `📌 Es el primer cierre que cargo de <b>${datos.empresa}</b>: no tengo un saldo anterior, ` +
+      `📌 Es el primer cierre que cargo de <b>${escapeHtml(datos.empresa)}</b>: no tengo un saldo anterior, ` +
       `así que este día queda como base (no se concilia contra nada).\n\n` +
       `2) Mandame el libro diario ("Diario de movimientos" de Sigma) del <b>${hoyTxt}</b>, como .xlsx.`
     );
@@ -73,10 +79,30 @@ async function textoPedirLibro(datos) {
     ? `del <b>${hoyTxt}</b>`
     : `del <b>${formatoVencimiento(desde)}</b> al <b>${hoyTxt}</b>`;
   return (
-    `📌 Último saldo que tengo de <b>${datos.empresa}</b>: <b>${formatoVencimiento(prev.fecha)}</b> — concilio contra ese.\n\n` +
+    `📌 Último saldo que tengo de <b>${escapeHtml(datos.empresa)}</b>: <b>${formatoVencimiento(prev.fecha)}</b> — concilio contra ese.\n\n` +
     `2) Ahora mandame el libro diario ("Diario de movimientos" de Sigma), como .xlsx.\n` +
     `📅 En Sigma exportá el rango ${rango} (entran todos los días desde el último saldo — findes/feriados incluidos).`
   );
+}
+
+// Manda "✅ saldos guardados" + el pedido del libro, TOLERANDO fallos: si armar el texto
+// (consulta a DB) o el envío HTML fallan, cae a un texto plano. Nunca tira — así el llamador
+// puede avanzar el wizard con la certeza de que no queda trabado tras haber guardado los saldos.
+async function responderPedidoLibro(ctx, datos, prefijo) {
+  let cuerpo;
+  try {
+    cuerpo = await textoPedirLibro(datos);
+  } catch (e) {
+    console.error('No pude armar el pedido del libro (sigo igual):', e.message);
+    cuerpo = '2) Ahora mandame el libro diario ("Diario de movimientos" de Sigma) de ese día, como .xlsx.';
+  }
+  try {
+    await ctx.reply(`${prefijo}\n\n${cuerpo}`, { parse_mode: 'HTML' });
+  } catch (e) {
+    console.error('Falló el envío del pedido del libro; reintento en texto plano:', e.message);
+    await ctx.reply(`${prefijo}\n\n2) Mandame el libro diario ("Diario de movimientos") de ese día, como .xlsx.`)
+      .catch((e2) => console.error('Tampoco pude enviar el fallback:', e2.message));
+  }
 }
 
 // Registra (append-only) y avisa a los admins un cambio de saldos ya cargados, EN EL ACTO —
@@ -92,8 +118,8 @@ async function auditarYAvisarCambioSaldos(ctx, datos, cambios) {
       detalle: { cambios: cambios.map((c) => ({ cuenta: c.cuenta, anterior: c.anterior, nuevo: c.nuevo })) },
     });
   } catch (e) { console.error('No pude auditar el cambio de saldos:', e.message); }
-  const msg = `🔔 <b>Cambio de saldos ya cargados</b> — ${datos.empresa}, ${formatoVencimiento(datos.fecha)}\n` +
-    `Modificó: ${quien}\n\n${detalleCambios(cambios)}`;
+  const msg = `🔔 <b>Cambio de saldos ya cargados</b> — ${escapeHtml(datos.empresa)}, ${formatoVencimiento(datos.fecha)}\n` +
+    `Modificó: ${escapeHtml(quien)}\n\n${detalleCambios(cambios)}`;
   const admins = (await telegramIdsAdmins()).filter((tid) => Number(tid) !== ctx.from.id);
   for (const tid of admins) {
     try { await ctx.telegram.sendMessage(tid, msg, { parse_mode: 'HTML' }); }
@@ -158,9 +184,9 @@ async function conciliarYResponder(ctx, buffer) {
   // se avisó en el paso 2.) telegram_id viene como string de pg → comparar como Number.
   const enAlerta = filas.filter((f) => f.nivel === 'alerta');
   if (enAlerta.length) {
-    const aviso = `🔔 <b>Cierre ${formatoVencimiento(datos.fecha)}</b> — cargó ${quienEs(ctx)}\n\n` +
+    const aviso = `🔔 <b>Cierre ${formatoVencimiento(datos.fecha)}</b> — cargó ${escapeHtml(quienEs(ctx))}\n\n` +
       `🔴 Cuentas en alerta (acumulado que no se resuelve):\n` +
-      enAlerta.map((f) => `• ${f.cuenta}: acum ${fmt(f.acumulado)} ${f.moneda}`).join('\n');
+      enAlerta.map((f) => `• ${escapeHtml(f.cuenta)}: acum ${fmt(f.acumulado)} ${escapeHtml(f.moneda)}`).join('\n');
     const admins = (await telegramIdsAdmins()).filter((tid) => Number(tid) !== ctx.from.id);
     for (const tid of admins) {
       try { await ctx.telegram.sendMessage(tid, aviso, { parse_mode: 'HTML' }); }
@@ -219,11 +245,8 @@ const cierreWizard = new Scenes.WizardScene(
     }
     // Sin cambios (o primera carga): guardar y pedir el libro directo.
     await guardarSaldos({ ...datos, usuarioId: u ? u.id : null });
-    await ctx.reply(
-      `✅ Saldos de ${formatoVencimiento(datos.fecha)} guardados (${datos.saldos.length} cuentas).\n\n` +
-      (await textoPedirLibro(datos)),
-      { parse_mode: 'HTML' }
-    );
+    await responderPedidoLibro(ctx, datos,
+      `✅ Saldos de ${formatoVencimiento(datos.fecha)} guardados (${datos.saldos.length} cuentas).`);
     ctx.wizard.selectStep(3); // saltar la confirmación -> paso 3 (libro)
     return;
   },
@@ -244,11 +267,8 @@ const cierreWizard = new Scenes.WizardScene(
     // el cambio de plata ya quedó asentado y avisado a los admins).
     await auditarYAvisarCambioSaldos(ctx, datos, cambios);
     ctx.wizard.state.guardando = false;
-    await ctx.reply(
-      `✅ Saldos de ${formatoVencimiento(datos.fecha)} actualizados (les avisé a los administradores).\n\n` +
-      (await textoPedirLibro(datos)),
-      { parse_mode: 'HTML' }
-    );
+    await responderPedidoLibro(ctx, datos,
+      `✅ Saldos de ${formatoVencimiento(datos.fecha)} actualizados (les avisé a los administradores).`);
     return ctx.wizard.next(); // -> paso 3 (libro)
   },
   // 3: recibir libro -> conciliar y responder
