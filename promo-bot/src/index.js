@@ -7,11 +7,12 @@ const { setBot } = require('./notificar');
 const calidad = require('./areas/calidad');
 const compras = require('./areas/compras');
 const tesoreria = require('./areas/tesoreria');
+const carritoWeb = require('./areas/carritoweb');
 const admin = require('./admin');
 const { iniciarAvisos } = require('./avisos');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
-const areas = [calidad, compras, tesoreria];
+const areas = [calidad, compras, tesoreria, carritoWeb];
 
 // Variables imprescindibles para arrancar.
 const requeridas = ['BOT_TOKEN', 'DATABASE_URL'];
