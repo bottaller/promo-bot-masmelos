@@ -20,6 +20,7 @@ const comandos = [
   { comando: 'cierre', descripcion: 'Cierre diario: mandás los saldos + el libro del día, te marco las diferencias' },
   { comando: 'semanal', descripcion: 'Control semanal (mandás el libro de la semana; los saldos ya los tengo)' },
   { comando: 'mensual', descripcion: 'Control mensual (mandás el libro del mes; los saldos ya los tengo)' },
+  { comando: 'reportecierre', descripcion: 'Recuperar un cierre pasado (auditoría)', admin: true },
 ];
 
 function registrar(bot) {
