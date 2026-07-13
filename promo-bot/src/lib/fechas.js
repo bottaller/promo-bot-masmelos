@@ -59,4 +59,11 @@ function fechaISO(fecha) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-module.exports = { parseVencimiento, formatoVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO, fechaISO };
+// Date + n días (n puede ser negativo), a medianoche local. Construye la fecha con los
+// componentes locales —igual criterio que fechaISO/formatoVencimiento— así el JS normaliza
+// el cambio de mes/año y no arrastra el corrimiento de UTC.
+function sumarDias(fecha, n) {
+  return new Date(fecha.getFullYear(), fecha.getMonth(), fecha.getDate() + n);
+}
+
+module.exports = { parseVencimiento, formatoVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO, fechaISO, sumarDias };

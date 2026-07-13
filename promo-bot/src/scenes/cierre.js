@@ -16,7 +16,7 @@ const {
   guardarMovimientos, guardarConciliacion, historialDiferencias, registrarAuditoria,
 } = require('../db/tesoreria');
 const { telegramIdsAdmins } = require('../db/usuarios');
-const { formatoVencimiento, fechaISO } = require('../lib/fechas');
+const { formatoVencimiento, fechaISO, sumarDias } = require('../lib/fechas');
 
 function tieneAccesoTesoreria(u) {
   return !!(u && (u.es_admin || (u.areas && u.areas.includes('tesoreria'))));
@@ -50,6 +50,33 @@ async function bajarDoc(ctx, doc) {
 function quienEs(ctx) {
   const u = ctx.state.usuario;
   return (u && u.nombre) || (ctx.from.username ? '@' + ctx.from.username : String(ctx.from.id));
+}
+
+// Mensaje del paso "mandame el libro". En vez de pedir el libro "de ese día" (que obliga al
+// tesorero a acordarse contra qué está conciliando), le decimos:
+//   - cuál es el ÚLTIMO saldo que tengo guardado (el "ayer" contra el que se concilia), y
+//   - qué RANGO exacto exportar de Sigma: (último_saldo, hoy] = del día siguiente al último
+//     saldo hasta el de este cierre. Así cubre findes/feriados sin que tenga que pensarlo,
+//     y es EXACTAMENTE la ventana que después usa la conciliación (m.fecha > prev && <= hoy).
+async function textoPedirLibro(datos) {
+  const hoyTxt = formatoVencimiento(datos.fecha);
+  const prev = await saldosAnteriores({ fecha: datos.fecha, empresa: datos.empresa });
+  if (!prev.fecha) {
+    return (
+      `📌 Es el primer cierre que cargo de <b>${datos.empresa}</b>: no tengo un saldo anterior, ` +
+      `así que este día queda como base (no se concilia contra nada).\n\n` +
+      `2) Mandame el libro diario ("Diario de movimientos" de Sigma) del <b>${hoyTxt}</b>, como .xlsx.`
+    );
+  }
+  const desde = sumarDias(prev.fecha, 1);
+  const rango = fechaISO(desde) === fechaISO(datos.fecha)
+    ? `del <b>${hoyTxt}</b>`
+    : `del <b>${formatoVencimiento(desde)}</b> al <b>${hoyTxt}</b>`;
+  return (
+    `📌 Último saldo que tengo de <b>${datos.empresa}</b>: <b>${formatoVencimiento(prev.fecha)}</b> — concilio contra ese.\n\n` +
+    `2) Ahora mandame el libro diario ("Diario de movimientos" de Sigma), como .xlsx.\n` +
+    `📅 En Sigma exportá el rango ${rango} (entran todos los días desde el último saldo — findes/feriados incluidos).`
+  );
 }
 
 // Registra (append-only) y avisa a los admins un cambio de saldos ya cargados, EN EL ACTO —
@@ -194,7 +221,8 @@ const cierreWizard = new Scenes.WizardScene(
     await guardarSaldos({ ...datos, usuarioId: u ? u.id : null });
     await ctx.reply(
       `✅ Saldos de ${formatoVencimiento(datos.fecha)} guardados (${datos.saldos.length} cuentas).\n\n` +
-      '2) Ahora mandame el libro diario ("Diario de movimientos" de Sigma) de ese día, como .xlsx.'
+      (await textoPedirLibro(datos)),
+      { parse_mode: 'HTML' }
     );
     ctx.wizard.selectStep(3); // saltar la confirmación -> paso 3 (libro)
     return;
@@ -218,7 +246,8 @@ const cierreWizard = new Scenes.WizardScene(
     ctx.wizard.state.guardando = false;
     await ctx.reply(
       `✅ Saldos de ${formatoVencimiento(datos.fecha)} actualizados (les avisé a los administradores).\n\n` +
-      '2) Ahora mandame el libro diario ("Diario de movimientos") de ese día, como .xlsx.'
+      (await textoPedirLibro(datos)),
+      { parse_mode: 'HTML' }
     );
     return ctx.wizard.next(); // -> paso 3 (libro)
   },
