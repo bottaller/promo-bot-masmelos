@@ -303,9 +303,8 @@ def main(argv: list[str] | None = None) -> int:
     gemelos = core.detectar_gemelos(df)
     tabla_alertas = alertas_mod.generar_alertas(
         df, arqueo, bolsines, difc_eventos, gemelos, alivios)
-    # Control 2: flujo del efectivo + salidas del circuito, y el mini-flujo en dólares.
+    # Control 2: flujo del efectivo + salidas del circuito.
     grafo = flujo.construir_flujo(df)
-    flujo_usd = flujo.construir_flujo_usd(df)
 
     # 4. Outputs. El snapshot ya se guardó (paso 1); el Excel y los logs se
     #    escriben tolerando que el tesorero los tenga abiertos en Excel.
@@ -351,7 +350,7 @@ def main(argv: list[str] | None = None) -> int:
             autoriz = {}
         aut_msg = "NO se actualizó — abierto en Excel (firmas previas conservadas)."
     out_html = flujo_html.generar_flujo_html(
-        mes_dir / f"flujo_{desde:%Y-%m-%d}_{hasta:%Y-%m-%d}.html", grafo, meta, autoriz, flujo_usd)
+        mes_dir / f"flujo_{desde:%Y-%m-%d}_{hasta:%Y-%m-%d}.html", grafo, meta, autoriz)
 
     # En --json el resumen humano va a stderr, para que stdout quede solo con la línea JSON.
     with (contextlib.redirect_stdout(sys.stderr) if args.json else contextlib.nullcontext()):

@@ -325,15 +325,6 @@ ARQUEO_CAJAS_CASCADA: dict[int, str] = {
 # el importe en ARS depende de la cotización del día.
 ARQUEO_CTA_USD = 111102006
 
-# Todas las cajas en dólares, para el mini-flujo "Seguí los dólares" (Control 2).
-# Se arquean por las columnas *Nominal* (USD). 111102006 es la caja FÍSICA del negocio
-# (la que se cuenta a diario, = ARQUEO_CTA_USD); 111102005 es adonde van los dólares
-# cuando SALEN del negocio (caja de un socio). El orden acá define el orden del flujo.
-ARQUEO_CTAS_USD: dict[int, str] = {
-    111102006: "Caja Dólar Tesorería",
-    111102005: "Caja Dolares",
-}
-
 # Cuentas donde se registran las diferencias de arqueo. El criterio histórico
 # es DESVIO DE CAJA; desde jul-2026 algunas diferencias chicas y las pruebas
 # van a AJUSTES Y REDONDEOS — el reporte las lee de las dos y alerta para
@@ -423,7 +414,11 @@ ARQUEO_FLUJO_NODO: dict[int, tuple[str, str]] = {
     # a Skyceo (queda ahí, Honre no la vuelve a tocar). Destino inter-empresa.
     111100030: ("skyceo", "Skyceo (caja PIBA)"),
     111101004: ("gerencia", "Retiro gerencia"),
-    111102006: ("usd", "Compra USD"),
+    # Cajas dólar en la cadena: la Tesorería (006) es parte del circuito (dólares del
+    # negocio); de ahí la plata SALE hacia la Caja Dolares (005, caja de un socio). Así el
+    # flujo dibuja  … → Caja Fuerte → Caja Dólar Tesorería → Caja Dolares.
+    111102006: ("caja_dolar_tes", "Caja Dólar Tesorería"),
+    111102005: ("caja_dolares", "Caja Dolares"),
     211101001: ("proveedores", "Pago proveedores"),
     112011001: ("anulacion", "Anulación cobranza"),  # caja → deudores (reversa)
     501100006: ("desvio", "Desvío de caja"),
@@ -435,7 +430,7 @@ ARQUEO_FLUJO_NODO: dict[int, tuple[str, str]] = {
 ARQUEO_FLUJO_CUSTODIA: set[str] = {
     "cajas", "tesoreria", "central", "central_bis", "buzon", "puente", "fuerte",
     "administracion", "banco_santander", "banco_supervielle",
-    "mercadopago", "tarjetas",
+    "mercadopago", "tarjetas", "caja_dolar_tes",
 }
 
 # Categoría de cada nodo destino → severidad/color. Cualquier destino no
@@ -448,7 +443,7 @@ ARQUEO_FLUJO_CUSTODIA: set[str] = {
 ARQUEO_DESTINO_CAT: dict[str, str] = {
     "desvio": "ok",
     "gerencia": "autorizado",
-    "usd": "autorizado",
+    "caja_dolares": "autorizado",
     "proveedores": "autorizado",
     "echeq": "autorizado",       # efectivo convertido a e-cheque
     "impuestos": "autorizado",   # pago de impuestos/cargas en efectivo
@@ -484,7 +479,7 @@ ARQUEO_DESTINO_NOMBRE: dict[str, tuple[str, str]] = {
     # Retiro de socios (autorizado, firmar)
     "RETIRO MARTIN PAVLOTSKY Y ROBERTO CARISEO 2023": ("gerencia", "Retiro socios"),
     # Dólares (autorizado)
-    "CAJA DOLARES (USD)": ("usd", "Compra USD"),
+    "CAJA DOLARES (USD)": ("caja_dolares", "Caja Dolares"),
     # Proveedores (autorizado)
     "PAGO A PROVEEDORES": ("proveedores", "Pago proveedores"),
     "PROVEEDORES SERVICIO": ("proveedores", "Pago proveedores"),

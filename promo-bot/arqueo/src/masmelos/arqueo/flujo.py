@@ -155,9 +155,14 @@ def construir_flujo(df: pd.DataFrame) -> dict:
             # 'conciliable'), para que la lista sea completa por secciones.
             es_banco = d_nodo in {"banco_santander", "banco_supervielle"}
             if (not es_chain) or es_banco:
-                # cuenta_asociada nombra la contraparte (proveedor). Solo está
-                # poblada en pagos a proveedores; en el resto queda vacía.
-                asociado = str(d.get("cuenta_asociada", "") or "").strip()
+                # cuenta_asociada nombra la contraparte (proveedor). Solo está poblada
+                # en pagos a proveedores; en el resto viene NaN → "" (si no, se ve "nan").
+                asoc_val = d.get("cuenta_asociada")
+                asociado = "" if pd.isna(asoc_val) else str(asoc_val).strip()
+                # Para las cajas dólar, el monto en USD (columna Nominal): así la salida
+                # a Caja Dolares muestra cuántos dólares se movieron, no solo los pesos.
+                usd = (float(d["debe_nominal"])
+                       if d_nodo in ("caja_dolar_tes", "caja_dolares") else None)
                 salidas.append({
                     "fecha": g["fecha"].iloc[0], "ingreso": g["ingreso"].iloc[0],
                     "mov": int(mov), "origen": o_label, "destino_id": d_nodo,
@@ -165,7 +170,7 @@ def construir_flujo(df: pd.DataFrame) -> dict:
                     "categoria": "conciliable" if es_banco else clase,
                     "monto": float(d["debe"]),
                     "usuario": g["usuario"].iloc[0], "concepto": str(g["concepto"].iloc[0]),
-                    "asociado": asociado,
+                    "asociado": asociado, "usd": usd,
                 })
 
     # DESVÍO DE CAJA: no se dibuja el bruto de las DIFC (faltantes + reversiones
@@ -197,7 +202,7 @@ def construir_flujo(df: pd.DataFrame) -> dict:
                 "origen": o_label, "destino_id": "desvio", "destino": "Desvío de caja",
                 "categoria": "ok", "monto": abs(neto), "usuario": ult["usuario"],
                 "concepto": ("sobrante" if neto > 0 else "faltante") + " neto de arqueo",
-                "asociado": "",
+                "asociado": "", "usd": None,
             })
 
     def _clase(d: str) -> str:
@@ -238,92 +243,3 @@ def resumen_salidas(salidas: pd.DataFrame) -> pd.DataFrame:
         .sort_values("monto", ascending=False)
     )
     return out[cols].reset_index(drop=True)
-
-
-def construir_flujo_usd(df: pd.DataFrame) -> dict:
-    """Mini-flujo de la caja en dólares — "Seguí los dólares".
-
-    Espeja "Seguí la plata" pero en USD, usando las columnas *Nominal* y solo las
-    cuentas de config.ARQUEO_CTAS_USD. Sigue el recorrido típico:
-        compra (pesos → USD) → Caja Dólar Tesorería (006) → Caja Dolares (005)
-    y una venta (USD → pesos) si la hubiera. Clasifica cada asiento que toca una
-    caja dólar:
-      - dos cajas dólar (una entrega, otra recibe) → TRANSFERENCIA entre cajas.
-      - una caja recibe (Nominal al Debe), sin otra caja → COMPRA (viene de pesos).
-      - una caja entrega (Nominal al Haber), sin otra caja → VENTA (va a pesos).
-
-    Devuelve {activo, nodos, edges, movimientos, saldo}:
-      - activo: hubo algún movimiento de USD en la ventana.
-      - nodos: {node_id -> {label, tipo}} — tipo 'externo' (compra/venta) o 'caja'.
-      - edges: [{origen, destino, usd}] sumados por par.
-      - movimientos: [{fecha, concepto, usuario, origen, destino, usd, cotizacion}].
-      - saldo: {node_id -> Δ USD en la ventana} (lo que entró − lo que salió de cada caja).
-    """
-    ctas = config.ARQUEO_CTAS_USD
-    COMPRA, VENTA = "compra", "venta"
-    dol = df[df["cuenta_id"].isin(ctas)]
-    activo = not dol.empty and float(
-        dol["debe_nominal"].abs().sum() + dol["haber_nominal"].abs().sum()) > 0.5
-    if not activo:
-        return {"activo": False, "nodos": {}, "edges": [], "movimientos": [], "saldo": {}}
-
-    edges: dict[tuple[str, str], float] = {}
-    movimientos: list[dict] = []
-    saldo: dict[str, float] = {}
-
-    def _mov(fecha, concepto, usuario, o_lbl, d_lbl, usd, ars):
-        movimientos.append({
-            "fecha": fecha, "concepto": concepto, "usuario": usuario,
-            "origen": o_lbl, "destino": d_lbl, "usd": round(usd, 2),
-            "cotizacion": round(abs(ars) / usd, 2) if usd else None,
-        })
-
-    for _mov_id, g in df.groupby("mov"):
-        gd = g[g["cuenta_id"].isin(ctas)]
-        recibe = [(int(r.cuenta_id), float(r.debe_nominal), float(r.debe))
-                  for r in gd.itertuples() if r.debe_nominal > 0]
-        entrega = [(int(r.cuenta_id), float(r.haber_nominal), float(r.haber))
-                   for r in gd.itertuples() if r.haber_nominal > 0]
-        if not recibe and not entrega:
-            continue
-        fecha = g["fecha"].iloc[0]
-        concepto = str(g["concepto"].iloc[0])
-        usuario = str(g["usuario"].iloc[0])
-        for cid, u, _a in recibe:
-            saldo[str(cid)] = saldo.get(str(cid), 0.0) + u
-        for cid, u, _a in entrega:
-            saldo[str(cid)] = saldo.get(str(cid), 0.0) - u
-
-        if recibe and entrega:
-            # Transferencia entre cajas dólar (ej. 006 → 005). En la práctica es 1→1 con
-            # montos iguales, pero soportamos varias cajas de cada lado: cada caja que
-            # entrega se reparte entre las que reciben, en proporción a lo recibido. Así
-            # conserva el total (Σ entrega == Σ recibe en el asiento) y ninguna caja se
-            # pierde del diagrama si algún día hay 3+ cajas dólar en ARQUEO_CTAS_USD.
-            total_recibe = sum(d_u for _, d_u, _ in recibe) or 1.0
-            for (o_cid, o_u, _o_ars) in entrega:
-                for (d_cid, d_u, d_ars) in recibe:
-                    monto = o_u * d_u / total_recibe
-                    edges[(str(o_cid), str(d_cid))] = edges.get((str(o_cid), str(d_cid)), 0.0) + monto
-                    _mov(fecha, concepto, usuario, ctas[o_cid], ctas[d_cid], monto, d_ars)
-        elif recibe:
-            for (d_cid, d_u, d_ars) in recibe:
-                edges[(COMPRA, str(d_cid))] = edges.get((COMPRA, str(d_cid)), 0.0) + d_u
-                _mov(fecha, concepto, usuario, "Compra USD", ctas[d_cid], d_u, d_ars)
-        else:
-            for (o_cid, o_u, o_ars) in entrega:
-                edges[(str(o_cid), VENTA)] = edges.get((str(o_cid), VENTA), 0.0) + o_u
-                _mov(fecha, concepto, usuario, ctas[o_cid], "Venta USD", o_u, o_ars)
-
-    nodos: dict[str, dict] = {}
-    if any(o == COMPRA for o, _ in edges):
-        nodos[COMPRA] = {"label": "Compra USD", "tipo": "externo"}
-    for cid, label in ctas.items():          # en el orden de config
-        if str(cid) in saldo:
-            nodos[str(cid)] = {"label": label, "tipo": "caja"}
-    if any(d == VENTA for _, d in edges):
-        nodos[VENTA] = {"label": "Venta USD", "tipo": "externo"}
-
-    edge_list = [{"origen": o, "destino": d, "usd": round(m, 2)} for (o, d), m in edges.items()]
-    return {"activo": True, "nodos": nodos, "edges": edge_list,
-            "movimientos": movimientos, "saldo": {k: round(v, 2) for k, v in saldo.items()}}

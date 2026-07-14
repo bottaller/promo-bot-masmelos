@@ -11,7 +11,6 @@ van hardcodeados y sobrios.
 
 from __future__ import annotations
 
-import html
 import json
 from pathlib import Path
 
@@ -25,7 +24,8 @@ from masmelos import config
 _COL = {"cajas": 0, "central": 0, "central_bis": 0, "tesoreria": 0,
         "administracion": 0, "mercadopago": 0, "tarjetas": 0,
         "buzon": 1, "puente": 2, "fuerte": 3,
-        "banco_santander": 4, "banco_supervielle": 4}
+        "banco_santander": 4, "banco_supervielle": 4,
+        "caja_dolar_tes": 4}  # dólares en tránsito, un eslabón antes del destino Caja Dolares
 _COL_DEST = 5
 _COL_X = {0: 20, 1: 250, 2: 410, 3: 565, 4: 755, 5: 1010}
 _COL_W = {0: 126, 1: 92, 2: 92, 3: 105, 4: 122, 5: 152}
@@ -236,6 +236,7 @@ def _arbol(salidas: pd.DataFrame, autoriz: dict[tuple, str]) -> list[dict]:
             "asociado": r.get("asociado", "") if "asociado" in g.columns else "",
             "usuario": r["usuario"],
             "monto": round(r["monto"]),
+            "usd": round(r["usd"]) if ("usd" in g.columns and pd.notna(r["usd"])) else None,
             "estado": autoriz.get((int(r["mov"]), str(dnodo), round(float(r["monto"]), 2)), ""),
         } for _, r in g.sort_values("monto", ascending=False).iterrows()]
         sec_orden, sec_titulo = _SECCION.get(cat, (9, "Otros"))
@@ -334,18 +335,8 @@ _TEMPLATE = r"""<!doctype html><html lang="es"><head><meta charset="utf-8">
  .when { color: #64748b; font-size: 12px; } .cpt { color: #334155; } .who { color: #94a3b8; font-size: 11px; }
  .asoc { color: #1d4ed8; font-weight: 600; }
  .ramt { text-align: right; font-variant-numeric: tabular-nums; }
+ .usdamt { display: block; font-size: 11px; color: #a16207; font-weight: 600; margin-top: 1px; }
  .firmado { color: #15803d; font-size: 11px; }
- .usd { margin-top: 30px; }
- .usdflow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 18px 16px; }
- .ustep { flex: 1 1 150px; min-width: 138px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; background: #f8fafc; }
- .ustep.caja { border-color: #ca8a04; background: #fef9e7; }
- .usname { font-size: 13px; font-weight: 600; color: #334155; }
- .ussub { font-size: 11px; color: #94a3b8; margin-top: 1px; }
- .usnum { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 7px; color: #1e293b; }
- .uarrow { font-size: 12px; color: #a16207; font-weight: 600; white-space: nowrap; text-align: center; padding: 0 2px; }
- .uarrow small { display: block; color: #94a3b8; font-weight: 500; font-size: 10.5px; }
- .usdnote { font-size: 13px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 12px; margin: 4px 2px 14px; }
- .usdrow { grid-template-columns: 60px 1fr 116px; }
  .foot { color: #94a3b8; font-size: 11px; margin-top: 20px; }
 </style></head><body><div class="wrap">
 <h1>Control 2 — Seguí la plata</h1>
@@ -371,7 +362,6 @@ _TEMPLATE = r"""<!doctype html><html lang="es"><head><meta charset="utf-8">
 <h2>Detalle de movimientos</h2>
 <div class="tintro">Todo lo que se movió, por secciones. La primera es la plata que salió del circuito de custodia (ya validada al hacer cada movimiento) — queda acá para tenerla en cuenta y ver de dónde salió cada peso. Click en cada renglón para abrir quién, cuándo y por qué.</div>
 <div id="tree"></div>
-%(seccion_usd)s
 <div class="foot">Generado por update_arqueo · Control 2 (trazabilidad del efectivo) · %(titulo)s</div>
 </div>
 <div class="tip" id="tip"></div>
@@ -518,7 +508,8 @@ DATA.tree.forEach(function(f){
  var rows=f.filas.map(function(r){
   var est=r.estado?'<span class="firmado">✓ '+esc(r.estado)+'</span>':'';
   var asoc=r.asociado?' <span class="asoc">→ '+esc(r.asociado)+'</span>':'';
-  return '<div class="row"><span class="when">'+r.fecha+' '+r.hora+'</span><span><span class="cpt">'+esc(r.concepto)+'</span>'+asoc+'<br><span class="who">cargó: '+esc(r.usuario)+'  ·  mov '+r.mov+'  '+est+'</span></span><span class="ramt">'+fmtF(r.monto)+'</span></div>';
+  var usd=r.usd?'<span class="usdamt">US$ '+Math.round(r.usd).toLocaleString('es-AR')+'</span>':'';
+  return '<div class="row"><span class="when">'+r.fecha+' '+r.hora+'</span><span><span class="cpt">'+esc(r.concepto)+'</span>'+asoc+'<br><span class="who">cargó: '+esc(r.usuario)+'  ·  mov '+r.mov+'  '+est+'</span></span><span class="ramt">'+fmtF(r.monto)+usd+'</span></div>';
  }).join('');
  box.innerHTML='<div class="ghead"><span class="caret">▶</span><span class="gname">'+esc(f.destino)+'</span><span class="gtag">'+esc(f.cat_label)+'</span><span class="gamt">'+fmtF(f.total)+'</span></div><div class="gbody">'+rows+'</div>';
  if(f.cat==='revisar'||f.cat==='inter_empresa')box.classList.add('open');
@@ -528,77 +519,7 @@ DATA.tree.forEach(function(f){
 </script></body></html>"""
 
 
-def _fmt_usd(x: float) -> str:
-    """USD con separador de miles es-AR y signo (−) para negativos."""
-    s = f"{abs(x):,.0f}".replace(",", ".")
-    return ("−US$ " if x < -0.5 else "US$ ") + s
-
-
-def _render_usd(fusd: dict | None) -> str:
-    """HTML estático de la sección "Seguí los dólares" (o "" si no hubo USD)."""
-    if not fusd or not fusd.get("activo"):
-        return ""
-    nodos, edges, saldo = fusd["nodos"], fusd["edges"], fusd["saldo"]
-    ctas = config.ARQUEO_CTAS_USD
-    orden = ["compra"] + [str(c) for c in ctas] + ["venta"]
-    presentes = [n for n in orden if n in nodos]
-    emap = {(e["origen"], e["destino"]): e["usd"] for e in edges}
-
-    piezas = []
-    for i, nid in enumerate(presentes):
-        info = nodos[nid]
-        es_caja = info["tipo"] == "caja"
-        if es_caja:
-            d = saldo.get(nid, 0.0)
-            sub = ("pasó de largo" if abs(d) <= 0.5
-                   else "quedó en la caja" if d > 0 else "bajó en la ventana")
-            num = _fmt_usd(d)
-        else:
-            tot = sum(e["usd"] for e in edges if nid in (e["origen"], e["destino"]))
-            sub = "pesos → dólares" if nid == "compra" else "dólares → pesos"
-            num = _fmt_usd(tot)
-        cls = "ustep caja" if es_caja else "ustep"
-        piezas.append(f'<div class="{cls}"><div class="usname">{html.escape(info["label"])}</div>'
-                      f'<div class="ussub">{sub}</div><div class="usnum">{num}</div></div>')
-        if i < len(presentes) - 1:
-            amt = emap.get((nid, presentes[i + 1]))
-            piezas.append(f'<div class="uarrow">→<small>{_fmt_usd(amt)}</small></div>'
-                          if amt else '<div class="uarrow">→</div>')
-    strip = '<div class="card usdflow">' + "".join(piezas) + "</div>"
-
-    # Nota: dólares que SALIERON del negocio (cajas dólar que no son la física).
-    salieron = {ctas[int(k)]: v for k, v in saldo.items()
-                if int(k) != config.ARQUEO_CTA_USD and v > 0.5}
-    nota = ""
-    if salieron:
-        det = " · ".join(f"{html.escape(lbl)}: {_fmt_usd(v)}" for lbl, v in salieron.items())
-        nota = (f'<div class="usdnote">💵 Dólares que <b>salieron del negocio</b> en la ventana '
-                f'(los controlás vos aparte): {det}.</div>')
-
-    filas = []
-    for m in fusd["movimientos"]:
-        cot = ""
-        if m.get("cotizacion"):
-            cot = " · $" + f"{m['cotizacion']:,.0f}".replace(",", ".")
-        # Fecha defensiva: un asiento sin fecha (NaT) no debe tumbar TODO el HTML
-        # (mismo criterio que el lado en pesos). strftime sobre NaT lanza ValueError.
-        fstr = f"{m['fecha']:%d/%m}" if pd.notna(m["fecha"]) else ""
-        filas.append(
-            f'<div class="row usdrow"><span class="when">{fstr}</span>'
-            f'<span><span class="cpt">{html.escape(m["concepto"])}</span><br>'
-            f'<span class="who">{html.escape(m["origen"])} → {html.escape(m["destino"])}{cot}</span></span>'
-            f'<span class="ramt">{_fmt_usd(m["usd"])}</span></div>')
-    tabla = '<div class="grp usd open"><div class="gbody">' + "".join(filas) + "</div></div>"
-
-    return ('<div class="usd"><h2>Seguí los dólares</h2>'
-            '<div class="tintro">El recorrido de la caja en dólares (columnas <i>Nominal</i> del '
-            'diario): los pesos que compran USD entran a la caja física de Tesorería y, lo que sale '
-            'del negocio, pasa a la Caja Dolares. El monto de cada caja es su saldo neto de la '
-            'ventana (no el saldo total).</div>' + strip + nota + tabla + "</div>")
-
-
-def render_html(flujo: dict, meta: dict, autoriz: dict[int, str] | None = None,
-                flujo_usd: dict | None = None) -> str:
+def render_html(flujo: dict, meta: dict, autoriz: dict[int, str] | None = None) -> str:
     """Devuelve el HTML completo del Control 2."""
     autoriz = autoriz or {}
     salidas = flujo["salidas"]
@@ -645,7 +566,6 @@ def render_html(flujo: dict, meta: dict, autoriz: dict[int, str] | None = None,
         # un viewBox de más y que el SVG "salte" al primer render.
         "titulo": titulo, "subtitulo": sub, "alto": estados[""]["alto"],
         "ancho": _SVG_W,
-        "seccion_usd": _render_usd(flujo_usd),
         # Neutralizar el cierre de <script>: un concepto tipeado en Sigma con
         # "</script>" cortaría el bloque y dejaría el dashboard en blanco (+ XSS).
         # "<\/" es un escape JS válido que el runtime relee como "</".
@@ -654,10 +574,9 @@ def render_html(flujo: dict, meta: dict, autoriz: dict[int, str] | None = None,
 
 
 def generar_flujo_html(path: str | Path, flujo: dict, meta: dict,
-                       autoriz: dict[int, str] | None = None,
-                       flujo_usd: dict | None = None) -> Path:
+                       autoriz: dict[int, str] | None = None) -> Path:
     """Escribe el HTML del Control 2 y devuelve el path."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_html(flujo, meta, autoriz, flujo_usd), encoding="utf-8")
+    path.write_text(render_html(flujo, meta, autoriz), encoding="utf-8")
     return path
