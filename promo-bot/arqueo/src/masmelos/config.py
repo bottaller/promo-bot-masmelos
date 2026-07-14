@@ -417,6 +417,8 @@ ARQUEO_FLUJO_NODO: dict[int, tuple[str, str]] = {
     # Cajas dólar en la cadena: la Tesorería (006) es parte del circuito (dólares del
     # negocio); de ahí la plata SALE hacia la Caja Dolares (005, caja de un socio). Así el
     # flujo dibuja  … → Caja Fuerte → Caja Dólar Tesorería → Caja Dolares.
+    # Nota: una VENTA de USD (006 → pesos) es un movimiento interno correcto, pero en el
+    # Sankey (monótono izq→der) se vería como un río "hacia atrás". En la práctica no ocurre.
     111102006: ("caja_dolar_tes", "Caja Dólar Tesorería"),
     111102005: ("caja_dolares", "Caja Dolares"),
     211101001: ("proveedores", "Pago proveedores"),
