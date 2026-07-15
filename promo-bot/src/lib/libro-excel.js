@@ -10,7 +10,7 @@
 // cuenta, debe, haber, debe_nominal, haber_nominal}] } o tira LibroError (mensaje directo
 // al usuario) si el archivo no tiene la forma esperada.
 const XLSX = require('xlsx');
-const { parseVencimiento, fechaISO } = require('./fechas');
+const { parseVencimiento, fechaISO, tsCanonico, finDeDiaTs } = require('./fechas');
 
 // Errores "esperables" con mensaje para el tesorero (los distingue de un bug real).
 class LibroError extends Error {}
@@ -55,6 +55,26 @@ function parseEntero(v) {
     return Number.isFinite(n) ? Math.trunc(n) : null;
   }
   return null;
+}
+
+// La marca de tiempo "Ingreso" de cada movimiento (columna 16 del libro): cuándo se cargó
+// en Sigma. Es el corte fino de la ventana. Serial de Excel (datetime), Date, o texto
+// "DD/MM/AAAA HH:MM(:SS)" / "AAAA-MM-DD HH:MM(:SS)". Devuelve el string canónico
+// 'AAAA-MM-DD HH:MM:SS'. Si no viene o no cierra → fin del día de la fecha (default = por día).
+function interpretarTimestamp(v, fechaFallback) {
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    const d = XLSX.SSF && XLSX.SSF.parse_date_code(v);
+    if (d) return tsCanonico(d.y, d.m, d.d, d.H || 0, d.M || 0, Math.round(d.S || 0));
+  } else if (v instanceof Date && !isNaN(v)) {
+    return tsCanonico(v.getFullYear(), v.getMonth() + 1, v.getDate(), v.getHours(), v.getMinutes(), v.getSeconds());
+  } else if (typeof v === 'string') {
+    const s = v.trim();
+    let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (m) return tsCanonico(+m[3], +m[2], +m[1], +m[4], +m[5], m[6] ? +m[6] : 0);
+    m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (m) return tsCanonico(+m[1], +m[2], +m[3], +m[4], +m[5], m[6] ? +m[6] : 0);
+  }
+  return fechaFallback ? finDeDiaTs(fechaFallback) : null;
 }
 
 // La fecha de cada asiento: serial de Excel (número) o texto DD/MM/AAAA. null si no cierra.
@@ -114,8 +134,11 @@ function parsearLibro(buffer) {
   }
   const tituloEmpresa = partesEmpresa.join('');
 
-  // Agregación por (fecha ISO, cuenta_id).
-  const acc = new Map(); // clave `${fISO}|${cuenta_id}` -> {fecha, cuenta_id, cuenta, debe, haber, debe_nominal, haber_nominal}
+  // Agregación por (fecha ISO, cuenta_id, INGRESO): preserva la hora de cada movimiento
+  // (necesaria para el corte por hora del /cierre). Los renglones del mismo cuenta_id con el
+  // MISMO Ingreso se suman (lossless: caen siempre en la misma ventana); horas distintas
+  // quedan en filas separadas (que es justo lo que permite partir el día por el conteo).
+  const acc = new Map(); // clave `${fISO}|${cuenta_id}|${ingreso}` -> {fecha, ingreso, cuenta_id, cuenta, debe, haber, debe_nominal, haber_nominal}
   let minFecha = null;
   let maxFecha = null;
   let nFilas = 0;
@@ -135,10 +158,11 @@ function parsearLibro(buffer) {
     }
 
     const fISO = fechaISO(fecha);
-    const clave = `${fISO}|${cuentaId}`;
+    const ingreso = interpretarTimestamp(r[COL.ingreso], fecha);
+    const clave = `${fISO}|${cuentaId}|${ingreso}`;
     let e = acc.get(clave);
     if (!e) {
-      e = { fecha, cuenta_id: cuentaId, cuenta: norm(r[COL.cuenta]), debe: 0, haber: 0, debe_nominal: 0, haber_nominal: 0 };
+      e = { fecha, ingreso, cuenta_id: cuentaId, cuenta: norm(r[COL.cuenta]), debe: 0, haber: 0, debe_nominal: 0, haber_nominal: 0 };
       acc.set(clave, e);
     } else if (!e.cuenta) {
       e.cuenta = norm(r[COL.cuenta]);

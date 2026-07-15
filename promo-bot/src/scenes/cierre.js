@@ -13,10 +13,10 @@ const { parsearLibro, LibroError } = require('../lib/libro-excel');
 const { procesarCierre } = require('../lib/control-tesoreria');
 const {
   guardarSaldos, saldosDeFecha, saldosAnteriores,
-  guardarMovimientos, guardarConciliacion, historialDiferencias, registrarAuditoria,
+  guardarMovimientos, movimientosDeRango, guardarConciliacion, historialDiferencias, registrarAuditoria,
 } = require('../db/tesoreria');
 const { telegramIdsAdmins } = require('../db/usuarios');
-const { formatoVencimiento, fechaISO, sumarDias } = require('../lib/fechas');
+const { formatoVencimiento } = require('../lib/fechas');
 
 function tieneAccesoTesoreria(u) {
   return !!(u && (u.es_admin || (u.areas && u.areas.includes('tesoreria'))));
@@ -58,14 +58,18 @@ function quienEs(ctx) {
   return (u && u.nombre) || (ctx.from.username ? '@' + ctx.from.username : String(ctx.from.id));
 }
 
-// Mensaje del paso "mandame el libro". En vez de pedir el libro "de ese día" (que obliga al
-// tesorero a acordarse contra qué está conciliando), le decimos:
-//   - cuál es el ÚLTIMO saldo que tengo guardado (el "ayer" contra el que se concilia), y
-//   - qué RANGO exacto exportar de Sigma: (último_saldo, hoy] = del día siguiente al último
-//     saldo hasta el de este cierre. Así cubre findes/feriados sin que tenga que pensarlo,
-//     y es EXACTAMENTE la ventana que después usa la conciliación (m.fecha > prev && <= hoy).
+// Hora 'HH:MM' de un contadoEn canónico 'AAAA-MM-DD HH:MM:SS'.
+function horaDe(ts) { return ts ? ts.slice(11, 16) : '23:59'; }
+
+// Mensaje del paso "mandame el libro". Le decimos cuál es el último saldo (con su HORA de
+// conteo, contra el que se concilia) y qué rango exportar. Ojo: el corte fino es por HORA
+// (entre los dos conteos), pero el export de Sigma es por rango de DÍAS — por eso pedimos
+// desde el DÍA del conteo anterior INCLUSIVE (para que venga la cola de esa tarde, que en
+// la ventana por hora sí cuenta) hasta hoy. La ventana real la calcula la conciliación
+// leyendo la DB por `ingreso`, así que unos días de más en el export no molestan.
 async function textoPedirLibro(datos) {
   const hoyTxt = formatoVencimiento(datos.fecha);
+  const horaHoy = horaDe(datos.contadoEn);
   const prev = await saldosAnteriores({ fecha: datos.fecha, empresa: datos.empresa });
   if (!prev.fecha) {
     return (
@@ -74,14 +78,13 @@ async function textoPedirLibro(datos) {
       `2) Mandame el libro diario ("Diario de movimientos" de Sigma) del <b>${hoyTxt}</b>, como .xlsx.`
     );
   }
-  const desde = sumarDias(prev.fecha, 1);
-  const rango = fechaISO(desde) === fechaISO(datos.fecha)
-    ? `del <b>${hoyTxt}</b>`
-    : `del <b>${formatoVencimiento(desde)}</b> al <b>${hoyTxt}</b>`;
+  const desdeTxt = formatoVencimiento(prev.fecha); // el DÍA del conteo anterior, inclusive
+  const horaPrev = horaDe(prev.contadoEn);
   return (
-    `📌 Último saldo que tengo de <b>${escapeHtml(datos.empresa)}</b>: <b>${formatoVencimiento(prev.fecha)}</b> — concilio contra ese.\n\n` +
+    `📌 Último saldo que tengo de <b>${escapeHtml(datos.empresa)}</b>: <b>${desdeTxt} ${horaPrev}</b> — concilio contra ese.\n\n` +
     `2) Ahora mandame el libro diario ("Diario de movimientos" de Sigma), como .xlsx.\n` +
-    `📅 En Sigma exportá el rango ${rango} (entran todos los días desde el último saldo — findes/feriados incluidos).`
+    `📅 En Sigma exportá <b>del ${desdeTxt} al ${hoyTxt}</b> (podés poner unos días más para atrás, no molesta).\n` +
+    `⏱️ Yo corto solo por hora: entre las <b>${horaPrev}</b> del conteo anterior y las <b>${horaHoy}</b> de hoy.`
   );
 }
 
@@ -89,6 +92,10 @@ async function textoPedirLibro(datos) {
 // (consulta a DB) o el envío HTML fallan, cae a un texto plano. Nunca tira — así el llamador
 // puede avanzar el wizard con la certeza de que no queda trabado tras haber guardado los saldos.
 async function responderPedidoLibro(ctx, datos, prefijo) {
+  // Si el Excel vino sin "Hora del conteo", el corte por hora queda apagado (usa fin del día
+  // = modelo por día) → avisar para que no vuelva el bug de la última hora en silencio.
+  const avisoHora = datos.horaCargada ? '' :
+    '\n⚠️ El Excel no traía la "Hora del conteo" — uso el fin del día (el control fino por hora queda apagado). Agregá la hora en la plantilla para que corte justo.';
   let cuerpo;
   try {
     cuerpo = await textoPedirLibro(datos);
@@ -97,10 +104,10 @@ async function responderPedidoLibro(ctx, datos, prefijo) {
     cuerpo = '2) Ahora mandame el libro diario ("Diario de movimientos" de Sigma) de ese día, como .xlsx.';
   }
   try {
-    await ctx.reply(`${prefijo}\n\n${cuerpo}`, { parse_mode: 'HTML' });
+    await ctx.reply(`${prefijo}${avisoHora}\n\n${cuerpo}`, { parse_mode: 'HTML' });
   } catch (e) {
     console.error('Falló el envío del pedido del libro; reintento en texto plano:', e.message);
-    await ctx.reply(`${prefijo}\n\n2) Mandame el libro diario ("Diario de movimientos") de ese día, como .xlsx.`)
+    await ctx.reply(`${prefijo}${avisoHora}\n\n2) Mandame el libro diario ("Diario de movimientos") de ese día, como .xlsx.`)
       .catch((e2) => console.error('Tampoco pude enviar el fallback:', e2.message));
   }
 }
@@ -141,21 +148,26 @@ async function conciliarYResponder(ctx, buffer) {
     throw e;
   }
 
-  // Movimientos del período (desde el último saldo cargado hasta hoy). Normalmente es el
-  // día; si hubo finde/feriado, el libro trae varios días y tomamos todos los del tramo.
-  const prev = await saldosAnteriores({ fecha: datos.fecha, empresa });
-  const desdeISO = prev.fecha ? fechaISO(prev.fecha) : null;
-  const hastaISO = fechaISO(datos.fecha);
-  const movsPeriodo = libro.movimientos.filter((m) => {
-    const iso = fechaISO(m.fecha);
-    return (desdeISO === null || iso > desdeISO) && iso <= hastaISO;
-  });
+  // Guardar el libro PRIMERO: la ventana se lee de la DB (tesoreria_movimientos), la MISMA
+  // fuente y función (movimientosDeRango) que usa el replay del acumulado → el número de hoy
+  // y el acumulado de mañana salen del mismo dato, no "de casualidad". El delete-por-día de
+  // guardarMovimientos recaptura además correcciones backdateadas de esos días.
+  const uid = u ? u.id : null;
+  await guardarMovimientos({ empresa, movimientos: libro.movimientos, usuarioId: uid });
 
-  if (movsPeriodo.length === 0) {
+  // Ventana POR HORA (conteo anterior, conteo de hoy], por `ingreso`. Sin saldo previo =
+  // primer cierre: queda como base (no se concilia).
+  const prev = await saldosAnteriores({ fecha: datos.fecha, empresa });
+  const movsPeriodo = prev.contadoEn
+    ? await movimientosDeRango({ desde: prev.contadoEn, hasta: datos.contadoEn, empresa })
+    : [];
+
+  if (prev.contadoEn && movsPeriodo.length === 0) {
     await ctx.reply(
-      `El libro que mandaste no tiene movimientos del ${formatoVencimiento(datos.fecha)}` +
-      (prev.fecha ? ` (ni de los días desde el ${formatoVencimiento(prev.fecha)})` : '') +
-      '. ¿Es el "Diario de movimientos" del día correcto?'
+      `El libro no tiene movimientos entre el conteo anterior ` +
+      `(${formatoVencimiento(prev.fecha)} ${horaDe(prev.contadoEn)}) y este ` +
+      `(${formatoVencimiento(datos.fecha)} ${horaDe(datos.contadoEn)}). ` +
+      `¿Exportaste el rango correcto (del ${formatoVencimiento(prev.fecha)} a hoy)?`
     );
     return ctx.scene.leave();
   }
@@ -167,9 +179,7 @@ async function conciliarYResponder(ctx, buffer) {
     historialDiffs: historial, tipo: 'diario',
   });
 
-  // Persistir: libro completo + conciliación + auditoría.
-  const uid = u ? u.id : null;
-  await guardarMovimientos({ empresa, movimientos: libro.movimientos, usuarioId: uid });
+  // Persistir la conciliación + auditoría (el libro ya se guardó arriba).
   await guardarConciliacion({ fecha: datos.fecha, empresa, filas, usuarioId: uid });
   const nivel = peorNivel(filas);
   await registrarAuditoria({

@@ -1,9 +1,11 @@
 // Parser del Excel "Existencias al cierre" que sube el tesorero (/saldos).
-// Lee la fecha del cierre + una fila por cuenta (saldo, moneda) y valida todo.
-// Devuelve { fecha (Date), empresa, saldos: [{cuenta, moneda, monto}] } o tira SaldosError
-// (mensaje directo para el usuario) si algo no cierra.
+// Lee la fecha + la HORA del conteo + una fila por cuenta (saldo, moneda) y valida todo.
+// Devuelve { fecha (Date), contadoEn (string 'AAAA-MM-DD HH:MM:SS'), horaCargada (bool),
+// empresa, saldos: [{cuenta, moneda, monto}] } o tira SaldosError (mensaje directo).
+// La HORA es el límite de la ventana de conciliación: se cuenta a las 16:20 pero el
+// negocio cierra 17:00, así que el corte tiene que ser por hora, no por día.
 const XLSX = require('xlsx');
-const { parseVencimiento } = require('./fechas');
+const { parseVencimiento, tsCanonico, finDeDiaTs } = require('./fechas');
 
 // Errores "esperables" con mensaje para el tesorero (los distingue de un bug real).
 class SaldosError extends Error {}
@@ -55,6 +57,27 @@ function interpretarFecha(v) {
   return null;
 }
 
+// La hora del conteo: serial de Excel (hora nativa = fracción de día, o datetime) o texto
+// "HH:MM"/"HH:MM:SS". Devuelve {hh, mm, ss} o null (placeholder "HH:MM" y vacío → null).
+function interpretarHora(v) {
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    const d = XLSX.SSF && XLSX.SSF.parse_date_code(v);
+    if (!d) return null;
+    return { hh: d.H || 0, mm: d.M || 0, ss: Math.round(d.S || 0) };
+  }
+  if (v instanceof Date && !isNaN(v)) return { hh: v.getHours(), mm: v.getMinutes(), ss: v.getSeconds() };
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s || norm(s) === 'hh:mm') return null; // placeholder sin completar
+    const m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (!m) return null;
+    const hh = Number(m[1]); const mm = Number(m[2]); const ss = m[3] ? Number(m[3]) : 0;
+    if (hh > 23 || mm > 59 || ss > 59) return null;
+    return { hh, mm, ss };
+  }
+  return null;
+}
+
 function parsearSaldos(buffer) {
   const wb = XLSX.read(buffer, { type: 'buffer' });
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -72,6 +95,16 @@ function parsearSaldos(buffer) {
   if (!fecha) {
     throw new SaldosError('No encontré una fecha válida. Poné la Fecha del cierre arriba, en formato DD/MM/AAAA.');
   }
+
+  // --- Hora del conteo (fila "Hora del conteo:") — es el límite de la ventana ---
+  // Si falta, se usa el fin del día (23:59:59) = comportamiento por día de antes, y se
+  // avisa (horaCargada=false) para que el tesorero sepa que el corte por hora quedó apagado.
+  const filaHora = filas.find((r) => norm(r[0]).startsWith('hora'));
+  const hora = interpretarHora(filaHora ? filaHora[1] : null);
+  const horaCargada = hora !== null;
+  const contadoEn = hora
+    ? tsCanonico(fecha.getFullYear(), fecha.getMonth() + 1, fecha.getDate(), hora.hh, hora.mm, hora.ss)
+    : finDeDiaTs(fecha);
 
   // --- Filas de cuentas ---
   const saldos = [];
@@ -95,7 +128,7 @@ function parsearSaldos(buffer) {
     throw new SaldosError('No encontré ninguna cuenta con saldo. ¿Estás usando la plantilla de saldos?');
   }
 
-  return { fecha, empresa, saldos };
+  return { fecha, contadoEn, horaCargada, empresa, saldos };
 }
 
 module.exports = { parsearSaldos, SaldosError };

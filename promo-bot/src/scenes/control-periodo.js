@@ -7,8 +7,8 @@ const { Scenes } = require('telegraf');
 const { esCancelar } = require('../lib/wizard');
 const { parsearLibro, LibroError } = require('../lib/libro-excel');
 const { procesarCierre } = require('../lib/control-tesoreria');
-const { saldosDeFecha, saldosAnteriores, registrarAuditoria } = require('../db/tesoreria');
-const { formatoVencimiento, fechaISO } = require('../lib/fechas');
+const { saldosDeFecha, saldosAnteriores, momentoConteo, registrarAuditoria } = require('../db/tesoreria');
+const { formatoVencimiento } = require('../lib/fechas');
 
 function tieneAccesoTesoreria(u) {
   return !!(u && (u.es_admin || (u.areas && u.areas.includes('tesoreria'))));
@@ -72,8 +72,11 @@ function crearControlPeriodo(tipo) {
           return ctx.scene.leave();
         }
 
-        const desdeISO = fechaISO(inicio.fecha), hastaISO = fechaISO(hasta);
-        const movs = libro.movimientos.filter((m) => { const iso = fechaISO(m.fecha); return iso > desdeISO && iso <= hastaISO; });
+        // Ventana POR HORA en los bordes del período (conteo del inicio, conteo del fin], por
+        // `ingreso`. Así no se cuela la fuga de la última hora en el primer/último día del período.
+        const desdeBoundary = inicio.contadoEn;
+        const hastaBoundary = await momentoConteo({ fecha: hasta, empresa });
+        const movs = libro.movimientos.filter((m) => m.ingreso > desdeBoundary && m.ingreso <= hastaBoundary);
         const periodo = `${formatoVencimiento(inicio.fecha)} → ${formatoVencimiento(hasta)}`;
         const { filas, texto } = procesarCierre({
           empresa, saldosAyer: inicio.saldos, saldosHoy: saldoFin, movimientos: movs,

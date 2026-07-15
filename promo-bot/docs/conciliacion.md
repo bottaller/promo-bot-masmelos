@@ -181,6 +181,31 @@ Santander→Supervielle de 150M ya estaba en el banco pero se asentó el 6/7 →
 
 Umbrales calibrables en `conciliacion.js` (`UMBRAL_ACUMULADO`, `DIAS_TOLERANCIA_TIMING`).
 
+### Corte por HORA — la ventana entre conteos (migración 013)
+
+El tesorero cuenta los saldos a una hora (ej. 16:20) pero el negocio cierra más tarde (17:00).
+Reconciliar por DÍA metía esa última hora en el cálculo aunque el conteo no la vio → diferencias
+falsas. Por eso el corte es por **marca de tiempo**, no por día:
+
+- El Excel de saldos lleva una fila **"Hora del conteo:"** (`contadoEn`); el libro trae la hora
+  de cada movimiento en la columna **"Ingreso"** (antes se descartaba, `libro-excel.js`).
+- La ventana es **semiabierta `(conteo_anterior, conteo_hoy]`** por `ingreso`. Cruza la
+  medianoche sin caso especial → por eso el libro se pide de **ayer a hoy** (inclusive el día
+  del conteo anterior, para su "cola" de la tarde).
+- **Vivo == acumulado por construcción:** el cierre vivo guarda el libro y relee los movimientos
+  de la DB con la MISMA función (`movimientosDeRango`) que el replay del acumulado
+  (`historialDiferencias`) → el número de hoy y el acumulado de mañana salen del mismo dato.
+- **Reloj de pared:** `contado_en` / `ingreso` son `timestamp` SIN zona; se guardan y comparan
+  como el string canónico `AAAA-MM-DD HH:MM:SS` y se leen con `to_char()` — **nunca** como Date
+  de JS (node-pg correría 3h en Railway/UTC). Disciplina de `fechas.js` (`tsCanonico`, `finDeDiaTs`).
+- **Compatibilidad:** el modelo por día es el caso "contar a las 23:59:59". Dato viejo o Excel sin
+  hora → 23:59:59 = comportamiento actual, y el bot **avisa** que cargó sin hora (no se degrada en
+  silencio). `/semanal` y `/mensual` cortan por hora en los bordes del período.
+
+⚠️ **Depende de que "Ingreso" ≈ el momento de la venta.** Validado sobre un día real (14/07): las
+cobranzas se cargan repartidas 08-16h (tiempo real), no en tanda. Si algún día se cargaran en
+tanda, el corte por hora empeoraría el bug; por eso el fallback a 23:59:59 + el aviso.
+
 ## 11. Estado
 
 **✅ Hecho (en `dev`):**
