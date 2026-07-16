@@ -213,7 +213,7 @@ const cierreWizard = new Scenes.WizardScene(
     ctx.wizard.state.data = {};
     await ctx.reply(
       'Cierre diario.\n\n' +
-      '1) Mandame el Excel de "Existencias al cierre" (los saldos del día), como .xlsx.\n' +
+      '1) Mandame el Excel de "Existencias al cierre" (con la Fecha y la Hora del conteo), como .xlsx.\n' +
       'Después te voy a pedir el libro diario.\n(o escribí "cancelar")'
     );
     return ctx.wizard.next();
