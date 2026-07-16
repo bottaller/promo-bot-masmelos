@@ -159,10 +159,10 @@ def construir_flujo(df: pd.DataFrame) -> dict:
                 # en pagos a proveedores; en el resto viene NaN → "" (si no, se ve "nan").
                 asoc_val = d.get("cuenta_asociada")
                 asociado = "" if pd.isna(asoc_val) else str(asoc_val).strip()
-                # Para las cajas dólar, el monto en USD (columna Nominal): así la salida
-                # a Caja Dolares muestra cuántos dólares se movieron, no solo los pesos.
-                usd = (float(d["debe_nominal"])
-                       if d_nodo in ("caja_dolar_tes", "caja_dolares") else None)
+                # La salida a Caja Dolares lleva la cantidad en USD (columna Nominal), así
+                # se ve cuántos dólares se movieron, no solo los pesos. (Solo caja_dolares
+                # llega acá; caja_dolar_tes es de custodia y no genera salida.)
+                usd = float(d["debe_nominal"]) if d_nodo == "caja_dolares" else None
                 salidas.append({
                     "fecha": g["fecha"].iloc[0], "ingreso": g["ingreso"].iloc[0],
                     "mov": int(mov), "origen": o_label, "destino_id": d_nodo,

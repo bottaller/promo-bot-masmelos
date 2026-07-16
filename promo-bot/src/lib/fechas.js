@@ -66,4 +66,24 @@ function sumarDias(fecha, n) {
   return new Date(fecha.getFullYear(), fecha.getMonth(), fecha.getDate() + n);
 }
 
-module.exports = { parseVencimiento, formatoVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO, fechaISO, sumarDias };
+// --- Marca de tiempo de "reloj de pared" (para el corte por hora del /cierre) ---
+// El corte por hora usa timestamps SIN zona (hora argentina literal). La regla de oro:
+// se representan SIEMPRE como el string canónico 'AAAA-MM-DD HH:MM:SS', se comparan como
+// ::timestamp en SQL, y NUNCA se materializan como Date de JS (node-pg parsearía un
+// `timestamp` a Date en el TZ del proceso —Railway=UTC— y correría 3 horas). El orden
+// lexicográfico del string == el orden cronológico (por eso todo va cero-padded a segundos).
+function _p2(n) { return String(n).padStart(2, '0'); }
+function tsCanonico(y, mo, d, hh = 0, mm = 0, ss = 0) {
+  return `${y}-${_p2(mo)}-${_p2(d)} ${_p2(hh)}:${_p2(mm)}:${_p2(ss)}`;
+}
+// Fin del día (23:59:59) — el default cuando no hay hora de conteo = "contado al cierre",
+// que reproduce EXACTAMENTE el comportamiento viejo por día. Acepta Date o 'AAAA-MM-DD'.
+function finDeDiaTs(fechaLike) {
+  const iso = typeof fechaLike === 'string' ? fechaLike : fechaISO(fechaLike);
+  return `${iso} 23:59:59`;
+}
+
+module.exports = {
+  parseVencimiento, formatoVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO, fechaISO,
+  sumarDias, tsCanonico, finDeDiaTs,
+};

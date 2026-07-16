@@ -2,27 +2,34 @@
 // (resultado) y auditoría (rastro). El acumulado NO se guarda: se deriva de las diferencias
 // (robusto a cargas retroactivas). Todo transaccional, mismo patrón que guardarSaldos.
 const { pool } = require('./pool');
-const { fechaISO } = require('../lib/fechas');
+const { fechaISO, finDeDiaTs } = require('../lib/fechas');
 const { conciliar } = require('../lib/conciliacion');
+
+// El corte por hora usa timestamps de "reloj de pared" (hora argentina literal). Se guardan
+// y comparan SIEMPRE como el string canónico 'AAAA-MM-DD HH:MM:SS'; se LEEN con to_char()
+// para que node-pg no los parsee a Date (correría 3h en Railway/UTC). Formato de to_char:
+const TS_FMT = 'YYYY-MM-DD HH24:MI:SS';
 
 // ---------------------------------------------------------------------------
 // Saldos (lado "realidad")
 // ---------------------------------------------------------------------------
 
-// Guarda (upsert) los saldos de un día. Re-subir el mismo día pisa los montos.
-async function guardarSaldos({ fecha, empresa, saldos, usuarioId }) {
+// Guarda (upsert) los saldos de un día. Re-subir el mismo día pisa los montos y la hora.
+// `contadoEn` = momento del conteo (string canónico); si falta, fin del día (= modelo por día).
+async function guardarSaldos({ fecha, empresa, saldos, usuarioId, contadoEn }) {
   const fISO = fechaISO(fecha);
+  const ce = contadoEn || finDeDiaTs(fISO);
   const client = await pool.connect();
   try {
     await client.query('begin');
     for (const s of saldos) {
       await client.query(
-        `insert into bot.tesoreria_saldos (fecha, empresa, cuenta, moneda, monto, cargado_por)
-           values ($1::date, $2, $3, $4, $5, $6)
+        `insert into bot.tesoreria_saldos (fecha, empresa, cuenta, moneda, monto, contado_en, cargado_por)
+           values ($1::date, $2, $3, $4, $5, $6::timestamp, $7)
          on conflict (fecha, empresa, cuenta)
-           do update set moneda = excluded.moneda, monto = excluded.monto,
+           do update set moneda = excluded.moneda, monto = excluded.monto, contado_en = excluded.contado_en,
                          cargado_por = excluded.cargado_por, cargado_en = now()`,
-        [fISO, empresa, s.cuenta, s.moneda, s.monto, usuarioId ?? null]
+        [fISO, empresa, s.cuenta, s.moneda, s.monto, ce, usuarioId ?? null]
       );
     }
     await client.query('commit');
@@ -46,20 +53,38 @@ async function saldosDeFecha({ fecha, empresa = 'HONRE' }) {
 }
 
 // Saldos del ÚLTIMO día cargado ANTES de `fecha` (el "ayer" real: puede ser el viernes si
-// hoy es lunes). Devuelve { fecha, saldos } o { fecha: null, saldos: [] } si no hay.
+// hoy es lunes), CON su momento de conteo (`contadoEn`, string canónico o fin del día si el
+// saldo viejo no tiene hora) — que es el límite inferior de la ventana de conciliación.
+// Devuelve { fecha, contadoEn, saldos } o { fecha: null, contadoEn: null, saldos: [] } si no hay.
 async function saldosAnteriores({ fecha, empresa = 'HONRE' }) {
   const prev = await pool.query(
     `select max(fecha) as f from bot.tesoreria_saldos where empresa = $1 and fecha < $2::date`,
     [empresa, fechaISO(fecha)]
   );
   const f = prev.rows[0] && prev.rows[0].f;
-  if (!f) return { fecha: null, saldos: [] };
+  if (!f) return { fecha: null, contadoEn: null, saldos: [] };
+  const fISO = fechaISO(f);
   const { rows } = await pool.query(
-    `select cuenta, moneda, monto from bot.tesoreria_saldos
-      where fecha = $1::date and empresa = $2 order by cuenta`,
-    [fechaISO(f), empresa]
+    `select cuenta, moneda, monto,
+            coalesce(to_char(contado_en, '${TS_FMT}'), $1 || ' 23:59:59') as contado_en
+       from bot.tesoreria_saldos where fecha = $2::date and empresa = $3 order by cuenta`,
+    [fISO, fISO, empresa]
   );
-  return { fecha: f, saldos: rows };
+  const contadoEn = rows.length ? rows[0].contado_en : `${fISO} 23:59:59`;
+  return { fecha: f, contadoEn, saldos: rows.map((r) => ({ cuenta: r.cuenta, moneda: r.moneda, monto: r.monto })) };
+}
+
+// Momento de conteo (string canónico 'AAAA-MM-DD HH:MM:SS') de un día — el límite de la
+// ventana por hora. Coalesce a fin del día si el saldo de ese día no tiene hora. Lo usan
+// /semanal y /mensual para cortar en los bordes del período (denormalizado: max = el valor).
+async function momentoConteo({ fecha, empresa = 'HONRE' }) {
+  const fISO = fechaISO(fecha);
+  const { rows } = await pool.query(
+    `select coalesce(to_char(max(contado_en), '${TS_FMT}'), $1 || ' 23:59:59') as momento
+       from bot.tesoreria_saldos where fecha = $2::date and empresa = $3`,
+    [fISO, fISO, empresa]
+  );
+  return rows[0].momento;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,9 +109,9 @@ async function guardarMovimientos({ empresa = 'HONRE', movimientos, usuarioId })
       for (const m of movs) {
         await client.query(
           `insert into bot.tesoreria_movimientos
-             (fecha, empresa, cuenta_id, cuenta, debe, haber, debe_nominal, haber_nominal, cargado_por)
-           values ($1::date, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [iso, empresa, m.cuenta_id, m.cuenta || '', m.debe || 0, m.haber || 0, m.debe_nominal || 0, m.haber_nominal || 0, usuarioId ?? null]
+             (fecha, empresa, cuenta_id, cuenta, debe, haber, debe_nominal, haber_nominal, ingreso, cargado_por)
+           values ($1::date, $2, $3, $4, $5, $6, $7, $8, $9::timestamp, $10)`,
+          [iso, empresa, m.cuenta_id, m.cuenta || '', m.debe || 0, m.haber || 0, m.debe_nominal || 0, m.haber_nominal || 0, m.ingreso || finDeDiaTs(iso), usuarioId ?? null]
         );
       }
     }
@@ -110,12 +135,16 @@ async function movimientosDeFecha({ fecha, empresa = 'HONRE' }) {
   return rows;
 }
 
-// Movimientos guardados en un rango (desde, hasta] — para re-encadenar la conciliación.
+// Movimientos guardados en la ventana (desde, hasta] POR HORA — para el cierre y el replay.
+// `desde`/`hasta` son strings canónicos 'AAAA-MM-DD HH:MM:SS' (momentos de conteo). El corte
+// es por `ingreso` (reloj de pared), comparado como ::timestamp; ambos límites son strings
+// para no materializar Dates. Semiabierta: excluye el momento anterior, incluye el de hoy.
 async function movimientosDeRango({ desde, hasta, empresa = 'HONRE' }) {
   const { rows } = await pool.query(
     `select cuenta_id, debe, haber, debe_nominal, haber_nominal
-       from bot.tesoreria_movimientos where empresa = $1 and fecha > $2::date and fecha <= $3::date`,
-    [empresa, fechaISO(desde), fechaISO(hasta)]
+       from bot.tesoreria_movimientos
+      where empresa = $1 and ingreso > $2::timestamp and ingreso <= $3::timestamp`,
+    [empresa, desde, hasta]
   );
   return rows;
 }
@@ -163,23 +192,28 @@ async function guardarConciliacion({ fecha, empresa = 'HONRE', filas, usuarioId 
 // Devuelve { cuentaNombre -> [{fecha, diferencia}] } ordenado por fecha ascendente.
 async function historialDiferencias({ empresa = 'HONRE', hasta, incluirHasta = false }) {
   const op = incluirHasta ? '<=' : '<';
-  const fechasR = await pool.query(
-    `select distinct fecha from bot.tesoreria_saldos where empresa = $1 and fecha ${op} $2::date order by fecha`,
+  // Momentos de conteo consecutivos (fecha + hora). El corte por hora usa el MISMO
+  // movimientosDeRango que el cierre vivo → el acumulado coincide por construcción.
+  const filasR = await pool.query(
+    `select distinct fecha,
+            coalesce(to_char(contado_en, '${TS_FMT}'), to_char(fecha, 'YYYY-MM-DD') || ' 23:59:59') as momento
+       from bot.tesoreria_saldos where empresa = $1 and fecha ${op} $2::date
+      order by momento`,
     [empresa, fechaISO(hasta)]
   );
-  const fechas = fechasR.rows.map((r) => r.fecha);
+  const filas = filasR.rows; // [{ fecha (Date), momento (string canónico) }] ordenados por momento
   const out = {};
-  for (let i = 1; i < fechas.length; i++) {
-    const dp = fechas[i - 1];
-    const dc = fechas[i];
+  for (let i = 1; i < filas.length; i++) {
+    const dp = filas[i - 1];
+    const dc = filas[i];
     const [saldosAyer, saldosHoy, movs] = await Promise.all([
-      saldosDeFecha({ fecha: dp, empresa }),
-      saldosDeFecha({ fecha: dc, empresa }),
-      movimientosDeRango({ desde: dp, hasta: dc, empresa }),
+      saldosDeFecha({ fecha: dp.fecha, empresa }),
+      saldosDeFecha({ fecha: dc.fecha, empresa }),
+      movimientosDeRango({ desde: dp.momento, hasta: dc.momento, empresa }),  // ventana por hora
     ]);
     for (const f of conciliar({ saldosAyer, saldosHoy, movimientos: movs })) {
       if (f.diferencia == null) continue;
-      (out[f.cuenta] = out[f.cuenta] || []).push({ fecha: dc, diferencia: f.diferencia });
+      (out[f.cuenta] = out[f.cuenta] || []).push({ fecha: dc.fecha, diferencia: f.diferencia });
     }
   }
   return out;
@@ -208,7 +242,7 @@ async function registrarAuditoria({ usuarioId, usuarioTxt, accion, empresa = 'HO
 }
 
 module.exports = {
-  guardarSaldos, saldosDeFecha, saldosAnteriores,
+  guardarSaldos, saldosDeFecha, saldosAnteriores, momentoConteo,
   guardarMovimientos, movimientosDeFecha, movimientosDeRango,
   guardarConciliacion, historialDiferencias, conciliacionDeFecha,
   registrarAuditoria,
