@@ -34,6 +34,13 @@ marca los movimientos a **cuentas sensibles** (retiros de socios/gerencia, desv�
 inter-empresa) y deja un **rastro de auditoría** de cada acción. **Detalle completo (fórmula, niveles,
 mapeo cuenta↔libro validado, modelo de datos) en [conciliacion.md](../conciliacion.md).**
 
+## El nivel de abajo de Mercado Pago vive en otra área
+
+El `/cierre` concilia **saldos** y dice *"Mercado Pago no cierra por $X"*. **Cuál** es la venta que no
+cierra lo responde **`/mp`**, que aparea los ~100 renglones diarios de la `422101014` uno a uno contra
+la liquidación de MP. Ese comando es del área **[Caja Central](caja-central.md)** (es quien lo corre),
+no de Tesorería — detalle en [conciliacion-mp.md](../conciliacion-mp.md).
+
 ## Acceso
 
 `/flujos` está gated por `requiereArea('tesoreria')` = **admin o rol `tesoreria`** (la misma tabla

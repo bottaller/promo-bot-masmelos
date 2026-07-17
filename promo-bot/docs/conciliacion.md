@@ -1,7 +1,7 @@
 # Conciliación de Tesorería — Plan
 
 > Plan de la **conciliación diaria de caja/bancos** (área Tesorería). Documento vivo — se actualiza a
-> medida que se construye. Última actualización: **2026-07-12**.
+> medida que se construye. Última actualización: **2026-07-17**.
 
 ## 1. Objetivo
 
@@ -42,6 +42,7 @@ diferencia = saldo_real_hoy − saldo_teórico
 | **`/semanal`** | Tesorería | Cierre **semanal**. Subís el libro de la semana (los saldos ya están de los diarios) → concilia el período contra los saldos guardados. **No toca el diario.** |
 | **`/mensual`** | Tesorería | Cierre **mensual** (el exhaustivo). Igual que el semanal, sobre el mes. |
 | **`/reportecierre <fecha>`** | Admin | Recupera un cierre **pasado**: los saldos, movimientos y diferencias que quedaron registrados de esa fecha. |
+| **`/mp`** | Tesorería | El **nivel de abajo** de este control, para Mercado Pago: aparea cada cobranza de la `422101014` con su cobro en la liquidación de MP y dice **cuál** es la que no cierra (no solo que la cuenta no cierra). Independiente: no toca la base ni los cierres. Ver [conciliacion-mp.md](conciliacion-mp.md). |
 
 ## 4. El flujo diario (`/cierre`)
 
@@ -110,13 +111,25 @@ cada vez que se sube un libro, el sistema **actualiza los movimientos del perío
 
 ## 9. Modelo de datos (schema `bot`)
 
+Las migraciones **008 a 011 y la 013 están aplicadas** en Supabase (verificado contra el schema el
+17/07/2026). La 012 es de otra área (carrito web) y no está aplicada.
+
 ```
-tesoreria_saldos       (fecha, empresa, cuenta, moneda, monto, cargado_por)          -- ✅ aplicada (008)
-tesoreria_movimientos  (fecha, empresa, cuenta_id, cuenta, debe, haber,              -- 🟡 migración 009 (sin aplicar)
-                        debe_nominal, haber_nominal, cargado_por)
-tesoreria_conciliacion (fecha, empresa, cuenta, moneda, saldo_ayer, ingresos,        -- 🟡 migración 010 (sin aplicar)
-                        egresos, saldo_teorico, saldo_real, diferencia, generado_por)
+tesoreria_saldos       (fecha, empresa, cuenta, moneda, monto,                       -- ✅ 008 + 013
+                        contado_en, cargado_por, cargado_en)
+tesoreria_movimientos  (fecha, empresa, cuenta_id, cuenta, debe, haber,              -- ✅ 009 + 013
+                        debe_nominal, haber_nominal, ingreso, cargado_por, cargado_en)
+tesoreria_conciliacion (fecha, empresa, cuenta, moneda, saldo_ayer, ingresos,        -- ✅ 010
+                        egresos, saldo_teorico, saldo_real, diferencia,
+                        estado, nivel, generado_por, generado_en)
+tesoreria_auditoria    (creado_en, usuario_id, usuario_txt, accion, empresa,         -- ✅ 011 (append-only)
+                        fecha, periodo, nivel, detalle jsonb)
 ```
+
+`contado_en` (momento del conteo) e `ingreso` (momento de cada movimiento) son las dos columnas del
+corte por hora — ver §10. Las dos son `timestamp` SIN zona y admiten NULL: **NULL = "se cargó sin
+hora"**, que el lector coalescea a `23:59:59` (modelo por día). Esa distinción es deliberada: permite
+avisar en vez de degradar en silencio.
 
 `tesoreria_movimientos` guarda el libro **crudo por cuenta contable de Sigma** (`cuenta_id`), no
 pre-agregado a los 8 nombres de saldo. El mapeo cuenta→saldo y las sumas (la caja fuerte junta varias
@@ -206,16 +219,35 @@ falsas. Por eso el corte es por **marca de tiempo**, no por día:
 cobranzas se cargan repartidas 08-16h (tiempo real), no en tanda. Si algún día se cargaran en
 tanda, el corte por hora empeoraría el bug; por eso el fallback a 23:59:59 + el aviso.
 
+⚠️ **Las dos puntas migran juntas: nunca un `contado_en` real contra un libro sin horas.** El backfill
+de la 013 deja todos los movimientos viejos en `23:59:59`. Si a un día así se le pone una hora de
+conteo real (ej. 16:48), su ventana `(anterior, 16:48]` **excluye su propio libro entero** — porque
+`23:59:59 > 16:48` — y ese libro cae en la ventana del día siguiente, que lo cuenta **dos veces**. O el
+día tiene hora de conteo **y** su libro tiene horas reales, o no tiene ninguna de las dos; el modelo
+por día (todo en 23:59:59) es consistente, y el híbrido no.
+
+> No es hipotético: el 13/07 quedó con `contado_en=16:48` puesto **a mano por SQL** mientras su libro
+> seguía en 23:59:59. El replay le vaciaba Caja Fuerte, Santander y Supervielle enteras (0 contra
+> 102.667.630 / 33.982.521 / 17.648.357) y se las regalaba al 14. Se corrigió el **17/07/2026** dejando
+> el `contado_en` del 13 en NULL; con eso los 7 cierres reproducen su conciliación guardada exacta
+> (49 comparaciones sobre las 7 cuentas, 0 discrepancias).
+>
+> **Cómo detectarlo:** un `contado_en` seteado cuya fila NO tenga el `cargado_en` correspondiente es
+> sospechoso — `guardarSaldos()` hace `contado_en = contadoEn || finDeDiaTs(fecha)` (nunca escribe NULL)
+> y pisa `cargado_en = now()` en cada upsert. Si un día tiene hora de conteo pero otro **posterior** la
+> tiene en NULL, la hora no salió del bot.
+
 ## 11. Estado
 
-**✅ Hecho (en `dev`):**
+**✅ Hecho (ya mergeado en `main` — `origin/main..origin/dev` vuelve vacío al 17/07/2026):**
 - `tesoreria_saldos` (migración 008, aplicada en Supabase).
 - Parser del Excel de saldos con validación de fecha.
 - Plantilla `docs/plantillas/plantilla_saldos_HONRE.xlsx`.
 - `/cierre` fase saldos + **control de cambios** (confirmación + aviso a admins).
 - **Formato del libro y fórmula de conciliación decodificados del motor de `/flujos`** (`parse.py` da
   las 18 columnas; `core.py::cascada_diaria` confirma `saldo = saldo_ayer + Σdebe − Σhaber`).
-- Migraciones **008/009/010/011** (saldos, movimientos, conciliación, auditoría) **aplicadas en Supabase**.
+- Migraciones **008/009/010/011** (saldos, movimientos, conciliación, auditoría) y **013** (corte por
+  hora) **aplicadas en Supabase**.
 - Parser del libro en Node (`src/lib/libro-excel.js`) — **endurecido con archivos reales**: acepta 16 y
   18 columnas y el título de empresa partido en varias filas (busca el header "Mov.").
 - **Motor de conciliación** (`src/lib/conciliacion.js`): `conciliar()` (modelo de **cuentas de control**
@@ -241,8 +273,11 @@ tanda, el corte por hora empeoraría el bug; por eso el fallback a 23:59:59 + el
   detección de ida-y-vuelta por flujo bruto, y auditoría de `/reportecierre`.
 
 **⬜ Pendiente:**
-- **Probar el ida y vuelta real por Telegram** (subir saldos + libro a `/cierre` con un día real).
-- **Mergear `dev` → `main`** para deployar (las migraciones ya están aplicadas, así que el merge es seguro).
+- **Probar el CORTE POR HORA con datos reales** — es lo único del feature que nunca se ejerció. El ida y
+  vuelta por Telegram ya se probó (cierres del 13 y del 14 subidos a `/cierre`, ver §12), pero **por
+  día**: ningún libro cargado trae horas reales en `ingreso` y ningún saldo trae `contado_en`. Hace
+  falta un `/cierre` con un Excel de saldos que traiga la "Hora del conteo" **y** un libro cuya columna
+  "Ingreso" tenga horas de verdad.
 - Confirmar con el tesorero el **e-cheq** grumoso y a dónde liquida **Visa Crédito** (detalles menores).
 - Calibrar los **umbrales** (`UMBRAL_ACUMULADO`, `DIAS_TOLERANCIA_TIMING`) con más meses de datos.
 - (Opcional) aviso "el libro no cubre el finde"; Excel de salida además del mensaje; `/semanal`/`/mensual`
