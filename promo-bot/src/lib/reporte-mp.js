@@ -83,7 +83,13 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
   } else {
     L.push(`🔴 <b>Hay ${soloSistema.length + soloMp.length} sin aparear</b> — ${r.nPares} de ${Math.max(r.nSistema, r.nMp)} cerraron.`);
   }
-  if (r.nAviso) L.push(`🟡 ${r.nAviso} apareada(s) con aviso (ver abajo).`);
+  // Las diferencias de redondeo son ruido contable: NO se listan una por una, solo el total.
+  // (Las de HORA sí se muestran más abajo: un asiento cargado lejos del cobro puede ser un problema.)
+  const soloRedondeo = pares.filter((p) => p.nivel === 'aviso' && !p.avisos.includes('hora'));
+  if (soloRedondeo.length) {
+    const totalRedondeo = soloRedondeo.reduce((a, p) => a + p.dif, 0);
+    L.push(`🟡 ${soloRedondeo.length} por redondeo · ${fmtC(totalRedondeo)}`);
+  }
   L.push('');
 
   // Totales.
@@ -111,27 +117,27 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
     if (soloSistema.length > MAX_LISTA) L.push(`<i>…y ${soloSistema.length - MAX_LISTA} más (están en el Excel).</i>`);
   }
 
-  // Avisos (redondeo / hora rara): apareó, pero conviene verlo.
-  const conAviso = pares.filter((p) => p.nivel === 'aviso');
-  if (conAviso.length) {
+  // Apareadas con la HORA corrida: sí se listan (el importe coincide pero el asiento se
+  // cargó lejos del cobro → conviene mirarlo). El redondeo ya se resumió arriba.
+  const avisoHora = pares.filter((p) => p.nivel === 'aviso' && p.avisos.includes('hora'));
+  if (avisoHora.length) {
     L.push('');
-    L.push(`🟡 <b>Apareadas con aviso</b> — ${conAviso.length}`);
-    for (const p of conAviso.slice(0, MAX_LISTA)) {
+    L.push(`🟡 <b>Apareadas con la hora corrida</b> — ${avisoHora.length}`);
+    for (const p of avisoHora.slice(0, MAX_LISTA)) {
       L.push(`• ${hora(p.op.hora)} · ${fmt(p.op.bruto)} · ${escapeHtml(textoAvisos(p))} · ${escapeHtml(p.mov.cliente)}`);
     }
-    if (conAviso.length > MAX_LISTA) L.push(`<i>…y ${conAviso.length - MAX_LISTA} más (están en el Excel).</i>`);
+    if (avisoHora.length > MAX_LISTA) L.push(`<i>…y ${avisoHora.length - MAX_LISTA} más (están en el Excel).</i>`);
   }
 
-  // Fuera de alcance: se listan para que quede claro que NO se ignoraron en silencio.
-  const grupos = agruparPorMotivo(fuera.mp, (o) => o.bruto);
+  // Fuera de alcance: se listan para que quede claro que NO se ignoraron en silencio, PERO
+  // las salidas de dinero (importe negativo: Mercado Libre, devoluciones) no van al mensaje —
+  // no son ventas por QR y ensucian el control. Quedan igual en la hoja "Fuera de alcance"
+  // del Excel. Los Haber (salidas de MP al banco) tampoco se muestran, por lo mismo.
+  const grupos = agruparPorMotivo(fuera.mp.filter((o) => o.bruto >= 0), (o) => o.bruto);
   if (grupos.length) {
     L.push('');
     L.push('<b>Fuera de alcance</b> <i>(no pasan por esta cuenta)</i>');
     for (const g of grupos) L.push(`• ${escapeHtml(g.motivo)}: ${g.n} · ${fmt(g.total)}`);
-  }
-  if (fuera.sistema.length) {
-    L.push('');
-    L.push(`<b>Movimientos del sistema que no son cobranzas</b>: ${fuera.sistema.length} · ${fmt(r.totalFueraSistema)}`);
   }
 
   L.push('');
