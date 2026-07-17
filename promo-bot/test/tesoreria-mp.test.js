@@ -9,7 +9,8 @@ const { conciliarMP, CUENTA_MP } = require('../src/lib/conciliacion-mp');
 const { parsearMayor, MayorError } = require('../src/lib/mayor-excel');
 const { parsearLiquidacion, LiquidacionError } = require('../src/lib/liquidacion-excel');
 const { formatearMP } = require('../src/lib/reporte-mp');
-const { isoAHoraArg, tsASegundos } = require('../src/lib/fechas');
+const { construirInformePDF, veredictoMP } = require('../src/lib/informe-mp-pdf');
+const { isoAHoraArg, tsASegundos, fechaHoraArg } = require('../src/lib/fechas');
 
 let pass = 0;
 function t(nombre, fn) { fn(); pass++; console.log('  ok:', nombre); }
@@ -397,6 +398,40 @@ t('registra el comando UNA sola vez (si no, se ejecutaría duplicado)', () => {
   assert.deepStrictEqual(registrados, ['mp']);
 });
 
+console.log('informe PDF: el veredicto (control bien/mal)');
+t('aparea todo -> CONTROL OK', () => {
+  const r = conciliarMP({
+    movimientos: [M(100, '2026-07-16 10:00:10')],
+    operaciones: [O(100, '2026-07-16 10:00:00')],
+  });
+  const v = veredictoMP(r);
+  assert.strictEqual(v.ok, true);
+  assert.strictEqual(v.sinAparear, 0);
+  assert.strictEqual(v.titulo, 'CONTROL OK');
+});
+t('las diferencias de redondeo NO tumban el control (siguen siendo OK)', () => {
+  const r = conciliarMP({
+    movimientos: [M(357358.76, '2026-07-16 14:25:07')],
+    operaciones: [O(357358.80, '2026-07-16 14:24:50')], // dif 0,04 -> aviso, no huérfano
+  });
+  assert.strictEqual(r.resumen.nAviso, 1);
+  assert.strictEqual(veredictoMP(r).ok, true);
+});
+t('cobró MP y no está asentado -> CONTROL CON DIFERENCIAS', () => {
+  const r = conciliarMP({ movimientos: [], operaciones: [O(50000, '2026-07-16 10:00:00')] });
+  const v = veredictoMP(r);
+  assert.strictEqual(v.ok, false);
+  assert.strictEqual(v.sinAparear, 1);
+  assert.strictEqual(v.titulo, 'CONTROL CON DIFERENCIAS');
+});
+t('asentado y MP no lo tiene -> también CON DIFERENCIAS', () => {
+  const r = conciliarMP({ movimientos: [M(50000, '2026-07-16 10:00:00')], operaciones: [] });
+  assert.strictEqual(veredictoMP(r).ok, false);
+});
+t('fechaHoraArg: DD/MM/AAAA HH:MM, sin coma', () => {
+  assert.match(fechaHoraArg(), /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/);
+});
+
 // --- el wizard: los textos que ve el usuario -------------------------------
 // "El comando debe decir qué info recibe": se testea de verdad, corriendo el paso.
 function ctxFalso() {
@@ -434,6 +469,16 @@ function ctxFalso() {
     assert.strictEqual((txt.match(/<code>/g) || []).length, (txt.match(/<\/code>/g) || []).length);
     assert.ok(!/&(?!amp;|lt;|gt;|#)/.test(txt)); // ningún & suelto
   });
+
+  console.log('informe PDF: se genera un PDF válido');
+  const esPDF = (buf) => Buffer.isBuffer(buf) && buf.slice(0, 4).toString() === '%PDF' && buf.length > 800;
+  const okRes = conciliarMP({ movimientos: [M(100, '2026-07-16 10:00:10')], operaciones: [O(100, '2026-07-16 10:00:00')] });
+  const malRes = conciliarMP({ movimientos: [], operaciones: [O(50000, '2026-07-16 10:00:00'), O(70000, '2026-07-16 11:00:00', { source_id: 'x2' })] });
+  const pdfOk = await construirInformePDF({ fecha: '16/07/2026', cuenta: 'MERCADO PAGO MORENO', resultado: okRes, generadoEn: '17/07/2026 15:42' });
+  const pdfMal = await construirInformePDF({ fecha: '16/07/2026', cuenta: 'MERCADO PAGO MORENO', resultado: malRes, generadoEn: '17/07/2026 15:42' });
+  t('control OK -> PDF válido', () => { assert.ok(esPDF(pdfOk), 'no es un PDF'); });
+  t('control con diferencias -> PDF válido', () => { assert.ok(esPDF(pdfMal), 'no es un PDF'); });
+  t('el PDF con diferencias pesa más (lista lo que no cierra)', () => { assert.ok(pdfMal.length > pdfOk.length); });
 
   console.log(`\n✅ ${pass} tests OK`);
 })();

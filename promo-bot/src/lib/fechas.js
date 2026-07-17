@@ -50,6 +50,17 @@ function fechaHoyArgISO() {
   }).format(new Date());
 }
 
+// Fecha Y HORA de ahora en Argentina, 'DD/MM/AAAA HH:MM' (para sellar cuándo se corrió un
+// control — ej. el informe PDF de /mp). es-AR mete una coma entre fecha y hora; se saca.
+function fechaHoraArg() {
+  const s = new Intl.DateTimeFormat('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date());
+  return s.replace(',', '');
+}
+
 // Date -> texto AAAA-MM-DD (para filtros de rango en SQL, ::date). Usa los getters locales
 // (igual que formatoVencimiento) y no toISOString(), que convierte a UTC y puede correr el día.
 function fechaISO(fecha) {
@@ -117,6 +128,6 @@ function isoAHoraArg(iso) {
 }
 
 module.exports = {
-  parseVencimiento, formatoVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO, fechaISO,
-  sumarDias, tsCanonico, finDeDiaTs, tsASegundos, isoAHoraArg,
+  parseVencimiento, formatoVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO, fechaHoraArg,
+  fechaISO, sumarDias, tsCanonico, finDeDiaTs, tsASegundos, isoAHoraArg,
 };

@@ -13,11 +13,12 @@ si MP cobró algo que nadie registró, acá salta.
 
 | Comando | Qué hace |
 |---------|----------|
-| `/mp` | Conciliación de **Mercado Pago operación por operación**. Pide **2 archivos del mismo día**: el export de Sigma con los movimientos (el *"Diario de movimientos contables"* — el mismo del `/cierre` — **o** el *"Mayor de cuenta"* de la `422101014`) y la **liquidación de MP** (`settlement_v2-….xlsx` del panel). Aparea cada cobranza con su cobro y devuelve el reporte en el chat (solo mensaje, sin archivo). **No toca la base.** |
+| `/mp` | Conciliación de **Mercado Pago operación por operación**. Pide **2 archivos del mismo día**: el export de Sigma con los movimientos (el *"Diario de movimientos contables"* — el mismo del `/cierre` — **o** el *"Mayor de cuenta"* de la `422101014`) y la **liquidación de MP** (`settlement_v2-….xlsx` del panel). Aparea cada cobranza con su cobro y devuelve el **reporte en el chat** + un **informe PDF** (el comprobante: control OK/con diferencias, con fecha y hora). **No toca la base.** |
 
 **Flujo de uso:** `/mp` → el bot **dice qué necesita** (los 2 archivos, de dónde salen y el alcance) →
 mandás el export de Sigma → el bot te confirma **qué leyó y de qué día**, y te pide la liquidación **de
-ese mismo día** → te devuelve el reporte **en el chat** (solo mensaje, sin archivo).
+ese mismo día** → te devuelve el **mensaje** (vista rápida) y el **informe PDF** (`informe_mp_<fecha>.pdf`,
+para archivar/imprimir: veredicto en color, día conciliado y fecha+hora del control).
 
 Si los dos archivos no son del mismo día, **los rechaza antes de conciliar**: si no, los días que están
 en uno y no en el otro caerían como diferencias y taparían lo real.
