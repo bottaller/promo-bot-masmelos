@@ -4,6 +4,7 @@
 //  /semanal       — control semanal: libro del período (saldos ya cargados). No toca el diario.
 //  /mensual       — control mensual: ídem, sobre el mes.
 //  /reportecierre — (admin) recupera un cierre guardado de una fecha.
+// (La conciliación de Mercado Pago operación por operación, /mp, vive en el área Caja Central.)
 const flujosWizard = require('../../scenes/flujos');
 const cierreWizard = require('../../scenes/cierre');
 const { crearControlPeriodo } = require('../../scenes/control-periodo');

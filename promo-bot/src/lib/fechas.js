@@ -83,7 +83,40 @@ function finDeDiaTs(fechaLike) {
   return `${iso} 23:59:59`;
 }
 
+// Un ts canónico 'AAAA-MM-DD HH:MM:SS' -> segundos, para restar dos marcas. Se interpreta
+// en UTC a propósito: es una escala arbitraria, y como AMBAS marcas pasan por acá la
+// diferencia sale bien sin que el TZ del proceso (Railway=UTC) se meta. null si no cierra.
+function tsASegundos(ts) {
+  const m = String(ts == null ? '' : ts).match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000;
+}
+
+// ISO 8601 CON offset ('2026-07-16T16:10:56.000-04:00') -> ts canónico en hora de pared
+// ARGENTINA ('2026-07-16 17:10:56'). Lo usa la liquidación de Mercado Pago, que exporta en
+// UTC-4 mientras que Sigma escribe la hora local: sin convertir, el match por hora se corre
+// 60 minutos. Argentina no tiene horario de verano (UTC-3 fijo), por eso el -180 es constante.
+// Aritmética sobre Date.UTC/getUTC* → independiente del TZ del proceso (ver regla de oro arriba).
+// null si el texto no tiene la forma esperada.
+function isoAHoraArg(iso) {
+  const m = String(iso == null ? '' : iso).trim()
+    .match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/);
+  if (!m) return null;
+  const [, y, mo, d, hh, mm, ss, off] = m;
+  let offsetMin = 0;
+  if (off && off !== 'Z') {
+    const o = off.match(/^([+-])(\d{2}):?(\d{2})$/);
+    offsetMin = (o[1] === '-' ? -1 : 1) * (Number(o[2]) * 60 + Number(o[3]));
+  }
+  // Instante real (UTC) = hora leída − su offset. Después lo llevamos a UTC-3.
+  const arg = new Date(Date.UTC(+y, +mo - 1, +d, +hh, +mm, +ss) - offsetMin * 60000 - 180 * 60000);
+  return tsCanonico(
+    arg.getUTCFullYear(), arg.getUTCMonth() + 1, arg.getUTCDate(),
+    arg.getUTCHours(), arg.getUTCMinutes(), arg.getUTCSeconds()
+  );
+}
+
 module.exports = {
   parseVencimiento, formatoVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO, fechaISO,
-  sumarDias, tsCanonico, finDeDiaTs,
+  sumarDias, tsCanonico, finDeDiaTs, tsASegundos, isoAHoraArg,
 };

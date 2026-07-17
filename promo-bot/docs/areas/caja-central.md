@@ -1,0 +1,49 @@
+# Área Caja Central
+
+> Un doc por área. Este cubre **Caja Central**: el rol y su comando `/mp`.
+> Última actualización: **2026-07-17**.
+
+## Qué hace
+
+Caja Central es quien maneja la caja del negocio y controla que **lo que cobró Mercado Pago sea
+exactamente lo que quedó asentado en el sistema**, venta por venta. Es un control de plata que entra:
+si MP cobró algo que nadie registró, acá salta.
+
+## Comando
+
+| Comando | Qué hace |
+|---------|----------|
+| `/mp` | Conciliación de **Mercado Pago operación por operación**. Pide **2 archivos del mismo día**: el export de Sigma con los movimientos (el *"Diario de movimientos contables"* — el mismo del `/cierre` — **o** el *"Mayor de cuenta"* de la `422101014`) y la **liquidación de MP** (`settlement_v2-….xlsx` del panel). Aparea cada cobranza con su cobro y devuelve el reporte + un Excel con el detalle. **No toca la base.** |
+
+**Flujo de uso:** `/mp` → el bot **dice qué necesita** (los 2 archivos, de dónde salen y el alcance) →
+mandás el export de Sigma → el bot te confirma **qué leyó y de qué día**, y te pide la liquidación **de
+ese mismo día** → te devuelve el reporte y `conciliacion_mp_<AAAA-MM-DD>.xlsx`.
+
+Si los dos archivos no son del mismo día, **los rechaza antes de conciliar**: si no, los días que están
+en uno y no en el otro caerían como diferencias y taparían lo real.
+
+**Qué marca:** 🔴 lo que MP cobró y no está asentado (y al revés), 🟡 las diferencias de centavos por
+redondeo y las horas que no coinciden. Point, Mercado Libre y los `Haber` (salidas de MP al banco) se
+listan aparte con su motivo — **nunca se descartan en silencio**.
+
+**Detalle completo** (alcance validado, cómo aparea, tolerancias, el huso horario de MP):
+[conciliacion-mp.md](../conciliacion-mp.md).
+
+## Acceso
+
+`/mp` está gated por `requiereArea('cajacentral')` = **admin o rol `cajacentral`** (la misma tabla
+`bot.usuarios` / `bot.usuario_area` que todo el resto). Para habilitar a alguien:
+`/usuarios agregar <telegram_id> cajacentral`. El paso donde se recibe cada documento **re-chequea** el
+rol, por si se lo quitan a mitad de camino (es data financiera).
+
+El rol se siembra con la **migración 014** (`db/migrations/014_caja_central.sql`) — hay que correrla en
+Supabase antes de poder asignarlo. Como el menú `/` de Telegram se publica **al arrancar**, después de
+asignar el rol hay que **reiniciar el bot** para que el comando le aparezca en la lista.
+
+## Por qué es un área propia y no un comando más de Tesorería
+
+`/mp` **vivía en Tesorería** hasta el 17/07/2026. Se movió porque es Caja Central quien lo corre a
+diario. **No quedó en las dos**: en este bot un comando pertenece a **una sola área** (D9 de
+[arquitectura.md](../arquitectura.md) — el "rol" de una persona *son* sus áreas), y registrarlo desde
+dos haría que `bot.command('mp', …)` se ejecute **dos veces** y el wizard se abra duplicado. Los admins
+lo siguen viendo igual, porque tienen acceso total.

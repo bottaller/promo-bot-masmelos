@@ -29,6 +29,13 @@ También podés correrlas desde la terminal: `node src/db/run-migration.js db/mi
 | `migrations/005_aviso_vencimiento.sql` | columnas de avisos de vencimiento | Avisos |
 | `migrations/006_unificar_bajas.sql` | unifica la baja en `compras_altas` (elimina `compras_bajas` y `estado`) | Unificación |
 | `migrations/007_descuento_promocion.sql` | columna `descuento_pct` en `compras_altas` | % de descuento en `/alta` |
+| `migrations/008_tesoreria_saldos.sql` | `tesoreria_saldos` — el lado "realidad" del `/cierre` | Conciliación diaria |
+| `migrations/009_tesoreria_movimientos.sql` | `tesoreria_movimientos` — el lado "libro" (Debe/Haber por cuenta de Sigma) | Conciliación diaria |
+| `migrations/010_tesoreria_conciliacion.sql` | `tesoreria_conciliacion` — el resultado de cada cierre (lo lee `/reportecierre`) | Conciliación diaria |
+| `migrations/011_tesoreria_auditoria.sql` | `tesoreria_auditoria` — log append-only de cada acción | Auditoría |
+| `migrations/012_carrito_web.sql` | área `carritoweb` | Área Carrito Web |
+| `migrations/013_cierre_por_hora.sql` | `contado_en` / `ingreso` — el `/cierre` corta por hora, no por día | Corte por hora |
+| `migrations/014_caja_central.sql` | área `cajacentral` (el rol dueño de `/mp`) | Área Caja Central |
 
 ## Después de correr `001`
 
