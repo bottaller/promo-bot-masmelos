@@ -1,12 +1,9 @@
-// Salida de la conciliación de Mercado Pago (/mp): el mensaje de Telegram (HTML) y el Excel
-// con el detalle. Recibe el resultado YA calculado por conciliacion-mp.js.
+// Salida de la conciliación de Mercado Pago (/mp): el mensaje de Telegram (HTML).
+// Recibe el resultado YA calculado por conciliacion-mp.js.
 //
 // Criterio, igual que reporte-cierre.js: primero lo que hay que revisar, después lo sano.
 // Todo reporte lleva la fecha de generación (ver docs/convenciones.md).
-const XLSX = require('xlsx');
 const { fechaHoyArg } = require('./fechas');
-
-const ICONO = { ok: '🟢', aviso: '🟡', alerta: '🔴' };
 
 // Nombre del instrumento tal como lo escribe MP -> castellano.
 const INSTRUMENTO = {
@@ -20,8 +17,10 @@ function instrumento(op) {
   return INSTRUMENTO[op.instrumento] || op.instrumento || '(sin dato)';
 }
 
-// Cuántos ítems como mucho se listan en el chat (el resto está en el Excel). Telegram corta
-// a los 4096 caracteres: un día con muchas huérfanas no puede tumbar el mensaje.
+// Cuántos ítems como mucho se listan en el chat. Telegram corta a los 4096 caracteres, así
+// que un día con MUCHAS huérfanas no puede tumbar el mensaje: se listan las primeras y se
+// dice cuántas más hubo (el titular ya trae el total). El dato crudo siempre está en la
+// liquidación que se subió.
 const MAX_LISTA = 8;
 
 const _NF0 = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 });
@@ -104,7 +103,7 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
     for (const o of soloMp.slice(0, MAX_LISTA)) {
       L.push(`• ${hora(o.hora)} · <b>${fmt(o.bruto)}</b> · ${escapeHtml(instrumento(o))} · id ${escapeHtml(o.source_id)}`);
     }
-    if (soloMp.length > MAX_LISTA) L.push(`<i>…y ${soloMp.length - MAX_LISTA} más (están en el Excel).</i>`);
+    if (soloMp.length > MAX_LISTA) L.push(`<i>…y ${soloMp.length - MAX_LISTA} más.</i>`);
   }
 
   // Lo que está mal al revés: asentado y MP no lo tiene.
@@ -114,7 +113,7 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
     for (const m of soloSistema.slice(0, MAX_LISTA)) {
       L.push(`• ${hora(m.ingreso)} · <b>${fmt(m.debe)}</b> · ${escapeHtml(m.comprobante || 'asiento ' + m.asiento)} · ${escapeHtml(m.cliente)} (${escapeHtml(m.usuario)})`);
     }
-    if (soloSistema.length > MAX_LISTA) L.push(`<i>…y ${soloSistema.length - MAX_LISTA} más (están en el Excel).</i>`);
+    if (soloSistema.length > MAX_LISTA) L.push(`<i>…y ${soloSistema.length - MAX_LISTA} más.</i>`);
   }
 
   // Apareadas con la HORA corrida: sí se listan (el importe coincide pero el asiento se
@@ -126,13 +125,13 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
     for (const p of avisoHora.slice(0, MAX_LISTA)) {
       L.push(`• ${hora(p.op.hora)} · ${fmt(p.op.bruto)} · ${escapeHtml(textoAvisos(p))} · ${escapeHtml(p.mov.cliente)}`);
     }
-    if (avisoHora.length > MAX_LISTA) L.push(`<i>…y ${avisoHora.length - MAX_LISTA} más (están en el Excel).</i>`);
+    if (avisoHora.length > MAX_LISTA) L.push(`<i>…y ${avisoHora.length - MAX_LISTA} más.</i>`);
   }
 
   // Fuera de alcance: se listan para que quede claro que NO se ignoraron en silencio, PERO
   // las salidas de dinero (importe negativo: Mercado Libre, devoluciones) no van al mensaje —
-  // no son ventas por QR y ensucian el control. Quedan igual en la hoja "Fuera de alcance"
-  // del Excel. Los Haber (salidas de MP al banco) tampoco se muestran, por lo mismo.
+  // no son ventas por QR y ensucian el control. Los Haber (salidas de MP al banco) tampoco.
+  // Su dato crudo sigue en la liquidación que se subió.
   const grupos = agruparPorMotivo(fuera.mp.filter((o) => o.bruto >= 0), (o) => o.bruto);
   if (grupos.length) {
     L.push('');
@@ -140,84 +139,7 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
     for (const g of grupos) L.push(`• ${escapeHtml(g.motivo)}: ${g.n} · ${fmt(g.total)}`);
   }
 
-  L.push('');
-  L.push('📎 El detalle operación por operación va en el Excel.');
   return L.join('\n');
 }
 
-// --- Excel -----------------------------------------------------------------
-const COLS = [
-  'Estado', 'Detalle', 'Hora pago', 'Hora asiento', 'Seg.', 'Asiento', 'Caja', 'Usuario',
-  'Cliente', 'Comprobante', 'Debe (sistema)', 'Source ID', 'Instrumento', 'Bruto (MP)',
-  'Comisión', 'Impuestos', 'Neto MP', 'Dif.',
-];
-
-function filaPar(p) {
-  return [
-    p.nivel === 'ok' ? 'OK' : 'Aviso',
-    textoAvisos(p),
-    hora(p.op.hora), hora(p.mov.ingreso), p.delta === null ? '' : p.delta,
-    p.mov.asiento, p.mov.comp, p.mov.usuario, p.mov.cliente, p.mov.comprobante,
-    p.mov.debe, p.op.source_id, instrumento(p.op), p.op.bruto,
-    p.op.comision, p.op.impuestos, p.op.neto, p.dif,
-  ];
-}
-function filaSoloSistema(m) {
-  return [
-    'SIN OPERACIÓN EN MP', 'Está asentado y MP no lo tiene',
-    '', hora(m.ingreso), '', m.asiento, m.comp, m.usuario, m.cliente, m.comprobante,
-    m.debe, '', '', '', '', '', '', '',
-  ];
-}
-function filaSoloMp(o) {
-  return [
-    'SIN ASIENTO', 'Cobró MP y no está registrado en el sistema',
-    hora(o.hora), '', '', '', '', '', '', '',
-    '', o.source_id, instrumento(o), o.bruto, o.comision, o.impuestos, o.neto, '',
-  ];
-}
-
-// construirExcelMP({fecha, cuenta, resultado}) -> Buffer .xlsx
-// Hoja 1 "Conciliación": lo que está mal arriba, lo sano abajo.
-// Hoja 2 "Fuera de alcance": lo que NO se concilió, con el motivo (nada se descarta en silencio).
-function construirExcelMP({ fecha, cuenta, resultado }) {
-  const { pares, soloSistema, soloMp, fuera, resumen: r } = resultado;
-
-  const filas = [
-    ...soloMp.map(filaSoloMp),
-    ...soloSistema.map(filaSoloSistema),
-    ...pares.filter((p) => p.nivel === 'aviso').map(filaPar),
-    ...pares.filter((p) => p.nivel === 'ok').map(filaPar),
-  ];
-  const total = ['TOTAL', '', '', '', '', '', '', '', '', '', r.totalSistema, '', '', r.totalMp,
-    r.comision, r.impuestos, r.neto, r.diferencia];
-
-  const aoa = [
-    ['Conciliación Mercado Pago — operación por operación'],
-    [`${cuenta} · ${fecha}`],
-    [`Generado: ${fechaHoyArg()}`],
-    [`${r.nPares} apareadas (${r.nOk} exactas, ${r.nAviso} con aviso) · ${r.nSoloMp} sin asiento · ${r.nSoloSistema} sin operación en MP`],
-    ['Alcance: ventas cobradas por QR / transferencia. Point, Mercado Libre y demás van en la otra hoja.'],
-    [],
-    COLS,
-    ...filas,
-    total,
-  ];
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Conciliación');
-
-  const aoaFuera = [
-    ['Fuera de alcance — no se concilian contra esta cuenta'],
-    [`Generado: ${fechaHoyArg()}`],
-    [],
-    ['Origen', 'Hora', 'Source ID / Asiento', 'Instrumento', 'Unidad', 'Canal', 'Importe', 'Motivo'],
-    ...fuera.mp.map((o) => ['Mercado Pago', hora(o.hora), o.source_id, instrumento(o), o.unidad || '(vacío)', o.canal || '(vacío)', o.bruto, o.motivo]),
-    ...fuera.sistema.map((m) => ['Sistema', hora(m.ingreso), m.asiento, '', '', '', m.debe - m.haber, m.motivo]),
-  ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaFuera), 'Fuera de alcance');
-
-  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-}
-
-module.exports = { formatearMP, construirExcelMP };
+module.exports = { formatearMP };

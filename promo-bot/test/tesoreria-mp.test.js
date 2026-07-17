@@ -8,7 +8,7 @@ const mpWizard = require('../src/scenes/mp');
 const { conciliarMP, CUENTA_MP } = require('../src/lib/conciliacion-mp');
 const { parsearMayor, MayorError } = require('../src/lib/mayor-excel');
 const { parsearLiquidacion, LiquidacionError } = require('../src/lib/liquidacion-excel');
-const { formatearMP, construirExcelMP } = require('../src/lib/reporte-mp');
+const { formatearMP } = require('../src/lib/reporte-mp');
 const { isoAHoraArg, tsASegundos } = require('../src/lib/fechas');
 
 let pass = 0;
@@ -353,7 +353,7 @@ t('el redondeo se RESUME en una línea con el total, no se lista uno por uno', (
   assert.ok(!/por redondeo · .*MELLADO/s.test(txt));
   assert.ok(!/14:24/.test(txt), 'no debe listar la hora de un redondeo');
 });
-t('las salidas de dinero (Mercado Libre negativo, Haber) NO van al mensaje, sí al Excel', () => {
+t('las salidas de dinero (Mercado Libre negativo, Haber) NO van al mensaje', () => {
   const resultado = conciliarMP({
     movimientos: [
       M(100, '2026-07-16 10:00:10'),
@@ -371,23 +371,11 @@ t('las salidas de dinero (Mercado Libre negativo, Haber) NO van al mensaje, sí 
   assert.ok(!/no son cobranzas/.test(txt), 'los Haber no van al mensaje');
   assert.ok(!/20\.000\.000/.test(txt));
   assert.match(txt, /revisar con MP/); // lo positivo fuera de alcance SÍ sigue
-  // pero en el Excel siguen estando (registro completo)
-  const wb = XLSX.read(construirExcelMP({ fecha: '16/07/2026', cuenta: 'MP', resultado }), { type: 'buffer' });
-  const fuera = XLSX.utils.sheet_to_json(wb.Sheets['Fuera de alcance'], { header: 1 });
-  assert.ok(fuera.some((f) => /Mercado Libre/.test(String(f[7]))), 'ML debe quedar en el Excel');
-  assert.ok(fuera.some((f) => f.some((c) => String(c).includes('20000000'))), 'el Haber debe quedar en el Excel');
 });
-t('el Excel sale con las dos hojas y sin romperse', () => {
-  const resultado = conciliarMP({
-    movimientos: [M(100, '2026-07-16 10:00:10')],
-    operaciones: [O(100, '2026-07-16 10:00:00'), O(9999, '2026-07-16 11:00:00', { canal: 'Point' })],
-  });
-  const buf = construirExcelMP({ fecha: '16/07/2026', cuenta: 'MERCADO PAGO MORENO', resultado });
-  const wb = XLSX.read(buf, { type: 'buffer' });
-  assert.deepStrictEqual(wb.SheetNames, ['Conciliación', 'Fuera de alcance']);
-  const filas = XLSX.utils.sheet_to_json(wb.Sheets['Conciliación'], { header: 1 });
-  assert.ok(filas.some((f) => String(f[0]).includes('Generado')));
-  assert.ok(XLSX.utils.sheet_to_json(wb.Sheets['Fuera de alcance'], { header: 1 }).some((f) => /Point/.test(String(f[7]))));
+t('el reporte no arma ningún archivo: solo exporta el mensaje', () => {
+  // /mp ya no devuelve Excel. Si vuelve a exportar un builder, revisar el wizard (mp.js).
+  const rep = require('../src/lib/reporte-mp');
+  assert.deepStrictEqual(Object.keys(rep), ['formatearMP']);
 });
 
 console.log('área Caja Central (el rol dueño del comando)');

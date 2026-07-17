@@ -13,7 +13,7 @@ const { esCancelar } = require('../lib/wizard');
 const { parsearMayor, MayorError } = require('../lib/mayor-excel');
 const { parsearLiquidacion, LiquidacionError } = require('../lib/liquidacion-excel');
 const { conciliarMP, CUENTA_MP } = require('../lib/conciliacion-mp');
-const { formatearMP, construirExcelMP } = require('../lib/reporte-mp');
+const { formatearMP } = require('../lib/reporte-mp');
 const { formatoVencimiento, fechaISO } = require('../lib/fechas');
 
 // El acceso ya lo garantiza requiereArea('tesoreria') al entrar, pero lo re-chequeamos en
@@ -44,14 +44,9 @@ function textoRango(desde, hasta) {
   const h = formatoVencimiento(hasta);
   return d === h ? d : `${d} al ${h}`;
 }
-function sufijoArchivo(desde, hasta) {
-  const d = fechaISO(desde);
-  const h = fechaISO(hasta);
-  return d === h ? d : `${d}_${h}`;
-}
 
 // 'AAAA-MM-DD' -> 'DD/MM/AAAA' (al usuario se le habla en fecha argentina, no en ISO; el ISO
-// queda para comparar y para los nombres de archivo — ver docs/convenciones.md).
+// queda para comparar — ver docs/convenciones.md).
 function isoALinda(iso) {
   return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 }
@@ -178,10 +173,6 @@ const mpWizard = new Scenes.WizardScene(
       const texto = formatearMP({ fecha, cuenta: mayor.cuenta, resultado, origen: mayor.origen });
 
       await ctx.reply(texto, { parse_mode: 'HTML' });
-      await ctx.replyWithDocument({
-        source: construirExcelMP({ fecha, cuenta: mayor.cuenta, resultado }),
-        filename: `conciliacion_mp_${sufijoArchivo(mayor.desde, mayor.hasta)}.xlsx`,
-      });
       return ctx.scene.leave();
     } catch (e) {
       console.error('Error en /mp (liquidación/conciliación):', e.message);
