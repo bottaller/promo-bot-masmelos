@@ -94,11 +94,17 @@ Es la misma disciplina de "reloj de pared" del corte por hora del `/cierre`.
 
 ## 5. La salida
 
-- **Mensaje de Telegram**: primero lo que está mal, después lo sano (mismo criterio que
-  `reporte-cierre.js`). Las listas se cortan a 8 ítems (el tope de Telegram son 4096 caracteres) y el
-  resto va en el Excel.
-- **Excel** `conciliacion_mp_<AAAA-MM-DD>.xlsx`: hoja **Conciliación** (los 🔴 arriba, después los 🟡,
-  después lo que cerró, con fila de TOTAL) y hoja **Fuera de alcance** (lo no conciliado, con el motivo).
+**Solo un mensaje de Telegram** (no devuelve archivo — decisión de Caja Central, jul-2026): primero lo
+que está mal, después lo sano (mismo criterio que `reporte-cierre.js`). Es una lectura de un vistazo:
+
+- Los 🔴 (sin aparear) se listan; las listas se cortan a **8 ítems** (el tope de Telegram son 4096
+  caracteres) y se dice cuántos más hubo. El titular ya trae el total, y el dato crudo está en la
+  liquidación que se subió. ⚠️ En un día con **más de 8** de un mismo tipo, el detalle del resto no se
+  ve en el chat (ya no hay Excel de respaldo) — si eso pasara seguido, conviene partir el mensaje en
+  varios (como `avisos.js`) o subir el corte.
+- Las **diferencias de redondeo** se resumen en una línea (total), no una por una.
+- Las **salidas de dinero** (Mercado Libre, devoluciones, Haber del sistema) **no se muestran**: no son
+  ventas por QR. Se filtran por signo (importe < 0) y por ser Haber.
 
 El mensaje muestra además **qué acredita MP**: bruto − comisión − impuestos = neto. El sistema asienta
 el **bruto** y MP deposita el **neto**; la brecha (el 16/07: $646.151) se registra después con la
@@ -123,7 +129,7 @@ src/scenes/mp.js             el wizard (dice qué recibe, pide los 2 archivos, c
 src/lib/mayor-excel.js       parser del export de Sigma (Diario o Mayor), renglón por renglón
 src/lib/liquidacion-excel.js parser de la liquidación de MP (columnas por NOMBRE, importes US, UTC-4)
 src/lib/conciliacion-mp.js   el motor: alcance + apareo + resumen  (puro, sin I/O)
-src/lib/reporte-mp.js        mensaje de Telegram + Excel
+src/lib/reporte-mp.js        arma el mensaje de Telegram (sin archivo)
 src/lib/sigma-celdas.js      primitivos de parseo compartidos con libro-excel.js
 test/tesoreria-mp.test.js    42 tests (sin DB ni archivos)
 ```

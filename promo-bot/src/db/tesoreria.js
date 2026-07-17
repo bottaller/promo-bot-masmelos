@@ -104,14 +104,27 @@ async function guardarMovimientos({ empresa = 'HONRE', movimientos, usuarioId })
   const client = await pool.connect();
   try {
     await client.query('begin');
+    // Insert EN LOTE (un query por cada LOTE filas), no uno por fila: con el grano por hora un
+    // día trae miles de renglones (uno por asiento), y 1 INSERT por fila tardaba ~2 min para dos
+    // días y hacía fallar el cierre (el envío del reporte expiraba). Ahora son pocas queries.
+    const COLS = 10;      // columnas del insert (los 10 placeholders de cada fila)
+    const LOTE = 1000;    // 1000×10 = 10.000 parámetros, holgado bajo el límite de 65.535 de pg
     for (const [iso, movs] of porDia) {
       await client.query('delete from bot.tesoreria_movimientos where fecha = $1::date and empresa = $2', [iso, empresa]);
-      for (const m of movs) {
+      for (let i = 0; i < movs.length; i += LOTE) {
+        const lote = movs.slice(i, i + LOTE);
+        const params = [];
+        const filas = lote.map((m, j) => {
+          const b = j * COLS;
+          params.push(iso, empresa, m.cuenta_id, m.cuenta || '', m.debe || 0, m.haber || 0,
+            m.debe_nominal || 0, m.haber_nominal || 0, m.ingreso || finDeDiaTs(iso), usuarioId ?? null);
+          return `($${b + 1}::date,$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9}::timestamp,$${b + 10})`;
+        }).join(',');
         await client.query(
           `insert into bot.tesoreria_movimientos
              (fecha, empresa, cuenta_id, cuenta, debe, haber, debe_nominal, haber_nominal, ingreso, cargado_por)
-           values ($1::date, $2, $3, $4, $5, $6, $7, $8, $9::timestamp, $10)`,
-          [iso, empresa, m.cuenta_id, m.cuenta || '', m.debe || 0, m.haber || 0, m.debe_nominal || 0, m.haber_nominal || 0, m.ingreso || finDeDiaTs(iso), usuarioId ?? null]
+           values ${filas}`,
+          params
         );
       }
     }

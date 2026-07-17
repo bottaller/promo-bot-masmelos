@@ -8,7 +8,7 @@ const mpWizard = require('../src/scenes/mp');
 const { conciliarMP, CUENTA_MP } = require('../src/lib/conciliacion-mp');
 const { parsearMayor, MayorError } = require('../src/lib/mayor-excel');
 const { parsearLiquidacion, LiquidacionError } = require('../src/lib/liquidacion-excel');
-const { formatearMP, construirExcelMP } = require('../src/lib/reporte-mp');
+const { formatearMP } = require('../src/lib/reporte-mp');
 const { isoAHoraArg, tsASegundos } = require('../src/lib/fechas');
 
 let pass = 0;
@@ -332,25 +332,50 @@ t('el mensaje se mantiene bajo el tope de Telegram con muchas huérfanas', () =>
   assert.ok(txt.length < 4096, `el mensaje mide ${txt.length}`);
   assert.match(txt, /y 292 más/);
 });
-t('la diferencia de redondeo se muestra con formato de plata argentino', () => {
+t('el redondeo se RESUME en una línea con el total, no se lista uno por uno', () => {
+  // 3 diferencias de redondeo, como el 16/07 real. No tienen que aparecer las 3 líneas
+  // con cliente; solo "N por redondeo · $total".
   const resultado = conciliarMP({
-    movimientos: [M(357358.76, '2026-07-16 14:25:07')],
-    operaciones: [O(357358.80, '2026-07-16 14:24:50')],
+    movimientos: [
+      M(357358.76, '2026-07-16 14:25:07', { cliente: 'MELLADO' }),
+      M(111189.72, '2026-07-16 14:36:32', { cliente: 'ESCOBAR' }),
+      M(408351.70, '2026-07-16 15:33:54', { cliente: 'RAMIREZ' }),
+    ],
+    operaciones: [
+      O(357358.80, '2026-07-16 14:24:50'),
+      O(111189.71, '2026-07-16 14:36:26'),
+      O(408351.71, '2026-07-16 15:33:45'),
+    ],
   });
   const txt = formatearMP({ fecha: '16/07/2026', cuenta: 'MP', resultado });
-  assert.match(txt, /diferencia de \$0,04 por redondeo/);
+  assert.match(txt, /🟡 3 por redondeo · −\$0,04/); // 3 pares, neto -0,04 (-0,04+0,01-0,01)
+  assert.ok(!/MELLADO/.test(txt), 'no debe listar el cliente de un redondeo');
+  assert.ok(!/por redondeo · .*MELLADO/s.test(txt));
+  assert.ok(!/14:24/.test(txt), 'no debe listar la hora de un redondeo');
 });
-t('el Excel sale con las dos hojas y sin romperse', () => {
+t('las salidas de dinero (Mercado Libre negativo, Haber) NO van al mensaje', () => {
   const resultado = conciliarMP({
-    movimientos: [M(100, '2026-07-16 10:00:10')],
-    operaciones: [O(100, '2026-07-16 10:00:00'), O(9999, '2026-07-16 11:00:00', { canal: 'Point' })],
+    movimientos: [
+      M(100, '2026-07-16 10:00:10'),
+      M(0, '2026-07-16 18:00:00', { debe: 0, haber: 20000000, cliente: 'TRANSFER A SANTANDER' }), // Haber = salida
+    ],
+    operaciones: [
+      O(100, '2026-07-16 10:00:00'),
+      O(-2924560.09, '2026-07-16 16:26:32', { unidad: 'Mercado Libre', canal: '' }), // salida
+      O(324915.32, '2026-07-16 06:16:11', { canal: '', unidad: '', instrumento: '' }), // fuera pero POSITIVO: sí se muestra
+    ],
   });
-  const buf = construirExcelMP({ fecha: '16/07/2026', cuenta: 'MERCADO PAGO MORENO', resultado });
-  const wb = XLSX.read(buf, { type: 'buffer' });
-  assert.deepStrictEqual(wb.SheetNames, ['Conciliación', 'Fuera de alcance']);
-  const filas = XLSX.utils.sheet_to_json(wb.Sheets['Conciliación'], { header: 1 });
-  assert.ok(filas.some((f) => String(f[0]).includes('Generado')));
-  assert.ok(XLSX.utils.sheet_to_json(wb.Sheets['Fuera de alcance'], { header: 1 }).some((f) => /Point/.test(String(f[7]))));
+  const txt = formatearMP({ fecha: '16/07/2026', cuenta: 'MP', resultado });
+  assert.ok(!/Mercado Libre/.test(txt), 'la salida de ML no debe aparecer en el mensaje');
+  assert.ok(!/2\.924\.560/.test(txt));
+  assert.ok(!/no son cobranzas/.test(txt), 'los Haber no van al mensaje');
+  assert.ok(!/20\.000\.000/.test(txt));
+  assert.match(txt, /revisar con MP/); // lo positivo fuera de alcance SÍ sigue
+});
+t('el reporte no arma ningún archivo: solo exporta el mensaje', () => {
+  // /mp ya no devuelve Excel. Si vuelve a exportar un builder, revisar el wizard (mp.js).
+  const rep = require('../src/lib/reporte-mp');
+  assert.deepStrictEqual(Object.keys(rep), ['formatearMP']);
 });
 
 console.log('área Caja Central (el rol dueño del comando)');
