@@ -92,10 +92,12 @@ convertir, el match por hora se corre **60 minutos**. Se normaliza todo a hora d
 y hace la aritmética sobre `Date.UTC`/`getUTC*` → independiente del TZ del proceso (Railway = UTC).
 Es la misma disciplina de "reloj de pared" del corte por hora del `/cierre`.
 
-## 5. La salida
+## 5. La salida: un mensaje + un informe PDF
 
-**Solo un mensaje de Telegram** (no devuelve archivo — decisión de Caja Central, jul-2026): primero lo
-que está mal, después lo sano (mismo criterio que `reporte-cierre.js`). Es una lectura de un vistazo:
+**No devuelve el Excel de detalle** (decisión de Caja Central, jul-2026). Devuelve dos cosas:
+
+**1) Un mensaje de Telegram** — la vista rápida: primero lo que está mal, después lo sano (mismo
+criterio que `reporte-cierre.js`).
 
 - Los 🔴 (sin aparear) se listan; las listas se cortan a **8 ítems** (el tope de Telegram son 4096
   caracteres) y se dice cuántos más hubo. El titular ya trae el total, y el dato crudo está en la
@@ -105,10 +107,17 @@ que está mal, después lo sano (mismo criterio que `reporte-cierre.js`). Es una
 - Las **diferencias de redondeo** se resumen en una línea (total), no una por una.
 - Las **salidas de dinero** (Mercado Libre, devoluciones, Haber del sistema) **no se muestran**: no son
   ventas por QR. Se filtran por signo (importe < 0) y por ser Haber.
+- Muestra además **qué acredita MP**: bruto − comisión − impuestos = neto (el sistema asienta el bruto,
+  MP deposita el neto; la brecha del 16/07 fue $646.151, que se registra con la factura mensual de MP).
 
-El mensaje muestra además **qué acredita MP**: bruto − comisión − impuestos = neto. El sistema asienta
-el **bruto** y MP deposita el **neto**; la brecha (el 16/07: $646.151) se registra después con la
-factura mensual de MP.
+**2) Un informe PDF** (`informe_mp_<AAAA-MM-DD>.pdf`) — el **comprobante** para archivar/imprimir. Una
+hoja con el **veredicto** bien arriba, en color: **CONTROL OK** (verde) si aparea todo, o **CONTROL CON
+DIFERENCIAS** (rojo) si hay algo sin aparear. Lleva el **día conciliado** y el sello de **fecha + hora**
+en que se corrió el control, un resumen (apareadas / sin aparear / totales) y, si hay diferencias, la
+lista de lo que no cierra. Lo arma `src/lib/informe-mp-pdf.js` con **pdfkit** (fuentes estándar, sin
+emoji → el veredicto va por color). El veredicto (`veredictoMP()`) es una función pura y testeada:
+**bien = 0 sin aparear** (las diferencias de redondeo son avisos, no lo tumban). Si el PDF fallara, el
+control ya se comunicó por el mensaje y el bot avisa (no se cae).
 
 ## 6. Quién lo usa
 
@@ -129,9 +138,10 @@ src/scenes/mp.js             el wizard (dice qué recibe, pide los 2 archivos, c
 src/lib/mayor-excel.js       parser del export de Sigma (Diario o Mayor), renglón por renglón
 src/lib/liquidacion-excel.js parser de la liquidación de MP (columnas por NOMBRE, importes US, UTC-4)
 src/lib/conciliacion-mp.js   el motor: alcance + apareo + resumen  (puro, sin I/O)
-src/lib/reporte-mp.js        arma el mensaje de Telegram (sin archivo)
+src/lib/reporte-mp.js        arma el mensaje de Telegram
+src/lib/informe-mp-pdf.js    arma el informe PDF (veredicto bien/mal + fecha/hora) con pdfkit
 src/lib/sigma-celdas.js      primitivos de parseo compartidos con libro-excel.js
-test/tesoreria-mp.test.js    42 tests (sin DB ni archivos)
+test/tesoreria-mp.test.js    51 tests (sin DB ni archivos)
 ```
 
 ## 8. Estado

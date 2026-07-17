@@ -14,6 +14,7 @@ const { parsearMayor, MayorError } = require('../lib/mayor-excel');
 const { parsearLiquidacion, LiquidacionError } = require('../lib/liquidacion-excel');
 const { conciliarMP, CUENTA_MP } = require('../lib/conciliacion-mp');
 const { formatearMP } = require('../lib/reporte-mp');
+const { construirInformePDF } = require('../lib/informe-mp-pdf');
 const { formatoVencimiento, fechaISO } = require('../lib/fechas');
 
 // El acceso ya lo garantiza requiereArea('tesoreria') al entrar, pero lo re-chequeamos en
@@ -173,6 +174,20 @@ const mpWizard = new Scenes.WizardScene(
       const texto = formatearMP({ fecha, cuenta: mayor.cuenta, resultado, origen: mayor.origen });
 
       await ctx.reply(texto, { parse_mode: 'HTML' });
+
+      // Informe PDF: el comprobante del control (salió bien/mal, con la fecha y hora). El
+      // mensaje de arriba es la vista rápida; el PDF es para archivar/imprimir. Si el armado
+      // del PDF fallara, el control YA se comunicó por el mensaje: se avisa y no se cae.
+      try {
+        const pdf = await construirInformePDF({ fecha, cuenta: mayor.cuenta, resultado });
+        const sufijo = fechaISO(mayor.desde) === fechaISO(mayor.hasta)
+          ? fechaISO(mayor.desde)
+          : `${fechaISO(mayor.desde)}_${fechaISO(mayor.hasta)}`;
+        await ctx.replyWithDocument({ source: pdf, filename: `informe_mp_${sufijo}.pdf` });
+      } catch (e) {
+        console.error('No pude armar el informe PDF de /mp (el control ya se envió por mensaje):', e.message);
+        await ctx.reply('⚠️ El control salió (arriba), pero no pude generar el PDF. Avisá al admin si lo necesitás.');
+      }
       return ctx.scene.leave();
     } catch (e) {
       console.error('Error en /mp (liquidación/conciliación):', e.message);
