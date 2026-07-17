@@ -77,7 +77,7 @@ function construirInformePDF({ fecha, cuenta, resultado, generadoEn }) {
 
     // Encabezado
     doc.font('Helvetica-Bold').fontSize(9).fillColor(GRIS)
-      .text('MÁS MELOS · CAJA CENTRAL', x, doc.page.margins.top, { characterSpacing: 1 });
+      .text('MÁS MELOS · CONTROL MERCADO PAGO', x, doc.page.margins.top, { characterSpacing: 1 });
     doc.moveDown(0.5);
     doc.font('Helvetica-Bold').fontSize(20).fillColor(TINTA).text('Conciliación Mercado Pago');
     doc.font('Helvetica').fontSize(11).fillColor(GRIS)
