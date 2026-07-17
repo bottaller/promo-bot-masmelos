@@ -480,5 +480,43 @@ function ctxFalso() {
   t('control con diferencias -> PDF válido', () => { assert.ok(esPDF(pdfMal), 'no es un PDF'); });
   t('el PDF con diferencias pesa más (lista lo que no cierra)', () => { assert.ok(pdfMal.length > pdfOk.length); });
 
+  // El RE-CHEQUEO de acceso del wizard tiene que ser la MISMA área que registra el comando.
+  // Regresión: quedó pidiendo 'tesoreria' al mudar /mp a Caja Central -> un usuario CON el rol
+  // entraba pero se trababa al mandar el archivo. Se maneja el paso 1 con distintos usuarios.
+  console.log('acceso: el rol cajacentral puede usar /mp de punta a punta');
+  const mayorBuf = aBuffer([
+    ['Empresa: 0008-HONRE_2  del 07/16/2026 al 07/16/2026'], ['Mayor de Cta 422101014'], HDR_MAYOR,
+    filaMayor(8301513, 24320.61, '16/07/2026 08:13:48'),
+  ]);
+  async function correrPaso1(usuario) {
+    const replies = []; let salio = false;
+    global.fetch = async () => ({ arrayBuffer: async () => mayorBuf.buffer.slice(mayorBuf.byteOffset, mayorBuf.byteOffset + mayorBuf.byteLength) });
+    const ctx = {
+      state: { usuario },
+      message: { document: { file_id: 'mem://mayor', file_name: 'mayor.xlsx' } },
+      telegram: { getFileLink: async () => ({ href: 'mem://mayor' }) },
+      reply: async (t) => { replies.push(t); },
+      scene: { leave: async () => { salio = true; } },
+      wizard: { state: { data: {} }, next() {}, selectStep() {} }, // el paso 0 crea state.data
+    };
+    await mpWizard.steps[1](ctx);
+    return { replies, salio };
+  }
+  const rolSolo = await correrPaso1({ es_admin: false, areas: ['cajacentral'] });
+  t('un usuario con SOLO el rol cajacentral NO se traba en el paso del archivo', () => {
+    assert.ok(!rolSolo.replies.some((r) => /no tenés acceso/i.test(r)), 'lo bloqueó teniendo el rol correcto');
+    assert.ok(rolSolo.replies.some((r) => /Leí .*cobranza/i.test(r)), 'no avanzó a pedir la liquidación');
+    assert.strictEqual(rolSolo.salio, false);
+  });
+  const otroRol = await correrPaso1({ es_admin: false, areas: ['tesoreria'] });
+  t('un usuario sin el rol cajacentral SÍ queda bloqueado (y se nombra Caja Central)', () => {
+    assert.ok(otroRol.replies.some((r) => /acceso al área Caja Central/i.test(r)));
+    assert.strictEqual(otroRol.salio, true);
+  });
+  const admin = await correrPaso1({ es_admin: true, areas: [] });
+  t('un admin pasa igual (acceso total)', () => {
+    assert.ok(admin.replies.some((r) => /Leí .*cobranza/i.test(r)));
+  });
+
   console.log(`\n✅ ${pass} tests OK`);
 })();

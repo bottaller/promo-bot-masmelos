@@ -17,10 +17,13 @@ const { formatearMP } = require('../lib/reporte-mp');
 const { construirInformePDF } = require('../lib/informe-mp-pdf');
 const { formatoVencimiento, fechaISO } = require('../lib/fechas');
 
-// El acceso ya lo garantiza requiereArea('tesoreria') al entrar, pero lo re-chequeamos en
-// cada paso con documento por si le quitan el rol a mitad de camino (es data financiera).
-function tieneAccesoTesoreria(u) {
-  return !!(u && (u.es_admin || (u.areas && u.areas.includes('tesoreria'))));
+// El área dueña del comando. El acceso ya lo garantiza requiereArea(AREA) al entrar, pero lo
+// re-chequeamos en cada paso con documento por si le quitan el rol a mitad de camino (es data
+// financiera). OJO: tiene que ser la MISMA área que registra el comando (cajacentral), no otra
+// — si no, un usuario con el rol entra pero se traba al mandar el archivo.
+const AREA = 'cajacentral';
+function tieneAcceso(u) {
+  return !!(u && (u.es_admin || (u.areas && u.areas.includes(AREA))));
 }
 
 async function bajarDoc(ctx, doc) {
@@ -109,7 +112,7 @@ const mpWizard = new Scenes.WizardScene(
     if (ctx.message && esCancelar(ctx.message.text)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
     const doc = ctx.message && ctx.message.document;
     if (!doc) { await ctx.reply('Mandame el export de Sigma como documento .xlsx (o "cancelar").'); return; }
-    if (!tieneAccesoTesoreria(ctx.state.usuario)) { await ctx.reply('Ya no tenés acceso al área Tesorería.'); return ctx.scene.leave(); }
+    if (!tieneAcceso(ctx.state.usuario)) { await ctx.reply('Ya no tenés acceso al área Caja Central.'); return ctx.scene.leave(); }
     if (ctx.wizard.state.procesando) return; // evita doble envío de archivo
     ctx.wizard.state.procesando = true;
 
@@ -150,7 +153,7 @@ const mpWizard = new Scenes.WizardScene(
     if (ctx.message && esCancelar(ctx.message.text)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
     const doc = ctx.message && ctx.message.document;
     if (!doc) { await ctx.reply('Mandame la liquidación de Mercado Pago como documento .xlsx (o "cancelar").'); return; }
-    if (!tieneAccesoTesoreria(ctx.state.usuario)) { await ctx.reply('Ya no tenés acceso al área Tesorería.'); return ctx.scene.leave(); }
+    if (!tieneAcceso(ctx.state.usuario)) { await ctx.reply('Ya no tenés acceso al área Caja Central.'); return ctx.scene.leave(); }
     if (ctx.wizard.state.conciliando) return;
     ctx.wizard.state.conciliando = true;
 
