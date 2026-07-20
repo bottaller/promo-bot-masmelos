@@ -134,15 +134,20 @@ const flujosWizard = new Scenes.WizardScene(
     const lib = await conseguirLibro({ modo: 'ultimo' });
     if (lib.ok) {
       ctx.wizard.state.data.libroMeta = lib.meta;
+      // describirLibro trae <b>…</b>: sin parse_mode:'HTML' el usuario ve los tags crudos justo en
+      // el mensaje que le pregunta qué libro usar. El teclado (reply_markup) se conserva al mezclar.
       await preguntar(
         ctx,
         LM.describirLibro(lib.meta, lib.antiguedadDias,
           `♻️ O uso el libro que ya está cargado y lo recorto a <b>${rangoTxt}</b>.`),
         // Si el libro tiene más de un día de antigüedad, "mandar otro" va PRIMERO: romper el
         // automatismo del primer botón es lo único que frena el "dale, dale" con datos viejos.
-        opciones(lib.antiguedadDias > 1
-          ? [['📎 Mandar otro Excel', 'otro'], [LM.etiquetaUsarLibro(lib.meta), 'usar_libro']]
-          : [[LM.etiquetaUsarLibro(lib.meta), 'usar_libro'], ['📎 Mandar otro Excel', 'otro']])
+        {
+          parse_mode: 'HTML',
+          ...opciones(lib.antiguedadDias > 1
+            ? [['📎 Mandar otro Excel', 'otro'], [LM.etiquetaUsarLibro(lib.meta), 'usar_libro']]
+            : [[LM.etiquetaUsarLibro(lib.meta), 'usar_libro'], ['📎 Mandar otro Excel', 'otro']]),
+        }
       );
     } else if (lib.motivo !== 'sin_libro') {
       await ctx.reply(LM.textoFallback(lib.motivo));

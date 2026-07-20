@@ -333,6 +333,11 @@ const cierreWizard = new Scenes.WizardScene(
       }
       if (ctx.wizard.state.conciliando) return;
       ctx.wizard.state.conciliando = true;
+      // finally libera el lock en TODOS los caminos. Es imprescindible: conciliarYResponder puede
+      // terminar SIN dejar la escena (cuando el libro no cubre la ventana hace `return;` para
+      // seguir esperando el Excel). Si el lock no se liberara ahí, el .xlsx que el usuario mande
+      // después caería en el guard `if (conciliando) return;` de la rama con archivo y el bot no
+      // contestaría nunca: el tesorero quedaría atrapado con los saldos ya guardados.
       try {
         const { datos } = ctx.wizard.state.data;
         // El gate se calcula ACÁ y no antes: entre que se cargaron los saldos y este momento
@@ -365,8 +370,7 @@ const cierreWizard = new Scenes.WizardScene(
               { parse_mode: 'HTML' }
             );
           }
-          ctx.wizard.state.conciliando = false;
-          return; // sigue esperando el archivo
+          return; // sigue esperando el archivo (el finally libera el lock)
         }
 
         // Si un solo export cubre los dos días, se nombra una vez sola.
@@ -379,9 +383,10 @@ const cierreWizard = new Scenes.WizardScene(
       } catch (e) {
         console.error('Error en /cierre (libro cargado):', e.message);
         await ctx.reply('Hubo un problema usando el libro cargado. Mandame el Excel y sigo.');
+      } finally {
         ctx.wizard.state.conciliando = false;
-        return;
       }
+      return;
     }
 
     // --- Con archivo: exactamente como funcionaba antes ---

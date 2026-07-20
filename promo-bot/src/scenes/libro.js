@@ -1,5 +1,6 @@
-// Wizard /libro (admin): carga el LIBRO DIARIO UNA sola vez, para que lo consuman todos los
-// comandos que hoy piden el mismo Excel (/cierre, /semanal, /mensual, /flujos, /mp y /arqueo).
+// Wizard /libro (admin): carga el LIBRO DIARIO UNA sola vez, para que lo consuman los comandos
+// que hoy piden el mismo Excel. Ya cableados: /cierre, /mp y /flujos. (/semanal, /mensual y
+// /arqueo todavía piden su propio Excel; cuando se cableen, sumarlos acá y al mensaje de abajo.)
 // Guarda los movimientos parseados + el .xlsx crudo (ver lib/registrar-libro.js).
 //
 // La JORNADA se deduce del Excel, no del día en que se sube: si el martes te acordás de que no
@@ -39,8 +40,7 @@ const libroWizard = new Scenes.WizardScene(
     await ctx.reply(
       '📚 Libro diario.\n\n' +
       'Mandame el "Diario de movimientos contables" de Sigma, como .xlsx.\n' +
-      'Queda cargado para TODOS los comandos (cierre, semanal, mensual, flujos, mp, arqueo): ' +
-      'no hace falta volver a subirlo en cada uno.\n\n' +
+      'Queda cargado para /cierre, /mp y /flujos: no hace falta volver a subirlo en cada uno.\n\n' +
       '📌 El día lo saco del Excel, así que si te olvidaste de cargar uno, podés subirlo ahora ' +
       'y queda guardado con SU fecha.\n(o escribí "cancelar")'
     );
@@ -120,7 +120,7 @@ const libroWizard = new Scenes.WizardScene(
         partes.push('', `📭 Días sin libro en la última semana: <b>${res.huecos.map(diaCorto).join(', ')}</b>`,
           '<i>(si alguno fue feriado o no hubo operación, ignoralo)</i>');
       }
-      partes.push('', 'Ya lo pueden usar todos los comandos.');
+      partes.push('', 'Ya lo pueden usar /cierre, /mp y /flujos.');
 
       await ctx.reply(partes.join('\n'), { parse_mode: 'HTML' });
       return ctx.scene.leave();

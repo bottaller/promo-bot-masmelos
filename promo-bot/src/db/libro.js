@@ -61,13 +61,19 @@ async function archivoLibro({ fecha, empresa = 'HONRE' }) {
 
 // El libro cuyo RANGO cubre esa fecha. El export de Sigma suele abarcar varios días
 // (13→17), así que el libro cargado como jornada del 17 igual sirve para consultar el 15.
-// Si hay más de uno que la cubre, gana el más reciente (el que tiene el dato más fresco).
+// Desempate cuando varios la cubren:
+//   1º una coincidencia EXACTA de jornada (fecha = el día pedido), y
+//   2º entre las que quedan, la CARGADA más recientemente (el dato más fresco).
+// El orden viejo (fecha desc = la jornada más alta) rompía el camino de corrección: si el 21 se
+// re-exporta y re-sube SOLO el 15 con un asiento que faltaba, ese libro (jornada 15) perdía
+// contra el export ancho viejo (jornada 17 que también cubre el 15), y se conciliaba contra el
+// dato desactualizado. cargado_en desc es lo que "gana el más fresco" quería decir de verdad.
 async function libroQueCubre({ fecha, empresa = 'HONRE' }) {
   const fISO = fechaISO(fecha);
   const { rows } = await pool.query(
     `select ${META} from bot.libro_diario
       where empresa = $1 and desde <= $2::date and hasta >= $2::date
-      order by fecha desc limit 1`,
+      order by (fecha = $2::date) desc, cargado_en desc limit 1`,
     [empresa, fISO]
   );
   return rows[0] || null;

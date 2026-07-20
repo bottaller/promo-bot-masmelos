@@ -17,7 +17,7 @@ const { parsearLiquidacion, LiquidacionError } = require('../lib/liquidacion-exc
 const { conciliarMP, CUENTA_MP } = require('../lib/conciliacion-mp');
 const { formatearMP } = require('../lib/reporte-mp');
 const { construirInformePDF } = require('../lib/informe-mp-pdf');
-const { formatoVencimiento, fechaISO } = require('../lib/fechas');
+const { formatoVencimiento, fechaISO, fechaHoraArgDe } = require('../lib/fechas');
 
 // El área dueña del comando. El acceso ya lo garantiza requiereArea(AREA) al entrar, pero lo
 // re-chequeamos en cada paso con documento por si le quitan el rol a mitad de camino (es data
@@ -160,10 +160,13 @@ async function conciliarYResponder(ctx, mayorEntrada, liq, libroMeta) {
   // tesorero perdería horas buscando un agujero que no existe. Es calculable.
   if (libroMeta && libroMeta.cargado_en) {
     const horas = liq.operaciones.map((o) => o.hora).filter(Boolean).sort();
-    const ultima = horas.length ? horas[horas.length - 1] : null; // 'AAAA-MM-DD HH:MM:SS'
-    const cargado = new Date(libroMeta.cargado_en);
-    const cargadoTxt = `${String(cargado.getHours()).padStart(2, '0')}:${String(cargado.getMinutes()).padStart(2, '0')}`;
-    if (ultima && `${fechaISO(cargado)} ${cargadoTxt}` < ultima.slice(0, 16)) {
+    const ultima = horas.length ? horas[horas.length - 1] : null; // 'AAAA-MM-DD HH:MM:SS' (hora arg de pared)
+    // cargado_en es timestamptz; getHours()/fechaISO() sobre él darían la hora del proceso
+    // (Railway=UTC), corrida 3 h, así que la comparación contra la hora de pared de la liquidación
+    // se dispararía mal (o nunca). Se lleva a hora argentina antes de comparar y de mostrar.
+    const cargadoArg = fechaHoraArgDe(libroMeta.cargado_en);
+    const cargadoTxt = cargadoArg ? cargadoArg.hhmm : '';
+    if (cargadoArg && ultima && `${cargadoArg.iso} ${cargadoTxt}` < ultima.slice(0, 16)) {
       partesFinal.push(
         '',
         `⚠️ Ojo: el libro se cargó a las <b>${cargadoTxt}</b> y hay cobros de MP hasta las ` +

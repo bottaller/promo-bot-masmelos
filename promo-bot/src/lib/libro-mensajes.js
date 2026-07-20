@@ -5,7 +5,19 @@
 //     "el libro del 17/07".
 //  2. Arrancar por la CONSECUENCIA, no por el dato: "voy a conciliar el 15/07 con el libro del
 //     17/07" antes que "libro: 17/07". El tesorero decide con la primera línea.
-const { fechaISO, formatoVencimiento } = require('./fechas');
+const { fechaISO, formatoVencimiento, fechaHoraArgDe } = require('./fechas');
+
+// cargado_en (timestamptz) -> "DD/MM/AAAA HH:MM" en hora de PARED argentina. formatoVencimiento()
+// + toLocaleTimeString() sin timeZone lo mostrarían en la hora del proceso (Railway=UTC), corrida
+// 3 h: un libro cargado a la noche saldría con el día y la hora del día siguiente, contradiciendo
+// la fecha del propio libro en el mismo mensaje. '' si no hay dato.
+function cargadoArgTxt(cargadoEn) {
+  if (!cargadoEn) return '';
+  const a = fechaHoraArgDe(cargadoEn);
+  if (!a) return '';
+  const [y, m, d] = a.iso.split('-');
+  return `${d}/${m}/${y} ${a.hhmm}`;
+}
 
 // Escapa antes de meter texto libre (nombre de archivo) en un mensaje con parse_mode:'HTML'.
 function esc(s) {
@@ -47,7 +59,7 @@ function describirLibro(meta, dias, consecuencia) {
   if (consecuencia) L.push(consecuencia, '');
   L.push(`📚 Libro del <b>${diaLibro(meta)}</b> (${ant.texto})`);
   L.push(`📅 Trae movimientos del ${describirRango(meta)}`);
-  L.push(`📝 ${meta.filas} movimientos · cargado el ${formatoVencimiento(new Date(meta.cargado_en))} ${new Date(meta.cargado_en).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}`);
+  L.push(`📝 ${meta.filas} movimientos · cargado el ${cargadoArgTxt(meta.cargado_en)}`);
   if (ant.alerta) L.push('', '⚠️ Ojo: no es el libro de hoy. Si necesitás datos más frescos, mandá el Excel.');
   return L.join('\n');
 }
@@ -85,10 +97,8 @@ function textoFallback(motivo, { huecos = [] } = {}) {
 // subido a mano. Toda la info de origen vive en el mensaje previo del chat, que se va del scroll.
 function lineaOrigen(meta) {
   if (!meta) return 'Origen: Excel enviado en el momento.';
-  const cargado = meta.cargado_en ? new Date(meta.cargado_en) : null;
-  const cuando = cargado
-    ? ` (cargado ${formatoVencimiento(cargado)} ${cargado.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })})`
-    : '';
+  const cargado = cargadoArgTxt(meta.cargado_en);
+  const cuando = cargado ? ` (cargado ${cargado})` : '';
   return `Origen: libro diario del ${diaLibro(meta)}${cuando} · movimientos del ${describirRango(meta)}.`;
 }
 
