@@ -428,6 +428,41 @@ t('el mensaje se mantiene bajo el tope de Telegram con muchas huérfanas', () =>
   assert.ok(txt.length < 4096, `el mensaje mide ${txt.length}`);
   assert.match(txt, /y 292 más/);
 });
+// Si el mensaje se pasa de 4096, la API de Telegram RECHAZA el envío entero y el control no
+// llega — peor que recortarlo. Las líneas del rastreo son largas: sin tope duro, 40 huérfanas
+// con contrapartidas daban 5334 caracteres y el reporte no se enviaba.
+function escenarioHuerfanasConRastreo(n, largoNombre) {
+  const ops = [], movs = [], otras = [];
+  for (let i = 0; i < n; i++) {
+    const monto = 100000 + i;
+    ops.push(O(monto, `2026-07-11 1${i % 10}:00:00`, { source_id: `1684${i}` }));
+    movs.push(M(monto + 1000, `2026-07-11 09:00:0${i % 10}`, { cliente: 'C'.repeat(largoNombre) + i }));
+    for (let k = 0; k < 3; k++) {
+      const asiento = 900000 + i * 10 + k;
+      const base = { asiento, concepto: 'faltante caja 4 camila 11-7 revisar con tesoreria',
+        comprobante: 'DIFERENCIA DE CAJA', cliente: '', usuario: 'LATERZAFLOR', ingreso: '2026-07-11 17:21:50' };
+      otras.push({ ...base, cuenta_id: 111100004, cuenta: 'CAJA 4 MORENO SUCURSAL CENTRO', debe: 0, haber: monto });
+      otras.push({ ...base, cuenta_id: 501100006, cuenta: 'DESVIO DE CAJA MORENO', debe: monto, haber: 0 });
+    }
+  }
+  return conciliarMP({ movimientos: movs, operaciones: ops, otrasCuentas: otras });
+}
+t('peor caso realista (40 huérfanas con rastreo): entra sin recortar', () => {
+  const resultado = escenarioHuerfanasConRastreo(40, 25);
+  assert.strictEqual(resultado.resumen.nSoloMp, 40);
+  const txt = formatearMP({ fecha: '11/07/2026', cuenta: 'MERCADO PAGO MORENO', resultado, origen: 'diario' });
+  assert.ok(txt.length <= 4096, `mide ${txt.length}: Telegram lo rechazaría`);
+  assert.ok(!/recortado/.test(txt), 'no debería hacer falta recortar en un caso realista');
+  assert.match(txt, /aparece en:/); // el rastreo se sigue viendo
+});
+t('caso extremo: recorta para no pasarse, y AVISA que recortó', () => {
+  const resultado = escenarioHuerfanasConRastreo(100, 300); // nombres absurdos
+  const txt = formatearMP({ fecha: '11/07/2026', cuenta: 'MERCADO PAGO MORENO', resultado, origen: 'diario' });
+  assert.ok(txt.length <= 4096, `mide ${txt.length}: Telegram lo rechazaría`);
+  assert.match(txt, /recortado/);          // nunca en silencio
+  assert.match(txt, /sin aparear/);        // lo importante sobrevive: va primero
+  assert.match(txt, /Totales/);
+});
 t('el redondeo se RESUME en una línea con el total, no se lista uno por uno', () => {
   // 3 diferencias de redondeo, como el 16/07 real. No tienen que aparecer las 3 líneas
   // con cliente; solo "N por redondeo · $total".

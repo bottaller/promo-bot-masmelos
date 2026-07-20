@@ -71,11 +71,39 @@ function textoContrapartida(c) {
   return partes.join(' · ');
 }
 
+// En el CHAT se muestra una sola contrapartida por huérfana (la más probable): son líneas
+// largas y con varias huérfanas el mensaje se pasa del tope de Telegram. El resto va al PDF.
+const MAX_CONTRAPARTIDAS_MSG = 1;
+
 // Las líneas de contrapartida de una huérfana (vacío si no se rastreó o no hubo hallazgo).
 function lineasContrapartida(x) {
-  return (x.contrapartidas || []).map(
+  const todas = x.contrapartidas || [];
+  const lineas = todas.slice(0, MAX_CONTRAPARTIDAS_MSG).map(
     (c) => `   ↳ <i>aparece en:</i> ${escapeHtml(textoContrapartida(c))}`
   );
+  const resto = todas.length - MAX_CONTRAPARTIDAS_MSG;
+  if (resto > 0) lineas.push(`   <i>(ese importe está en ${resto} asiento(s) más)</i>`);
+  return lineas;
+}
+
+// Tope duro de Telegram. Si un mensaje se pasa, la API lo RECHAZA entero y el control no
+// llega — peor que recortarlo. Como las secciones están ordenadas por importancia (titular,
+// totales, 🔴, 🟡, fuera de alcance), recortar desde el final descarta primero lo menos
+// importante. Nunca se recorta en silencio: se avisa y el PDF va completo igual.
+const TOPE_TELEGRAM = 4096;
+
+function unirRecortando(L) {
+  const texto = L.join('\n');
+  if (texto.length <= TOPE_TELEGRAM) return texto;
+  const nota = '\n<i>✂️ Mensaje recortado (tope de Telegram) — el detalle completo está en el PDF.</i>';
+  const limite = TOPE_TELEGRAM - nota.length;
+  let acc = '';
+  for (const linea of L) {
+    const siguiente = acc ? `${acc}\n${linea}` : linea;
+    if (siguiente.length > limite) break;
+    acc = siguiente;
+  }
+  return acc + nota;
 }
 
 // Agrupa las filas fuera de alcance por motivo: {motivo, n, total}[]
@@ -170,7 +198,7 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
     for (const g of grupos) L.push(`• ${escapeHtml(g.motivo)}: ${g.n} · ${fmt(g.total)}`);
   }
 
-  return L.join('\n');
+  return unirRecortando(L);
 }
 
 module.exports = { formatearMP };
