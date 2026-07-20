@@ -56,6 +56,56 @@ function textoAvisos(p) {
   }).join('; ');
 }
 
+// Una contrapartida rastreada (dónde más aparece ese importe en el libro), en una línea.
+// El orden Haber → Debe cuenta la historia: de dónde salió la plata y adónde fue.
+// Ej.: 'CAJA 4 MORENO → DESVIO DE CAJA · "faltante caja 4 camila 11-7" · 17:21 · LATERZAFLOR'
+function textoContrapartida(c) {
+  const cuentas = [...c.renglones]
+    .sort((a, b) => (b.haber - b.debe) - (a.haber - a.debe))
+    .map((g) => g.cuenta)
+    .join(' → ');
+  const partes = [cuentas];
+  if (c.concepto) partes.push(`"${c.concepto}"`);
+  partes.push(hora(c.ingreso));
+  if (c.usuario) partes.push(c.usuario);
+  return partes.join(' · ');
+}
+
+// En el CHAT se muestra una sola contrapartida por huérfana (la más probable): son líneas
+// largas y con varias huérfanas el mensaje se pasa del tope de Telegram. El resto va al PDF.
+const MAX_CONTRAPARTIDAS_MSG = 1;
+
+// Las líneas de contrapartida de una huérfana (vacío si no se rastreó o no hubo hallazgo).
+function lineasContrapartida(x) {
+  const todas = x.contrapartidas || [];
+  const lineas = todas.slice(0, MAX_CONTRAPARTIDAS_MSG).map(
+    (c) => `   ↳ <i>aparece en:</i> ${escapeHtml(textoContrapartida(c))}`
+  );
+  const resto = todas.length - MAX_CONTRAPARTIDAS_MSG;
+  if (resto > 0) lineas.push(`   <i>(ese importe está en ${resto} asiento(s) más)</i>`);
+  return lineas;
+}
+
+// Tope duro de Telegram. Si un mensaje se pasa, la API lo RECHAZA entero y el control no
+// llega — peor que recortarlo. Como las secciones están ordenadas por importancia (titular,
+// totales, 🔴, 🟡, fuera de alcance), recortar desde el final descarta primero lo menos
+// importante. Nunca se recorta en silencio: se avisa y el PDF va completo igual.
+const TOPE_TELEGRAM = 4096;
+
+function unirRecortando(L) {
+  const texto = L.join('\n');
+  if (texto.length <= TOPE_TELEGRAM) return texto;
+  const nota = '\n<i>✂️ Mensaje recortado (tope de Telegram) — el detalle completo está en el PDF.</i>';
+  const limite = TOPE_TELEGRAM - nota.length;
+  let acc = '';
+  for (const linea of L) {
+    const siguiente = acc ? `${acc}\n${linea}` : linea;
+    if (siguiente.length > limite) break;
+    acc = siguiente;
+  }
+  return acc + nota;
+}
+
 // Agrupa las filas fuera de alcance por motivo: {motivo, n, total}[]
 function agruparPorMotivo(filas, monto) {
   const g = new Map();
@@ -102,6 +152,7 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
     L.push(`🔴 <b>Cobró MP y no está asentado</b> — ${soloMp.length} · ${fmt(r.totalSoloMp)}`);
     for (const o of soloMp.slice(0, MAX_LISTA)) {
       L.push(`• ${hora(o.hora)} · <b>${fmt(o.bruto)}</b> · ${escapeHtml(instrumento(o))} · id ${escapeHtml(o.source_id)}`);
+      L.push(...lineasContrapartida(o));
     }
     if (soloMp.length > MAX_LISTA) L.push(`<i>…y ${soloMp.length - MAX_LISTA} más.</i>`);
   }
@@ -112,8 +163,16 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
     L.push(`🔴 <b>Asentado y MP no lo tiene</b> — ${soloSistema.length} · ${fmt(r.totalSoloSistema)}`);
     for (const m of soloSistema.slice(0, MAX_LISTA)) {
       L.push(`• ${hora(m.ingreso)} · <b>${fmt(m.debe)}</b> · ${escapeHtml(m.comprobante || 'asiento ' + m.asiento)} · ${escapeHtml(m.cliente)} (${escapeHtml(m.usuario)})`);
+      L.push(...lineasContrapartida(m));
     }
     if (soloSistema.length > MAX_LISTA) L.push(`<i>…y ${soloSistema.length - MAX_LISTA} más.</i>`);
+  }
+
+  // Si hay huérfanas y NO se pudo rastrear (mandaron el Mayor, que trae una sola cuenta),
+  // decirlo: con el Diario el bot puede indicar en qué otra cuenta quedó imputado el importe.
+  if ((soloMp.length || soloSistema.length) && !r.rastreo) {
+    L.push('');
+    L.push('<i>💡 Mandame el "Diario de movimientos" (en vez del Mayor) y te digo si ese importe aparece en otra cuenta — ej.: como faltante de una caja.</i>');
   }
 
   // Apareadas con la HORA corrida: sí se listan (el importe coincide pero el asiento se
@@ -139,7 +198,7 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
     for (const g of grupos) L.push(`• ${escapeHtml(g.motivo)}: ${g.n} · ${fmt(g.total)}`);
   }
 
-  return L.join('\n');
+  return unirRecortando(L);
 }
 
 module.exports = { formatearMP };

@@ -79,6 +79,7 @@ function parsearMayor(buffer, { cuentaId }) {
 
   const C = fmt.col;
   const movimientos = [];
+  const otrasCuentas = []; // el resto del Diario: sirve para rastrear dónde quedó imputado
   let cuenta = '';
   let minFecha = null;
   let maxFecha = null;
@@ -89,7 +90,31 @@ function parsearMayor(buffer, { cuentaId }) {
     if (!r) continue;
 
     const cid = parseEntero(r[C.cuenta_id]);
-    if (cid === null || cid !== cuentaId) continue; // otra cuenta (Diario) o fila de pie/total
+    if (cid === null) continue; // fila de pie/total/blanco
+
+    // Las OTRAS cuentas no se descartan: con el Diario completo, un cobro que MP hizo y no
+    // se asentó en la cuenta de MP suele aparecer en otra cuenta (ej.: como faltante de una
+    // caja física). Guardarlas permite decir DÓNDE quedó, no solo que falta.
+    if (cid !== cuentaId) {
+      const asientoOtra = parseEntero(r[C.asiento]);
+      if (asientoOtra === null || asientoOtra === 0) continue;
+      if (norm(r[C.concepto]).toLowerCase() === 'saldo anterior') continue;
+      const fechaOtra = interpretarFecha(r[C.fecha]);
+      otrasCuentas.push({
+        asiento: asientoOtra,
+        cuenta_id: cid,
+        cuenta: norm(r[C.cuenta]),
+        comp: norm(r[C.comp]),
+        concepto: norm(r[C.concepto]),
+        comprobante: norm(r[C.comprobante]),
+        cliente: norm(r[C.cliente]),
+        usuario: norm(r[C.usuario]),
+        ingreso: interpretarTimestamp(r[C.ingreso], fechaOtra),
+        debe: parseNum(r[C.debe]),
+        haber: parseNum(r[C.haber]),
+      });
+      continue;
+    }
     filasDeLaCuenta++;
 
     // El Mayor abre con el renglón "Saldo anterior": es el arrastre del saldo, NO un
@@ -139,7 +164,7 @@ function parsearMayor(buffer, { cuentaId }) {
     );
   }
 
-  return { origen: fmt.origen, cuenta, desde: minFecha, hasta: maxFecha, movimientos };
+  return { origen: fmt.origen, cuenta, desde: minFecha, hasta: maxFecha, movimientos, otrasCuentas };
 }
 
 module.exports = { parsearMayor, MayorError };

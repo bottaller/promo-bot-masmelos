@@ -61,6 +61,24 @@ function fechaHoraArg() {
   return s.replace(',', '');
 }
 
+// Un Date (típicamente cargado_en, que node-pg parseó de un `timestamptz` al instante correcto)
+// -> componentes de hora de PARED argentina. getHours()/fechaISO() sobre ese Date darían la hora
+// del PROCESO (Railway=UTC), corrida 3 h: un libro cargado 21:30 hora argentina (00:30 UTC del día
+// siguiente) mostraría el día y la hora equivocados. Intl con timeZone fijo es independiente del TZ
+// del proceso. hourCycle 'h23' evita que la medianoche salga como '24'.
+// Devuelve { iso:'AAAA-MM-DD', hhmm:'HH:MM', hhmmss:'HH:MM:SS' } o null si el Date no es válido.
+function fechaHoraArgDe(fechaLike) {
+  if (fechaLike == null || fechaLike === '') return null; // new Date(null) es la época, no NaN: se filtra antes
+  const d = fechaLike instanceof Date ? fechaLike : new Date(fechaLike);
+  if (Number.isNaN(d.getTime())) return null;
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(d).reduce((a, x) => { a[x.type] = x.value; return a; }, {});
+  return { iso: `${p.year}-${p.month}-${p.day}`, hhmm: `${p.hour}:${p.minute}`, hhmmss: `${p.hour}:${p.minute}:${p.second}` };
+}
+
 // Date -> texto AAAA-MM-DD (para filtros de rango en SQL, ::date). Usa los getters locales
 // (igual que formatoVencimiento) y no toISOString(), que convierte a UTC y puede correr el día.
 function fechaISO(fecha) {
@@ -129,5 +147,5 @@ function isoAHoraArg(iso) {
 
 module.exports = {
   parseVencimiento, formatoVencimiento, diasHasta, fechaHoyArg, fechaHoyArgISO, fechaHoraArg,
-  fechaISO, sumarDias, tsCanonico, finDeDiaTs, tsASegundos, isoAHoraArg,
+  fechaHoraArgDe, fechaISO, sumarDias, tsCanonico, finDeDiaTs, tsASegundos, isoAHoraArg,
 };

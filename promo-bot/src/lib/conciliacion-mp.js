@@ -82,16 +82,62 @@ function repartir(items, enAlcance, motivo) {
   return { dentro, fuera };
 }
 
-// conciliarMP({ movimientos, operaciones })
-//   movimientos: renglones de la cuenta MP (mayor-excel.js)
-//   operaciones: filas de la liquidación (liquidacion-excel.js)
+// ---------------------------------------------------------------------------
+// Rastreo del contramovimiento (solo con el Diario completo)
+// ---------------------------------------------------------------------------
+// Cuando MP cobró algo que NO se asentó en la cuenta de MP, la plata igual entró: lo más
+// común es que el cobro se haya imputado mal y aparezca en OTRA cuenta. El caso real que
+// motivó esto (11/07/2026): MP cobró $152.577,45 por transferencia, nadie lo asentó como
+// cobro de MP, y al cerrar la CAJA 4 dio ese faltante EXACTO, que se registró contra DESVIO
+// DE CAJA. No faltaba la plata: estaba en Mercado Pago, mal imputada.
+//
+// Por eso, si se manda el "Diario de movimientos" (que trae TODAS las cuentas), por cada
+// huérfana se busca ese importe en el resto del libro. Es una PISTA, no un veredicto: dos
+// movimientos del mismo importe pueden ser casualidad (sobre todo si es redondo), así que se
+// devuelve el asiento completo —con cuentas, concepto, hora y usuario— para que lo juzgue
+// una persona.
+
+// Cuántos asientos candidatos se devuelven por huérfana (si hay más, es ruido: el importe
+// es poco distintivo y la pista no sirve).
+const MAX_CONTRAPARTIDAS = 3;
+
+// Los asientos del libro que contienen un renglón por ese importe, en una cuenta que no sea
+// la de MP. Devuelve [{asiento, ingreso, concepto, comprobante, usuario, renglones:[...]}]
+// con TODOS los renglones del asiento (la partida doble entera: de dónde salió y adónde fue).
+function buscarContrapartidas(importe, otrasCuentas) {
+  if (!otrasCuentas || !otrasCuentas.length) return [];
+  const pega = (m) => Math.abs(m.debe - importe) <= TOLERANCIA_REDONDEO
+    || Math.abs(m.haber - importe) <= TOLERANCIA_REDONDEO;
+
+  const asientos = [...new Set(otrasCuentas.filter(pega).map((m) => m.asiento))];
+  return asientos.slice(0, MAX_CONTRAPARTIDAS).map((nro) => {
+    const renglones = otrasCuentas.filter((m) => m.asiento === nro);
+    const cab = renglones.find(pega) || renglones[0];
+    return {
+      asiento: nro,
+      ingreso: cab.ingreso,
+      concepto: cab.concepto,
+      comprobante: cab.comprobante,
+      usuario: cab.usuario,
+      renglones: renglones.map((m) => ({
+        cuenta_id: m.cuenta_id, cuenta: m.cuenta, debe: m.debe, haber: m.haber,
+      })),
+    };
+  });
+}
+
+// conciliarMP({ movimientos, operaciones, otrasCuentas })
+//   movimientos:  renglones de la cuenta MP (mayor-excel.js)
+//   operaciones:  filas de la liquidación (liquidacion-excel.js)
+//   otrasCuentas: el resto del Diario (opcional). Si viene, cada huérfana trae además
+//                 `contrapartidas`: los asientos donde ese importe aparece en otra cuenta.
 // ->  { pares, soloSistema, soloMp, fuera: {sistema, mp}, resumen }
 //
 // El apareo es GREEDY sobre los pares candidatos ordenados por (importe exacto primero,
 // después menor diferencia, después menor distancia de hora). Con los importes casi únicos
 // que tiene un día real, eso resuelve solo; la hora está para desempatar los repetidos (el
 // 16/07 hubo dos ventas de $380 de cajas distintas) y para no aparear entre días.
-function conciliarMP({ movimientos = [], operaciones = [] }) {
+function conciliarMP({ movimientos = [], operaciones = [], otrasCuentas = [] }) {
   const sistema = repartir(movimientos, (m) => m.debe > 0, motivoFueraSistema);
   const mp = repartir(
     operaciones,
@@ -133,8 +179,11 @@ function conciliarMP({ movimientos = [], operaciones = [] }) {
   }
   pares.sort((a, b) => (a.op.hora < b.op.hora ? -1 : a.op.hora > b.op.hora ? 1 : 0));
 
-  const soloSistema = sistema.dentro.filter((_, i) => !usadosS.has(i));
-  const soloMp = mp.dentro.filter((_, j) => !usadosM.has(j));
+  // Las huérfanas se enriquecen con el rastreo: dónde más aparece ese importe en el libro.
+  const soloSistema = sistema.dentro.filter((_, i) => !usadosS.has(i))
+    .map((m) => ({ ...m, contrapartidas: buscarContrapartidas(m.debe, otrasCuentas) }));
+  const soloMp = mp.dentro.filter((_, j) => !usadosM.has(j))
+    .map((o) => ({ ...o, contrapartidas: buscarContrapartidas(o.bruto, otrasCuentas) }));
 
   const suma = (arr, f) => redondear(arr.reduce((a, x) => a + f(x), 0));
   const resumen = {
@@ -160,10 +209,14 @@ function conciliarMP({ movimientos = [], operaciones = [] }) {
   // agujero de control. Los avisos (redondeo/hora) son 🟡: hay que verlos, no alarman.
   resumen.nivel = (soloSistema.length || soloMp.length) ? 'alerta' : (resumen.nAviso ? 'aviso' : 'ok');
 
+  // ¿Se pudo rastrear? (con el Mayor de una sola cuenta no hay dónde buscar).
+  resumen.rastreo = otrasCuentas.length > 0;
+  resumen.nConContrapartida = [...soloMp, ...soloSistema].filter((x) => x.contrapartidas.length).length;
+
   return { pares, soloSistema, soloMp, fuera: { sistema: sistema.fuera, mp: mp.fuera }, resumen };
 }
 
 module.exports = {
-  conciliarMP, CUENTA_MP,
+  conciliarMP, buscarContrapartidas, CUENTA_MP,
   TOLERANCIA_REDONDEO, DELTA_MAXIMO_SEG, DELTA_SOSPECHOSO_SEG, CANAL_QR, TIPO_COBRO,
 };
