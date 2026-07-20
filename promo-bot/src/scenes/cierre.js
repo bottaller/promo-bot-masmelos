@@ -88,9 +88,17 @@ async function registrarPendienteYCerrar(ctx, datos, prefijo) {
     console.error('No pude ver si hay día anterior (sigo, lo anoto pendiente):', e.message);
     prev = { fecha: 'error' }; // ante la duda, tratarlo como cierre normal (mejor pendiente que perdido)
   }
+
+  // Si el Excel vino SIN "Hora del conteo", el corte fino por hora queda apagado (usa fin del día).
+  // Avisar acá es más importante que antes: en el modelo diferido el tesorero no ve el reporte hasta
+  // mañana, así que si no se lo decimos ahora, no se entera de que la precisión quedó degradada.
+  const avisoHora = datos.horaCargada ? '' :
+    '\n\n⚠️ El Excel no traía la "Hora del conteo": uso el fin del día y el corte fino por hora queda ' +
+    'apagado. Si querés que corte justo, agregá la hora en la plantilla y recargá.';
+
   if (!prev.fecha) {
     await ctx.reply(
-      `${prefijo}\n\n` +
+      `${prefijo}${avisoHora}\n\n` +
       'Es el primer cierre que tengo cargado, así que queda como <b>base</b>: no hay día anterior ' +
       'contra el cual conciliar. Desde el próximo, te entrego el reporte a la mañana siguiente de ' +
       'que se cargue el libro.',
@@ -115,7 +123,7 @@ async function registrarPendienteYCerrar(ctx, datos, prefijo) {
   }
 
   await ctx.reply(
-    `${prefijo}\n\n` +
+    `${prefijo}${avisoHora}\n\n` +
     '📊 El análisis sale cuando se cargue el libro de la jornada. Mañana a la mañana te llega el ' +
     'reporte del cierre, a vos y a los administradores.'
   );
