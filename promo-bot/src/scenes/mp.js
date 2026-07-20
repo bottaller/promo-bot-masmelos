@@ -86,56 +86,142 @@ function chequearRangos({ mayor, operaciones }) {
   return {};
 }
 
-// Guarda el export ya parseado y pide la liquidación. Lo comparten el camino manual y el del
-// libro cargado, para que el estado y el mensaje sean EXACTAMENTE los mismos por los dos lados
-// (si divergen, comparar una rama contra la otra deja de probar nada).
-async function pedirLiquidacion(ctx, mayor, libroMeta) {
-  ctx.wizard.state.data.mayor = mayor;
-  ctx.wizard.state.data.libroUsado = libroMeta || null;
+// Día que cubre la liquidación ('AAAA-MM-DD'), o null si abarca varios. La liquidación es la
+// que manda: es la que define, sin ambigüedad, contra qué día hay que conciliar.
+function diaDeLiquidacion(liq) {
+  const dias = [...new Set((liq.operaciones || []).map((o) => (o.hora || '').slice(0, 10)).filter(Boolean))].sort();
+  return dias.length === 1 ? dias[0] : null;
+}
 
-  const cobranzas = mayor.movimientos.filter((m) => m.debe > 0).length;
-  const rango = textoRango(mayor.desde, mayor.hasta);
-  const variosDias = fechaISO(mayor.desde) !== fechaISO(mayor.hasta);
-  const deDonde = libroMeta
-    ? `del libro del <b>${LM.diaLibro(libroMeta)}</b>`
-    : `(fuente: ${nombreOrigen(mayor.origen)})`;
+function isoADate(iso) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
 
-  const L = [
-    `✅ Leí <b>${cobranzas} cobranzas</b> de ${escapeHtml(mayor.cuenta)} del <b>${rango}</b> ${deDonde}.`,
-    '',
-  ];
-  // Un export de varios días contra una liquidación de uno haría caer TODO lo de los otros días
-  // como "cobrado y no asentado": una alerta roja gigante y falsa. Se avisa acá y se filtra al
-  // recibir la liquidación, cuando ya se sabe de qué día es.
-  if (variosDias) {
-    L.push(`📌 Ese export cubre varios días. Voy a conciliar <b>solo el día de la liquidación</b> que me mandes.`, '');
+// Deja el export acotado al día que se concilia. Los movimientos SÍ se filtran (gobiernan el
+// apareo 1:1 con las operaciones de MP); `otrasCuentas` NO: el caso que motivó esa feature es
+// cross-día (MP cobró un día y el faltante apareció al cerrar la caja a la noche o a la mañana
+// siguiente), así que filtrarlas borraría justo la pista que se busca.
+// Devuelve { ok:true, mayor, recortado } | { ok:false }
+function acotarAlDia(mayor, dia) {
+  if (!dia || fechaISO(mayor.desde) === fechaISO(mayor.hasta)) return { ok: true, mayor, recortado: false };
+  const delDia = mayor.movimientos.filter((m) => fechaISO(m.fecha) === dia);
+  if (delDia.length === 0) return { ok: false };
+  const fechas = delDia.map((m) => m.fecha).sort((a, b) => a - b);
+  return {
+    ok: true,
+    recortado: true,
+    mayor: { ...mayor, movimientos: delDia, desde: fechas[0], hasta: fechas[fechas.length - 1] },
+  };
+}
+
+// Concilia y responde. La llaman los DOS caminos —el libro ya cargado y el export mandado a
+// mano— para que el resultado y los mensajes sean idénticos vengan de donde vengan.
+async function conciliarYResponder(ctx, mayorEntrada, liq, libroMeta) {
+  const dia = ctx.wizard.state.data.dia || diaDeLiquidacion(liq);
+
+  const acot = acotarAlDia(mayorEntrada, dia);
+  if (!acot.ok) {
+    await ctx.reply(
+      `El export no tiene movimientos de ${isoALinda(dia)}, que es el día de esa liquidación.\n\n` +
+      'Mandame el export de Sigma de ese día y lo concilio.'
+    );
+    return ctx.scene.leave();
   }
-  L.push(
-    `<b>2) Ahora mandame la liquidación de Mercado Pago</b>${variosDias ? '' : ` del ${rango}`}, como .xlsx.`,
-    '📥 Es el reporte de <b>Liquidaciones</b> que bajás del panel de MP (el archivo <code>settlement_v2-….xlsx</code>).'
-  );
-  if (!variosDias) L.push('⚠️ Tiene que ser del <b>mismo día</b> que el export de Sigma: si no, no concilio.');
+  const mayor = acot.mayor;
+  if (acot.recortado) {
+    await ctx.reply(
+      `📌 El export cubría varios días: me quedo con los <b>${mayor.movimientos.length} movimientos ` +
+      `del ${isoALinda(dia)}</b>, que es el día de la liquidación.`,
+      { parse_mode: 'HTML' }
+    );
+  }
 
-  await ctx.reply(L.join('\n'), { parse_mode: 'HTML' });
-  return ctx.wizard.next();
+  const rangos = chequearRangos({ mayor, operaciones: liq.operaciones });
+  if (rangos.error) { await ctx.reply(rangos.error); return ctx.scene.leave(); }
+  if (rangos.aviso) await ctx.reply(rangos.aviso);
+
+  // otrasCuentas = el resto del Diario. Habilita rastrear dónde quedó imputado un cobro que MP
+  // hizo y no se asentó en la cuenta de MP (ej.: como faltante de una caja física).
+  const resultado = conciliarMP({
+    movimientos: mayor.movimientos,
+    operaciones: liq.operaciones,
+    otrasCuentas: mayor.otrasCuentas,
+  });
+  const fecha = textoRango(mayor.desde, mayor.hasta);
+  const texto = formatearMP({ fecha, cuenta: mayor.cuenta, resultado, origen: mayor.origen });
+
+  // Traza de origen: este reporte se reenvía y se mira al día siguiente, y sale idéntico venga
+  // del libro o de un Excel subido a mano.
+  const partesFinal = [texto, '', `<i>${LM.esc(LM.lineaOrigen(libroMeta))}</i>`];
+
+  // Si el libro se cargó ANTES de que terminaran los cobros del día, puede faltarle la cola de
+  // la tarde: aparecerían decenas de operaciones como "cobró MP y no está asentado" y el
+  // tesorero perdería horas buscando un agujero que no existe. Es calculable.
+  if (libroMeta && libroMeta.cargado_en) {
+    const horas = liq.operaciones.map((o) => o.hora).filter(Boolean).sort();
+    const ultima = horas.length ? horas[horas.length - 1] : null; // 'AAAA-MM-DD HH:MM:SS'
+    const cargado = new Date(libroMeta.cargado_en);
+    const cargadoTxt = `${String(cargado.getHours()).padStart(2, '0')}:${String(cargado.getMinutes()).padStart(2, '0')}`;
+    if (ultima && `${fechaISO(cargado)} ${cargadoTxt}` < ultima.slice(0, 16)) {
+      partesFinal.push(
+        '',
+        `⚠️ Ojo: el libro se cargó a las <b>${cargadoTxt}</b> y hay cobros de MP hasta las ` +
+        `<b>${ultima.slice(11, 16)}</b>. Pueden faltar asientos de esa franja: si ves muchas ` +
+        'diferencias, reintentá con un export fresco antes de salir a buscarlas.'
+      );
+    }
+  }
+
+  await ctx.reply(partesFinal.join('\n'), { parse_mode: 'HTML' });
+
+  // Informe PDF: el comprobante del control. El mensaje de arriba es la vista rápida; el PDF es
+  // para archivar/imprimir. Si el armado fallara, el control YA se comunicó: se avisa y no se cae.
+  try {
+    const u = ctx.state.usuario;
+    const quien = (u && u.nombre) || (ctx.from && ctx.from.username ? '@' + ctx.from.username : String(ctx.from && ctx.from.id || ''));
+    const pdf = await construirInformePDF({ fecha, cuenta: mayor.cuenta, resultado, usuario: quien });
+    // El nombre lleva la HORA además del día: dos corridas del mismo día (una con el libro viejo
+    // en 🔴 y otra con el corregido en 🟢) quedaban con el mismo nombre, indistinguibles sin abrir.
+    const ahora = new Date();
+    const hhmm = `${String(ahora.getHours()).padStart(2, '0')}${String(ahora.getMinutes()).padStart(2, '0')}`;
+    const sufijo = fechaISO(mayor.desde) === fechaISO(mayor.hasta)
+      ? fechaISO(mayor.desde)
+      : `${fechaISO(mayor.desde)}_${fechaISO(mayor.hasta)}`;
+    await ctx.replyWithDocument({ source: pdf, filename: `informe_mp_${sufijo}_${hhmm}.pdf` });
+  } catch (e) {
+    console.error('No pude armar el informe PDF de /mp (el control ya se envió por mensaje):', e.message);
+    await ctx.reply('⚠️ El control salió (arriba), pero no pude generar el PDF. Avisá al admin si lo necesitás.');
+  }
+  return ctx.scene.leave();
 }
 
 const mpWizard = new Scenes.WizardScene(
   'mp-wizard',
-  // 0: decir qué hace y qué necesita, y pedir el export del sistema
+  // 0: explicar y pedir la LIQUIDACIÓN de Mercado Pago.
+  //
+  // El orden está invertido a propósito (antes se pedía primero el export de Sigma): la
+  // liquidación es la que define SIN AMBIGÜEDAD qué día se concilia, y recién sabiendo el día se
+  // puede buscar el libro de ESE día. Si se pidiera primero el export habría que adivinar el día,
+  // y un default equivocado se vuelve autoconsistente: el bot pediría la liquidación de ese día,
+  // los rangos coincidirían, y saldría un reporte verde del día que no era.
   async (ctx) => {
     ctx.wizard.state.data = {};
     await ctx.reply(
       '🔎 <b>Conciliación de Mercado Pago</b>, operación por operación.\n' +
       'Aparea cada cobranza del sistema con su cobro en MP y te marca lo que no cierra.\n\n' +
       '<b>Necesito 2 archivos .xlsx, los dos del MISMO día:</b>\n' +
-      '  1) los movimientos del sistema (export de Sigma)\n' +
-      '  2) la liquidación de Mercado Pago (del panel de MP)\n\n' +
+      '  1) la liquidación de Mercado Pago (del panel de MP)\n' +
+      '  2) los movimientos del sistema (export de Sigma) — <b>este no hace falta</b> si el admin ' +
+      'ya cargó el libro de ese día\n\n' +
       `<b>Qué concilio:</b> las ventas cobradas por <b>QR o transferencia</b>, que es lo que recibe la cuenta ` +
       `${CUENTA_MP} (MERCADO PAGO MORENO). Lo de <b>Point</b> te lo listo aparte pero no se concilia acá: ` +
       'liquida en las cuentas de tarjetas, no en esa cuenta.\n\n' +
-      '<b>1) Mandame el export de Sigma.</b> Me sirven los dos, pero no dan lo mismo:\n' +
-      '• ⭐ el <b>"Diario de movimientos contables"</b> — el mismo que subís al /cierre. <b>Es el que conviene:</b> ' +
+      '<b>1) Mandame la liquidación de Mercado Pago</b>, como .xlsx.\n' +
+      '📥 Es el reporte de <b>Liquidaciones</b> que bajás del panel de MP (el archivo <code>settlement_v2-….xlsx</code>).\n' +
+      '📅 De ahí saco el día y busco el libro de <b>ese</b> día.\n\n' +
+      '<i>Si después te pido el export de Sigma, me sirven los dos formatos, pero no dan lo mismo:</i>\n' +
+      '• ⭐ el <b>"Diario de movimientos contables"</b> — el mismo que subís al cierre. <b>Es el que conviene:</b> ' +
       'como trae TODAS las cuentas, si algo no cierra puedo decirte <b>en qué otra cuenta quedó imputado</b> ' +
       '(ej.: apareció como faltante de una caja).\n' +
       `• el <b>"Mayor de cuenta"</b> de la ${CUENTA_MP} — solo esa cuenta. Trae el N° de recibo (REC8 …), ` +
@@ -144,114 +230,16 @@ const mpWizard = new Scenes.WizardScene(
       '(o escribí "cancelar")',
       { parse_mode: 'HTML' }
     );
-
-    // ¿Hay un libro diario cargado? Si sí, se ofrece para no pedir dos veces el mismo Excel.
-    // conseguirLibro NUNCA tira (ver libro-fuente.js): si la base está caída devuelve ok:false
-    // y el comando sigue funcionando como siempre.
-    const lib = await conseguirLibro({ modo: 'ultimo' });
-    if (lib.ok) {
-      ctx.wizard.state.data.libroMeta = lib.meta;
-      await preguntar(
-        ctx,
-        LM.describirLibro(lib.meta, lib.antiguedadDias,
-          'Tengo un libro diario cargado y puedo usar ese en vez de que me mandes el export.'),
-        // Si el libro tiene más de un día de antigüedad, "mandar otro" va PRIMERO: romper el
-        // automatismo del primer botón es lo único que frena el "dale, dale" con datos viejos.
-        opciones(lib.antiguedadDias > 1
-          ? [['📎 Mandar otro Excel', 'otro'], [LM.etiquetaUsarLibro(lib.meta), 'usar_libro']]
-          : [[LM.etiquetaUsarLibro(lib.meta), 'usar_libro'], ['📎 Mandar otro Excel', 'otro']])
-      );
-    } else if (lib.motivo !== 'sin_libro') {
-      // sin_libro es el caso normal (todavía nadie lo cargó): no vale la pena avisar nada.
-      // Los otros motivos sí: si no, el usuario nunca se entera de que algo falló.
-      await ctx.reply(LM.textoFallback(lib.motivo));
-    }
     return ctx.wizard.next();
   },
-  // 1: recibir el export del sistema (archivo subido O el libro ya cargado) -> pedir la liquidación
-  async (ctx) => {
-    if (ctx.message && esCancelar(ctx.message.text)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
-    const doc = ctx.message && ctx.message.document;
-
-    // --- Camino A: no mandó archivo, entonces contestó los botones (o escribió algo) ---
-    if (!doc) {
-      const r = await respuesta(ctx);
-      if (r === null) return; // botón viejo, doble-tap o no era texto: seguir esperando
-      if (esCancelar(r)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
-      if (r === 'otro') {
-        await ctx.reply('Dale. Mandame el export de Sigma como .xlsx.');
-        return; // se queda en este paso esperando el documento
-      }
-      if (r !== 'usar_libro') {
-        await ctx.reply('Mandame el export de Sigma como documento .xlsx (o "cancelar").');
-        return;
-      }
-      if (!tieneAcceso(ctx.state.usuario)) { await ctx.reply('Ya no tenés acceso al área Caja Central.'); return ctx.scene.leave(); }
-      if (ctx.wizard.state.procesando) return;
-      ctx.wizard.state.procesando = true;
-      try {
-        const meta = ctx.wizard.state.data.libroMeta;
-        const buf = await bufferLibro(meta);
-        if (!buf.ok) {
-          // El libro figuraba cargado pero no se pudo traer: se explica y se cae al pedido
-          // manual, en vez de dejarlo esperando un archivo que él no pidió mandar.
-          await ctx.reply(LM.textoFallback(buf.motivo));
-          return; // sigue en este paso: ahora espera el documento
-        }
-        let mayor;
-        try {
-          mayor = parsearMayor(buf.buffer, { cuentaId: CUENTA_MP });
-        } catch (e) {
-          if (e instanceof MayorError) {
-            // El libro guardado no sirve para /mp (p. ej. no tiene la cuenta de MP ese día).
-            // No se termina el wizard: se explica y se le permite mandar el suyo.
-            await ctx.reply(`${e.message}\n\nMandame vos el export de Sigma y seguimos.`);
-            return;
-          }
-          throw e;
-        }
-        return await pedirLiquidacion(ctx, mayor, meta);
-      } catch (e) {
-        console.error('Error en /mp (libro cargado):', e.message);
-        await ctx.reply('Hubo un problema leyendo el libro guardado. Mandame el export de Sigma y seguimos.');
-        return;
-      } finally {
-        ctx.wizard.state.procesando = false;
-      }
-    }
-
-    // --- Camino B: mandó el Excel (idéntico a como funcionaba antes) ---
-    if (!tieneAcceso(ctx.state.usuario)) { await ctx.reply('Ya no tenés acceso al área Caja Central.'); return ctx.scene.leave(); }
-    if (ctx.wizard.state.procesando) return; // evita doble envío de archivo
-    ctx.wizard.state.procesando = true;
-
-    let mayor;
-    try {
-      const buffer = await bajarDoc(ctx, doc);
-      try {
-        mayor = parsearMayor(buffer, { cuentaId: CUENTA_MP });
-      } catch (e) {
-        if (e instanceof MayorError) { await ctx.reply(e.message); return ctx.scene.leave(); }
-        throw e;
-      }
-    } catch (e) {
-      console.error('Error en /mp (export del sistema):', e.message);
-      await ctx.reply('Hubo un problema con el export de Sigma. Probá de nuevo o avisá al admin.');
-      return ctx.scene.leave();
-    } finally {
-      ctx.wizard.state.procesando = false;
-    }
-
-    return await pedirLiquidacion(ctx, mayor, null);
-  },
-  // 2: recibir la liquidación -> conciliar -> responder
+  // 1: recibir la liquidación -> saber el día -> buscar el libro de ESE día
   async (ctx) => {
     if (ctx.message && esCancelar(ctx.message.text)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
     const doc = ctx.message && ctx.message.document;
     if (!doc) { await ctx.reply('Mandame la liquidación de Mercado Pago como documento .xlsx (o "cancelar").'); return; }
     if (!tieneAcceso(ctx.state.usuario)) { await ctx.reply('Ya no tenés acceso al área Caja Central.'); return ctx.scene.leave(); }
-    if (ctx.wizard.state.conciliando) return;
-    ctx.wizard.state.conciliando = true;
+    if (ctx.wizard.state.procesando) return; // evita doble envío de archivo
+    ctx.wizard.state.procesando = true;
 
     try {
       const buffer = await bajarDoc(ctx, doc);
@@ -263,96 +251,94 @@ const mpWizard = new Scenes.WizardScene(
         throw e;
       }
 
-      const { libroUsado } = ctx.wizard.state.data;
-      let { mayor } = ctx.wizard.state.data;
+      const dia = diaDeLiquidacion(liq);
+      ctx.wizard.state.data.liq = liq;
+      ctx.wizard.state.data.dia = dia;
 
-      // El libro suele abarcar varios días y la liquidación es de UNO. Sin filtrar, los asientos
-      // de los otros días caen enteros en "cobrado y no asentado": 🔴 gigante y falsa, justo en
-      // el comando cuyo trabajo es detectar agujeros. Se filtra al día de la liquidación.
-      // Los movimientos SÍ se filtran (gobiernan el apareo 1:1); `otrasCuentas` NO: el caso que
-      // motivó esa feature es cross-día (MP cobró un día y el faltante apareció al cerrar la
-      // caja a la noche o a la mañana siguiente). Filtrarlas borraría justo la pista buscada.
-      const diasLiq = [...new Set(liq.operaciones.map((o) => (o.hora || '').slice(0, 10)).filter(Boolean))];
-      if (diasLiq.length === 1 && fechaISO(mayor.desde) !== fechaISO(mayor.hasta)) {
-        const dia = diasLiq[0];
-        const delDia = mayor.movimientos.filter((m) => fechaISO(m.fecha) === dia);
-        if (delDia.length === 0) {
-          await ctx.reply(
-            `El export que estoy usando no tiene movimientos de ${isoALinda(dia)}, que es el día de esa liquidación.\n\n` +
-            'Mandame el export de Sigma de ese día y lo concilio.'
-          );
-          return ctx.scene.leave();
-        }
-        const fechas = delDia.map((m) => m.fecha).sort((a, b) => a - b);
-        mayor = { ...mayor, movimientos: delDia, desde: fechas[0], hasta: fechas[fechas.length - 1] };
+      // Si la liquidación abarca varios días no se puede elegir el libro solo: se pide el export.
+      if (!dia) {
         await ctx.reply(
-          `📌 El export cubría varios días: me quedo con los <b>${delDia.length} movimientos del ${isoALinda(dia)}</b>, ` +
-          'que es el día de la liquidación.',
+          'Esa liquidación abarca varios días, así que no puedo elegir el libro solo.\n\n' +
+          '<b>Mandame el export de Sigma</b> que cubra esos días, como .xlsx.',
           { parse_mode: 'HTML' }
         );
+        return ctx.wizard.next();
       }
 
-      const rangos = chequearRangos({ mayor, operaciones: liq.operaciones });
-      if (rangos.error) { await ctx.reply(rangos.error); return ctx.scene.leave(); }
-      if (rangos.aviso) await ctx.reply(rangos.aviso);
-
-      // otrasCuentas = el resto del Diario. Habilita rastrear dónde quedó imputado un cobro
-      // que MP hizo y no se asentó en la cuenta de MP (ej.: como faltante de una caja física).
-      const resultado = conciliarMP({
-        movimientos: mayor.movimientos,
-        operaciones: liq.operaciones,
-        otrasCuentas: mayor.otrasCuentas,
-      });
-      const fecha = textoRango(mayor.desde, mayor.hasta);
-      const texto = formatearMP({ fecha, cuenta: mayor.cuenta, resultado, origen: mayor.origen });
-
-      // Traza de origen: este reporte se reenvía y se mira al día siguiente, y sale idéntico
-      // venga del libro o de un Excel subido a mano. Sin esta línea, el que lo lee después no
-      // tiene forma de saber sobre qué datos se armó.
-      const partesFinal = [texto, '', `<i>${LM.esc(LM.lineaOrigen(libroUsado))}</i>`];
-
-      // Si el libro se cargó ANTES de que terminaran los cobros del día, puede faltarle la cola
-      // de la tarde: aparecerían decenas de operaciones como "cobró MP y no está asentado" y el
-      // tesorero perdería horas buscando un agujero que no existe. Es calculable, no hace falta
-      // un disclaimer genérico.
-      if (libroUsado && libroUsado.cargado_en) {
-        const horas = liq.operaciones.map((o) => o.hora).filter(Boolean).sort();
-        const ultima = horas.length ? horas[horas.length - 1] : null; // 'AAAA-MM-DD HH:MM:SS'
-        const cargado = new Date(libroUsado.cargado_en);
-        const cargadoTxt = `${String(cargado.getHours()).padStart(2, '0')}:${String(cargado.getMinutes()).padStart(2, '0')}`;
-        if (ultima && `${fechaISO(cargado)} ${cargadoTxt}` < ultima.slice(0, 16)) {
-          partesFinal.push(
-            '',
-            `⚠️ Ojo: el libro se cargó a las <b>${cargadoTxt}</b> y hay cobros de MP hasta las ` +
-            `<b>${ultima.slice(11, 16)}</b>. Pueden faltar asientos de esa franja: si ves muchas ` +
-            'diferencias, reintentá con un export fresco antes de salir a buscarlas.'
-          );
-        }
+      // El libro tiene que ser el del MISMO día que la liquidación: usar otro produciría
+      // diferencias que son puro desfasaje de fechas y no agujeros reales.
+      const lib = await conseguirLibro({ modo: 'cubre', fecha: isoADate(dia) });
+      if (!lib.ok) {
+        const extra = lib.motivo === 'sin_libro'
+          ? `Todavía no tengo cargado el libro del <b>${isoALinda(dia)}</b>.`
+          : LM.textoFallback(lib.motivo);
+        await ctx.reply(
+          `${extra}\n\n<b>Mandame el export de Sigma del ${isoALinda(dia)}</b>, como .xlsx.`,
+          { parse_mode: 'HTML' }
+        );
+        return ctx.wizard.next();
       }
 
-      await ctx.reply(partesFinal.join('\n'), { parse_mode: 'HTML' });
+      const buf = await bufferLibro(lib.meta);
+      if (!buf.ok) {
+        await ctx.reply(
+          `${LM.textoFallback(buf.motivo)}\n\n<b>Mandame el export de Sigma del ${isoALinda(dia)}</b>, como .xlsx.`,
+          { parse_mode: 'HTML' }
+        );
+        return ctx.wizard.next();
+      }
 
-      // Informe PDF: el comprobante del control (salió bien/mal, con la fecha y hora). El
-      // mensaje de arriba es la vista rápida; el PDF es para archivar/imprimir. Si el armado
-      // del PDF fallara, el control YA se comunicó por el mensaje: se avisa y no se cae.
+      let mayor;
       try {
-        // El usuario va en el encabezado del PDF (como los reportes de Sigma): un comprobante
-        // de control tiene que decir quién lo corrió.
-        const u = ctx.state.usuario;
-        const quien = (u && u.nombre) || (ctx.from && ctx.from.username ? '@' + ctx.from.username : String(ctx.from && ctx.from.id || ''));
-        const pdf = await construirInformePDF({ fecha, cuenta: mayor.cuenta, resultado, usuario: quien });
-        const sufijo = fechaISO(mayor.desde) === fechaISO(mayor.hasta)
-          ? fechaISO(mayor.desde)
-          : `${fechaISO(mayor.desde)}_${fechaISO(mayor.hasta)}`;
-        await ctx.replyWithDocument({ source: pdf, filename: `informe_mp_${sufijo}.pdf` });
+        mayor = parsearMayor(buf.buffer, { cuentaId: CUENTA_MP });
       } catch (e) {
-        console.error('No pude armar el informe PDF de /mp (el control ya se envió por mensaje):', e.message);
-        await ctx.reply('⚠️ El control salió (arriba), pero no pude generar el PDF. Avisá al admin si lo necesitás.');
+        if (!(e instanceof MayorError)) throw e;
+        // El libro existe pero no sirve para este control (p. ej. ese día no tuvo cobranzas por
+        // QR). NO se termina el wizard: se explica y se le permite mandar el suyo.
+        await ctx.reply(
+          `${e.message}\n\nSi ese día no hubo cobranzas por QR, es normal. ` +
+          `Si creés que sí las hubo, mandame el export de Sigma del ${isoALinda(dia)} y lo miro.`
+        );
+        return ctx.wizard.next();
       }
-      return ctx.scene.leave();
+
+      await ctx.reply(
+        `✅ Uso el <b>libro del ${LM.diaLibro(lib.meta)}</b> para conciliar el <b>${isoALinda(dia)}</b>. Conciliando…`,
+        { parse_mode: 'HTML' }
+      );
+      ctx.wizard.state.procesando = false;
+      return await conciliarYResponder(ctx, mayor, liq, lib.meta);
     } catch (e) {
-      console.error('Error en /mp (liquidación/conciliación):', e.message);
+      console.error('Error en /mp (liquidación):', e.message);
       await ctx.reply('Hubo un problema procesando la liquidación. Probá de nuevo o avisá al admin.');
+      return ctx.scene.leave();
+    } finally {
+      ctx.wizard.state.procesando = false;
+    }
+  },
+  // 2: recibir el export de Sigma (solo si no se pudo usar el libro) -> conciliar
+  async (ctx) => {
+    if (ctx.message && esCancelar(ctx.message.text)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
+    const doc = ctx.message && ctx.message.document;
+    if (!doc) { await ctx.reply('Mandame el export de Sigma como documento .xlsx (o "cancelar").'); return; }
+    if (!tieneAcceso(ctx.state.usuario)) { await ctx.reply('Ya no tenés acceso al área Caja Central.'); return ctx.scene.leave(); }
+    if (ctx.wizard.state.conciliando) return;
+    ctx.wizard.state.conciliando = true;
+
+    try {
+      const buffer = await bajarDoc(ctx, doc);
+      let mayor;
+      try {
+        mayor = parsearMayor(buffer, { cuentaId: CUENTA_MP });
+      } catch (e) {
+        if (e instanceof MayorError) { await ctx.reply(e.message); return ctx.scene.leave(); }
+        throw e;
+      }
+      const { liq } = ctx.wizard.state.data;
+      return await conciliarYResponder(ctx, mayor, liq, null);
+    } catch (e) {
+      console.error('Error en /mp (export del sistema/conciliación):', e.message);
+      await ctx.reply('Hubo un problema con el export de Sigma. Probá de nuevo o avisá al admin.');
       return ctx.scene.leave();
     } finally {
       ctx.wizard.state.conciliando = false;

@@ -614,17 +614,19 @@ function ctxFalso() {
   // Regresión: quedó pidiendo 'tesoreria' al mudar /mp a Caja Central -> un usuario CON el rol
   // entraba pero se trababa al mandar el archivo. Se maneja el paso 1 con distintos usuarios.
   console.log('acceso: el rol cajacentral puede usar /mp de punta a punta');
-  const mayorBuf = aBuffer([
-    ['Empresa: 0008-HONRE_2  del 07/16/2026 al 07/16/2026'], ['Mayor de Cta 422101014'], HDR_MAYOR,
-    filaMayor(8301513, 24320.61, '16/07/2026 08:13:48'),
-  ]);
+  // El paso 1 recibe la LIQUIDACIÓN (de ahí sale el día contra el que se concilia, y recién con
+  // el día se busca el libro). Acá corre sin DATABASE_URL, así que conseguirLibro devuelve
+  // ok:false —sin tirar, que es su contrato— y el wizard pide el export de Sigma.
+  const liqBuf = aBuffer([HDR_LIQ,
+    ['168263949797', 'available_money', 'Approved payment', '127241.52', '2026-07-16T16:10:56.000-04:00',
+      '-1231.70', '2026-07-16T16:10:56.000-04:00', '125245.10', '-764.72', 'Mercado Pago', 'QR Code', '']]);
   async function correrPaso1(usuario) {
     const replies = []; let salio = false;
-    global.fetch = async () => ({ arrayBuffer: async () => mayorBuf.buffer.slice(mayorBuf.byteOffset, mayorBuf.byteOffset + mayorBuf.byteLength) });
+    global.fetch = async () => ({ arrayBuffer: async () => liqBuf.buffer.slice(liqBuf.byteOffset, liqBuf.byteOffset + liqBuf.byteLength) });
     const ctx = {
       state: { usuario },
-      message: { document: { file_id: 'mem://mayor', file_name: 'mayor.xlsx' } },
-      telegram: { getFileLink: async () => ({ href: 'mem://mayor' }) },
+      message: { document: { file_id: 'mem://liq', file_name: 'settlement.xlsx' } },
+      telegram: { getFileLink: async () => ({ href: 'mem://liq' }) },
       reply: async (t) => { replies.push(t); },
       scene: { leave: async () => { salio = true; } },
       wizard: { state: { data: {} }, next() {}, selectStep() {} }, // el paso 0 crea state.data
@@ -635,8 +637,11 @@ function ctxFalso() {
   const rolSolo = await correrPaso1({ es_admin: false, areas: ['cajacentral'] });
   t('un usuario con SOLO el rol cajacentral NO se traba en el paso del archivo', () => {
     assert.ok(!rolSolo.replies.some((r) => /no tenés acceso/i.test(r)), 'lo bloqueó teniendo el rol correcto');
-    assert.ok(rolSolo.replies.some((r) => /Leí .*cobranza/i.test(r)), 'no avanzó a pedir la liquidación');
+    assert.ok(rolSolo.replies.some((r) => /export de Sigma/i.test(r)), 'no avanzó después de la liquidación');
     assert.strictEqual(rolSolo.salio, false);
+  });
+  t('el día a conciliar sale de la liquidación (16/07), no de un default', () => {
+    assert.ok(rolSolo.replies.some((r) => /16\/07\/2026/.test(r)), 'no nombró el día de la liquidación');
   });
   const otroRol = await correrPaso1({ es_admin: false, areas: ['tesoreria'] });
   t('un usuario sin el rol cajacentral SÍ queda bloqueado (y se nombra Caja Central)', () => {
@@ -645,7 +650,7 @@ function ctxFalso() {
   });
   const admin = await correrPaso1({ es_admin: true, areas: [] });
   t('un admin pasa igual (acceso total)', () => {
-    assert.ok(admin.replies.some((r) => /Leí .*cobranza/i.test(r)));
+    assert.ok(admin.replies.some((r) => /export de Sigma/i.test(r)));
   });
 
   console.log(`\n✅ ${pass} tests OK`);

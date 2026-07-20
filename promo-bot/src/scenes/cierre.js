@@ -18,7 +18,7 @@ const {
 const { telegramIdsAdmins } = require('../db/usuarios');
 const { conseguirLibro } = require('../lib/libro-fuente');
 const LM = require('../lib/libro-mensajes');
-const { formatoVencimiento } = require('../lib/fechas');
+const { formatoVencimiento, fechaISO } = require('../lib/fechas');
 
 function tieneAccesoTesoreria(u) {
   return !!(u && (u.es_admin || (u.areas && u.areas.includes('tesoreria'))));
@@ -88,12 +88,17 @@ async function textoPedirLibro(datos) {
     `📅 En Sigma exportá <b>del ${desdeTxt} al ${hoyTxt}</b> (podés poner unos días más para atrás, no molesta).\n` +
     `⏱️ Yo corto solo por hora: entre las <b>${horaPrev}</b> del conteo anterior y las <b>${horaHoy}</b> de hoy.`;
 
-  // El atajo se ofrece SOLO si hay un libro que cubra el día que se está cerrando: mencionarlo
-  // cuando no sirve haría que el tesorero escriba "usar" y se coma un rechazo.
-  const lib = await conseguirLibro({ modo: 'cubre', fecha: datos.fecha });
-  if (!lib.ok) return base;
-  return `${base}\n\n♻️ O escribí <b>"usar"</b> y tomo el libro que ya cargó el admin ` +
-    `(del ${LM.diaLibro(lib.meta)}, trae ${LM.describirRango(lib.meta)}).`;
+  // El atajo se ofrece SOLO si están cargados los libros de LOS DOS extremos de la ventana
+  // (el día del conteo anterior y hoy). Ofrecerlo cuando falta uno haría que el tesorero
+  // escriba "usar" y se coma un rechazo.
+  const libHoy = await conseguirLibro({ modo: 'cubre', fecha: datos.fecha });
+  const libPrev = await conseguirLibro({ modo: 'cubre', fecha: prev.fecha });
+  if (!libHoy.ok || !libPrev.ok) return base;
+  const mismo = fechaISO(libPrev.meta.fecha) === fechaISO(libHoy.meta.fecha);
+  const queTengo = mismo
+    ? `el libro del ${LM.diaLibro(libHoy.meta)}, que trae ${LM.describirRango(libHoy.meta)}`
+    : `los libros del ${LM.diaLibro(libPrev.meta)} y del ${LM.diaLibro(libHoy.meta)}`;
+  return `${base}\n\n♻️ O escribí <b>"usar"</b> y tomo lo que ya cargó el admin (${queTengo}).`;
 }
 
 // Manda "✅ saldos guardados" + el pedido del libro, TOLERANDO fallos: si armar el texto
@@ -332,17 +337,45 @@ const cierreWizard = new Scenes.WizardScene(
         const { datos } = ctx.wizard.state.data;
         // El gate se calcula ACÁ y no antes: entre que se cargaron los saldos y este momento
         // pasa tiempo real de usuario, y el libro pudo cargarse (o pisarse) en el medio.
-        const lib = await conseguirLibro({ modo: 'cubre', fecha: datos.fecha });
-        if (!lib.ok) {
-          await ctx.reply(`${LM.textoFallback(lib.motivo)}\n\nO mandame el "Diario de movimientos" y sigo.`);
+        //
+        // Se exigen DOS libros porque la ventana del cierre va del conteo ANTERIOR al de hoy:
+        // hace falta la cola de la tarde del día anterior (movimientos posteriores a ese conteo)
+        // y el día de hoy hasta el conteo. Con uno solo, la mitad de la ventana queda vacía y el
+        // cierre saldría corto culpando a las cuentas. Un mismo export puede cubrir los dos días.
+        const prev = await saldosAnteriores({ fecha: datos.fecha, empresa: datos.empresa });
+        const libHoy = await conseguirLibro({ modo: 'cubre', fecha: datos.fecha });
+        const libPrev = prev.fecha
+          ? await conseguirLibro({ modo: 'cubre', fecha: prev.fecha })
+          : { ok: true, meta: null }; // primer cierre: no hay día anterior que cubrir
+
+        if (!libHoy.ok || !libPrev.ok) {
+          const faltan = [];
+          if (!libPrev.ok && prev.fecha) faltan.push(formatoVencimiento(prev.fecha));
+          if (!libHoy.ok) faltan.push(formatoVencimiento(datos.fecha));
+          const motivo = !libHoy.ok ? libHoy.motivo : libPrev.motivo;
+          if (motivo === 'db_caida' || motivo === 'sin_archivo') {
+            await ctx.reply(`${LM.textoFallback(motivo)}\n\nO mandame el "Diario de movimientos" y sigo.`);
+          } else {
+            await ctx.reply(
+              `Para conciliar necesito el libro de <b>${faltan.join(' y de ')}</b>, y ` +
+              `${faltan.length > 1 ? 'no los tengo' : 'no lo tengo'} cargado${faltan.length > 1 ? 's' : ''}.\n\n` +
+              `La ventana del cierre va del conteo del ${prev.fecha ? formatoVencimiento(prev.fecha) : '—'} ` +
+              `al de hoy, así que necesito los dos días.\n\n` +
+              `Pedile al admin que los cargue (/libro) o mandame el Excel que cubra ese rango y sigo.`,
+              { parse_mode: 'HTML' }
+            );
+          }
           ctx.wizard.state.conciliando = false;
           return; // sigue esperando el archivo
         }
-        await ctx.reply(
-          `⏳ Usando el libro del <b>${LM.diaLibro(lib.meta)}</b> (${LM.describirRango(lib.meta)}). Conciliando…`,
-          { parse_mode: 'HTML' }
-        );
-        return await conciliarYResponder(ctx, null, { libroMeta: lib.meta });
+
+        // Si un solo export cubre los dos días, se nombra una vez sola.
+        const mismoLibro = !libPrev.meta || fechaISO(libPrev.meta.fecha) === fechaISO(libHoy.meta.fecha);
+        const detalle = mismoLibro
+          ? `el libro del <b>${LM.diaLibro(libHoy.meta)}</b> (${LM.describirRango(libHoy.meta)})`
+          : `los libros del <b>${LM.diaLibro(libPrev.meta)}</b> y del <b>${LM.diaLibro(libHoy.meta)}</b>`;
+        await ctx.reply(`⏳ Usando ${detalle}. Conciliando…`, { parse_mode: 'HTML' });
+        return await conciliarYResponder(ctx, null, { libroMeta: libHoy.meta });
       } catch (e) {
         console.error('Error en /cierre (libro cargado):', e.message);
         await ctx.reply('Hubo un problema usando el libro cargado. Mandame el Excel y sigo.');
