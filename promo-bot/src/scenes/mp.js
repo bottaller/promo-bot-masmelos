@@ -98,9 +98,12 @@ const mpWizard = new Scenes.WizardScene(
       `<b>Qué concilio:</b> las ventas cobradas por <b>QR o transferencia</b>, que es lo que recibe la cuenta ` +
       `${CUENTA_MP} (MERCADO PAGO MORENO). Lo de <b>Point</b> te lo listo aparte pero no se concilia acá: ` +
       'liquida en las cuentas de tarjetas, no en esa cuenta.\n\n' +
-      '<b>1) Mandame el export de Sigma.</b> Me sirve cualquiera de los dos:\n' +
-      '• el <b>"Diario de movimientos contables"</b> — el mismo que subís al /cierre, o\n' +
-      `• el <b>"Mayor de cuenta"</b> de la ${CUENTA_MP} — este además trae el N° de recibo (REC8 …).\n` +
+      '<b>1) Mandame el export de Sigma.</b> Me sirven los dos, pero no dan lo mismo:\n' +
+      '• ⭐ el <b>"Diario de movimientos contables"</b> — el mismo que subís al /cierre. <b>Es el que conviene:</b> ' +
+      'como trae TODAS las cuentas, si algo no cierra puedo decirte <b>en qué otra cuenta quedó imputado</b> ' +
+      '(ej.: apareció como faltante de una caja).\n' +
+      `• el <b>"Mayor de cuenta"</b> de la ${CUENTA_MP} — solo esa cuenta. Trae el N° de recibo (REC8 …), ` +
+      'pero si algo no cierra no puedo rastrear dónde quedó.\n' +
       '📅 Exportá <b>el día que querés conciliar</b>.\n\n' +
       '(o escribí "cancelar")',
       { parse_mode: 'HTML' }
@@ -172,7 +175,13 @@ const mpWizard = new Scenes.WizardScene(
       if (rangos.error) { await ctx.reply(rangos.error); return ctx.scene.leave(); }
       if (rangos.aviso) await ctx.reply(rangos.aviso);
 
-      const resultado = conciliarMP({ movimientos: mayor.movimientos, operaciones: liq.operaciones });
+      // otrasCuentas = el resto del Diario. Habilita rastrear dónde quedó imputado un cobro
+      // que MP hizo y no se asentó en la cuenta de MP (ej.: como faltante de una caja física).
+      const resultado = conciliarMP({
+        movimientos: mayor.movimientos,
+        operaciones: liq.operaciones,
+        otrasCuentas: mayor.otrasCuentas,
+      });
       const fecha = textoRango(mayor.desde, mayor.hasta);
       const texto = formatearMP({ fecha, cuenta: mayor.cuenta, resultado, origen: mayor.origen });
 
@@ -182,7 +191,11 @@ const mpWizard = new Scenes.WizardScene(
       // mensaje de arriba es la vista rápida; el PDF es para archivar/imprimir. Si el armado
       // del PDF fallara, el control YA se comunicó por el mensaje: se avisa y no se cae.
       try {
-        const pdf = await construirInformePDF({ fecha, cuenta: mayor.cuenta, resultado });
+        // El usuario va en el encabezado del PDF (como los reportes de Sigma): un comprobante
+        // de control tiene que decir quién lo corrió.
+        const u = ctx.state.usuario;
+        const quien = (u && u.nombre) || (ctx.from && ctx.from.username ? '@' + ctx.from.username : String(ctx.from && ctx.from.id || ''));
+        const pdf = await construirInformePDF({ fecha, cuenta: mayor.cuenta, resultado, usuario: quien });
         const sufijo = fechaISO(mayor.desde) === fechaISO(mayor.hasta)
           ? fechaISO(mayor.desde)
           : `${fechaISO(mayor.desde)}_${fechaISO(mayor.hasta)}`;

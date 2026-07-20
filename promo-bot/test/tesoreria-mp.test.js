@@ -205,6 +205,79 @@ t('los totales NO cuentan lo que está fuera de alcance', () => {
   assert.strictEqual(r.resumen.totalFueraMp, 999999);
 });
 
+console.log('conciliarMP(): rastreo del contramovimiento (con el Diario completo)');
+// Caso REAL del 11/07/2026: MP cobró $152.577,45 por transferencia, nadie lo asentó como
+// cobro de MP, y al cerrar la CAJA 4 dio ese faltante exacto contra DESVIO DE CAJA.
+const ASIENTO_FALTANTE = [
+  { asiento: 8299656, cuenta_id: 111100004, cuenta: 'CAJA 4 MORENO', comp: 'DIFC',
+    concepto: 'faltante caja 4 camila 11-7', comprobante: 'DIFERENCIA DE CAJA', cliente: '',
+    usuario: 'LATERZAFLOR', ingreso: '2026-07-11 17:21:50', debe: 0, haber: 152577.45 },
+  { asiento: 8299656, cuenta_id: 501100006, cuenta: 'DESVIO DE CAJA', comp: 'DIFC',
+    concepto: 'faltante caja 4 camila 11-7', comprobante: 'DIFERENCIA DE CAJA', cliente: '',
+    usuario: 'LATERZAFLOR', ingreso: '2026-07-11 17:21:50', debe: 152577.45, haber: 0 },
+  { asiento: 8299600, cuenta_id: 111100002, cuenta: 'CAJA 2 MORENO', comp: 'DIFC',
+    concepto: 'sobrante caja 2 sabrina 11-7', comprobante: 'DIFERENCIA DE CAJA', cliente: '',
+    usuario: 'LATERZAFLOR', ingreso: '2026-07-11 17:14:54', debe: 300, haber: 0 },
+];
+const soloMpDe = (r) => r.soloMp[0];
+
+t('encuentra el faltante de caja que explica el cobro sin asentar', () => {
+  const r = conciliarMP({
+    movimientos: [], operaciones: [O(152577.45, '2026-07-11 14:15:12', { instrumento: 'Bank transfer' })],
+    otrasCuentas: ASIENTO_FALTANTE,
+  });
+  const c = soloMpDe(r).contrapartidas;
+  assert.strictEqual(c.length, 1, 'debería encontrar UN asiento');
+  assert.strictEqual(c[0].asiento, 8299656);
+  assert.match(c[0].concepto, /faltante caja 4/);
+  assert.strictEqual(c[0].usuario, 'LATERZAFLOR');
+  // trae la partida doble entera: de dónde salió y adónde fue
+  assert.deepStrictEqual(c[0].renglones.map((g) => g.cuenta), ['CAJA 4 MORENO', 'DESVIO DE CAJA']);
+  assert.strictEqual(r.resumen.rastreo, true);
+  assert.strictEqual(r.resumen.nConContrapartida, 1);
+});
+t('no inventa contrapartida si el importe no está en ninguna otra cuenta', () => {
+  const r = conciliarMP({
+    movimientos: [], operaciones: [O(99999.99, '2026-07-11 14:15:12')],
+    otrasCuentas: ASIENTO_FALTANTE,
+  });
+  assert.deepStrictEqual(soloMpDe(r).contrapartidas, []);
+  assert.strictEqual(r.resumen.nConContrapartida, 0);
+});
+t('sin el Diario (solo el Mayor) no hay rastreo, pero tampoco rompe', () => {
+  const r = conciliarMP({ movimientos: [], operaciones: [O(152577.45, '2026-07-11 14:15:12')] });
+  assert.deepStrictEqual(soloMpDe(r).contrapartidas, []);
+  assert.strictEqual(r.resumen.rastreo, false);
+});
+t('también rastrea al revés: asentado que MP no tiene', () => {
+  const r = conciliarMP({
+    movimientos: [M(152577.45, '2026-07-11 10:00:00')], operaciones: [],
+    otrasCuentas: ASIENTO_FALTANTE,
+  });
+  assert.strictEqual(r.soloSistema[0].contrapartidas.length, 1);
+});
+t('el mensaje muestra dónde apareció el importe', () => {
+  const r = conciliarMP({
+    movimientos: [], operaciones: [O(152577.45, '2026-07-11 14:15:12', { instrumento: 'Bank transfer' })],
+    otrasCuentas: ASIENTO_FALTANTE,
+  });
+  const txt = formatearMP({ fecha: '11/07/2026', cuenta: 'MP', resultado: r, origen: 'diario' });
+  assert.match(txt, /aparece en:/);
+  assert.match(txt, /CAJA 4 MORENO → DESVIO DE CAJA/); // Haber primero: de dónde salió
+  assert.match(txt, /faltante caja 4 camila/);
+  assert.match(txt, /LATERZAFLOR/);
+});
+t('si NO se pudo rastrear, el mensaje sugiere mandar el Diario', () => {
+  const r = conciliarMP({ movimientos: [], operaciones: [O(50000, '2026-07-11 14:15:12')] });
+  const txt = formatearMP({ fecha: '11/07/2026', cuenta: 'MP', resultado: r, origen: 'mayor' });
+  assert.match(txt, /Diario de movimientos.*otra cuenta/s);
+});
+t('sin huérfanas no molesta con la sugerencia del Diario', () => {
+  const r = conciliarMP({ movimientos: [M(100, '2026-07-11 10:00:10')], operaciones: [O(100, '2026-07-11 10:00:00')] });
+  const txt = formatearMP({ fecha: '11/07/2026', cuenta: 'MP', resultado: r, origen: 'mayor' });
+  assert.ok(!/Mandame el "Diario/.test(txt));
+});
+
 // --- parsers ---------------------------------------------------------------
 function aBuffer(aoa) {
   const wb = XLSX.utils.book_new();
@@ -264,6 +337,28 @@ t('NO agrega los renglones del mismo segundo (romperia el match 1 a 1)', () => {
   const r = parsearMayor(buf, { cuentaId: CUENTA_MP });
   assert.strictEqual(r.movimientos.length, 2);
   assert.deepStrictEqual(r.movimientos.map((m) => m.debe), [100000, 111393.93]);
+});
+t('el Diario CONSERVA las otras cuentas (para rastrear el contramovimiento)', () => {
+  const buf = aBuffer([
+    ['Empresa: 0008-HONRE_2'],
+    ['Diario de movimientos contables del 07/11/2026 al 07/11/2026'],
+    HDR_DIARIO,
+    filaDiario(422101014, 88146.06, '11/07/2026 08:38:28'),
+    filaDiario(111100004, 152577.45, '11/07/2026 17:21:50'), // CAJA 4: otra cuenta
+    filaDiario(501100006, 152577.45, '11/07/2026 17:21:50'), // DESVIO: otra cuenta
+  ]);
+  const r = parsearMayor(buf, { cuentaId: CUENTA_MP });
+  assert.strictEqual(r.movimientos.length, 1);          // la cuenta MP
+  assert.strictEqual(r.otrasCuentas.length, 2);          // el resto del libro
+  assert.deepStrictEqual(r.otrasCuentas.map((m) => m.cuenta_id), [111100004, 501100006]);
+  assert.ok(r.otrasCuentas.every((m) => m.cuenta_id !== CUENTA_MP), 'no debe colar la cuenta de MP');
+});
+t('el Mayor (una sola cuenta) no trae otras cuentas: rastreo no disponible', () => {
+  const buf = aBuffer([
+    ['Empresa: 0008-HONRE_2'], ['Mayor de Cta 422101014'], HDR_MAYOR,
+    filaMayor(8301513, 24320.61, '16/07/2026 08:13:48'),
+  ]);
+  assert.deepStrictEqual(parsearMayor(buf, { cuentaId: CUENTA_MP }).otrasCuentas, []);
 });
 t('el Mayor de OTRA cuenta se rechaza con un mensaje claro', () => {
   const buf = aBuffer([['Empresa: X'], ['Mayor de Cta 111201014'], HDR_MAYOR,

@@ -56,6 +56,28 @@ function textoAvisos(p) {
   }).join('; ');
 }
 
+// Una contrapartida rastreada (dónde más aparece ese importe en el libro), en una línea.
+// El orden Haber → Debe cuenta la historia: de dónde salió la plata y adónde fue.
+// Ej.: 'CAJA 4 MORENO → DESVIO DE CAJA · "faltante caja 4 camila 11-7" · 17:21 · LATERZAFLOR'
+function textoContrapartida(c) {
+  const cuentas = [...c.renglones]
+    .sort((a, b) => (b.haber - b.debe) - (a.haber - a.debe))
+    .map((g) => g.cuenta)
+    .join(' → ');
+  const partes = [cuentas];
+  if (c.concepto) partes.push(`"${c.concepto}"`);
+  partes.push(hora(c.ingreso));
+  if (c.usuario) partes.push(c.usuario);
+  return partes.join(' · ');
+}
+
+// Las líneas de contrapartida de una huérfana (vacío si no se rastreó o no hubo hallazgo).
+function lineasContrapartida(x) {
+  return (x.contrapartidas || []).map(
+    (c) => `   ↳ <i>aparece en:</i> ${escapeHtml(textoContrapartida(c))}`
+  );
+}
+
 // Agrupa las filas fuera de alcance por motivo: {motivo, n, total}[]
 function agruparPorMotivo(filas, monto) {
   const g = new Map();
@@ -102,6 +124,7 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
     L.push(`🔴 <b>Cobró MP y no está asentado</b> — ${soloMp.length} · ${fmt(r.totalSoloMp)}`);
     for (const o of soloMp.slice(0, MAX_LISTA)) {
       L.push(`• ${hora(o.hora)} · <b>${fmt(o.bruto)}</b> · ${escapeHtml(instrumento(o))} · id ${escapeHtml(o.source_id)}`);
+      L.push(...lineasContrapartida(o));
     }
     if (soloMp.length > MAX_LISTA) L.push(`<i>…y ${soloMp.length - MAX_LISTA} más.</i>`);
   }
@@ -112,8 +135,16 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
     L.push(`🔴 <b>Asentado y MP no lo tiene</b> — ${soloSistema.length} · ${fmt(r.totalSoloSistema)}`);
     for (const m of soloSistema.slice(0, MAX_LISTA)) {
       L.push(`• ${hora(m.ingreso)} · <b>${fmt(m.debe)}</b> · ${escapeHtml(m.comprobante || 'asiento ' + m.asiento)} · ${escapeHtml(m.cliente)} (${escapeHtml(m.usuario)})`);
+      L.push(...lineasContrapartida(m));
     }
     if (soloSistema.length > MAX_LISTA) L.push(`<i>…y ${soloSistema.length - MAX_LISTA} más.</i>`);
+  }
+
+  // Si hay huérfanas y NO se pudo rastrear (mandaron el Mayor, que trae una sola cuenta),
+  // decirlo: con el Diario el bot puede indicar en qué otra cuenta quedó imputado el importe.
+  if ((soloMp.length || soloSistema.length) && !r.rastreo) {
+    L.push('');
+    L.push('<i>💡 Mandame el "Diario de movimientos" (en vez del Mayor) y te digo si ese importe aparece en otra cuenta — ej.: como faltante de una caja.</i>');
   }
 
   // Apareadas con la HORA corrida: sí se listan (el importe coincide pero el asiento se

@@ -62,6 +62,10 @@ Se acepta **cualquiera de los dos exports de Sigma** y se distinguen solo por su
 día a día no hay que exportar nada nuevo; el Mayor tiene la ventaja de traer el **comprobante
 relacionado** (`REC8 …`), que el Diario no.
 
+> ⭐ **Conviene el Diario.** Como trae **todas** las cuentas, habilita el **rastreo del
+> contramovimiento** (§5): si algo no cierra, el bot puede decir *en qué otra cuenta quedó
+> imputado*. Con el Mayor (una sola cuenta) eso es imposible y el bot lo avisa.
+
 > ⚠️ **No se reusa `parsearLibro()`** (`libro-excel.js`): ese **agrega** por `(fecha, cuenta_id, ingreso)`
 > sumando Debe/Haber, y eso rompe el apareo. Un mismo recibo puede tener **dos cobros de MP en el mismo
 > segundo** (caso real del 16/07: `REC8 00002698` = $100.000 + $111.393,93, dos pagos distintos en la
@@ -92,7 +96,45 @@ convertir, el match por hora se corre **60 minutos**. Se normaliza todo a hora d
 y hace la aritmética sobre `Date.UTC`/`getUTC*` → independiente del TZ del proceso (Railway = UTC).
 Es la misma disciplina de "reloj de pared" del corte por hora del `/cierre`.
 
-## 5. La salida: un mensaje + un informe PDF
+## 5. Rastreo del contramovimiento: *dónde* quedó la plata  [validado con un caso real]
+
+Que MP haya cobrado algo que no está asentado **no significa que falte la plata**: casi siempre está,
+pero **imputada a otra cuenta**. Por eso, cuando se manda el **Diario** (todas las cuentas), por cada
+huérfana el bot busca ese importe en el resto del libro y devuelve el **asiento completo**.
+
+**El caso que lo motivó (11/07/2026, datos reales):**
+
+| | |
+|---|---|
+| MP cobró (transferencia, 14:15) | **$152.577,45** — sin asentar en la cuenta MP |
+| CAJA 4 MORENO (17:21) | **$152.577,45** al Haber — *"faltante caja 4 camila 11-7"* |
+| Contrapartida | **DESVIO DE CAJA** (asiento 8299656, cargó LATERZAFLOR) |
+
+Un cliente pagó por transferencia con QR, el cobro no se asentó como MP, y al cerrar **la caja 4 dio
+ese faltante exacto**, que se registró como desvío. **No faltaba la plata: estaba en Mercado Pago.**
+Sin el rastreo, el bot decía "faltan $152.577,45" y el faltante de caja quedaba como pérdida; con el
+rastreo, dice dónde está y el diagnóstico sale solo:
+
+```
+🔴 Cobró MP y no está asentado — 1 · $152.577
+• 14:15 · $152.577 · transferencia · id 167476058875
+   ↳ aparece en: CAJA 4 MORENO → DESVIO DE CAJA · "faltante caja 4 camila 11-7" · 17:21 · LATERZAFLOR
+```
+
+**Cómo funciona y sus límites** (`conciliacion-mp.js::buscarContrapartidas`):
+
+- Busca el importe (misma tolerancia de $0,05) en cualquier cuenta que **no** sea la de MP, en Debe o
+  en Haber, **sin ventana horaria** (el ajuste de caja se carga al cierre, horas después del cobro).
+- Agrupa por **asiento** y devuelve **todos** sus renglones, así se ve la partida doble entera. En el
+  mensaje se ordena **Haber → Debe**: de dónde salió la plata y adónde fue.
+- Es una **pista, no un veredicto**: dos movimientos del mismo importe pueden ser casualidad (con
+  $152.577,45 es impensado; con un monto redondo tipo $100.000, no). Por eso se muestran cuenta,
+  concepto, hora y usuario — para que lo juzgue una persona.
+- Máximo **3 asientos** por huérfana (`MAX_CONTRAPARTIDAS`): si el importe pega en más, es poco
+  distintivo y la pista no sirve.
+- Con el **Mayor** no hay dónde buscar → el bot sugiere mandar el Diario.
+
+## 6. La salida: un mensaje + un informe PDF
 
 **No devuelve el Excel de detalle** (decisión de Caja Central, jul-2026). Devuelve dos cosas:
 
@@ -119,7 +161,7 @@ emoji → el veredicto va por color). El veredicto (`veredictoMP()`) es una func
 **bien = 0 sin aparear** (las diferencias de redondeo son avisos, no lo tumban). Si el PDF fallara, el
 control ya se comunicó por el mensaje y el bot avisa (no se cae).
 
-## 6. Quién lo usa
+## 7. Quién lo usa
 
 Es el comando del rol **Caja Central** (`cajacentral`, migración **014**) — no de Tesorería. Se asigna
 con `/usuarios agregar <telegram_id> cajacentral`. Los **admins** lo ven igual (acceso total). Detalle
@@ -129,7 +171,7 @@ del rol en [areas/caja-central.md](areas/caja-central.md).
 > registraran, `bot.command('mp', …)` correría dos veces y el wizard se abriría duplicado. Por eso
 > `/mp` **salió** de Tesorería al mudarse acá. Hay un test que lo fija.
 
-## 7. Archivos
+## 8. Archivos
 
 ```
 src/areas/cajacentral/index.js  el área/rol: registra el comando
@@ -141,10 +183,10 @@ src/lib/conciliacion-mp.js   el motor: alcance + apareo + resumen  (puro, sin I/
 src/lib/reporte-mp.js        arma el mensaje de Telegram
 src/lib/informe-mp-pdf.js    arma el informe PDF (veredicto bien/mal + fecha/hora) con pdfkit
 src/lib/sigma-celdas.js      primitivos de parseo compartidos con libro-excel.js
-test/tesoreria-mp.test.js    51 tests (sin DB ni archivos)
+test/tesoreria-mp.test.js    63 tests (sin DB ni archivos)
 ```
 
-## 8. Estado
+## 9. Estado
 
 **✅ Hecho (en `dev`):** todo lo de arriba. Validado contra los archivos reales del 16/07/2026
 (108 ↔ 108, 0 huérfanas) y contra errores **inyectados** sobre esos mismos datos (venta sin asentar,

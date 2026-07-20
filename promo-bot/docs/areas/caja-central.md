@@ -28,6 +28,12 @@ en uno y no en el otro caerían como diferencias y taparían lo real.
 del cobro) se listan. Point y la fila sin identificar quedan aparte como "fuera de alcance"; las
 **salidas de dinero** (Mercado Libre, devoluciones, `Haber`) no se muestran (no son ventas por QR).
 
+**⭐ Mandá el "Diario", no el "Mayor".** Como el Diario trae todas las cuentas, cuando algo no cierra
+el bot **rastrea dónde quedó imputado** ese importe. Caso real del 11/07: MP cobró $152.577,45 que no
+se asentó, y el bot encontró que ese mismo importe figuraba como **faltante de la caja 4** contra
+*desvío de caja* — o sea, no faltaba la plata, estaba mal imputada. Con el Mayor eso no se puede
+rastrear y el bot lo avisa. Detalle en [conciliacion-mp.md](../conciliacion-mp.md) §5.
+
 **Detalle completo** (alcance validado, cómo aparea, tolerancias, el huso horario de MP):
 [conciliacion-mp.md](../conciliacion-mp.md).
 
