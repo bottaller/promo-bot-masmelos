@@ -16,6 +16,8 @@ const {
   guardarMovimientos, movimientosDeRango, guardarConciliacion, historialDiferencias, registrarAuditoria,
 } = require('../db/tesoreria');
 const { telegramIdsAdmins } = require('../db/usuarios');
+const { conseguirLibro } = require('../lib/libro-fuente');
+const LM = require('../lib/libro-mensajes');
 const { formatoVencimiento } = require('../lib/fechas');
 
 function tieneAccesoTesoreria(u) {
@@ -80,12 +82,18 @@ async function textoPedirLibro(datos) {
   }
   const desdeTxt = formatoVencimiento(prev.fecha); // el DÍA del conteo anterior, inclusive
   const horaPrev = horaDe(prev.contadoEn);
-  return (
+  const base =
     `📌 Último saldo que tengo de <b>${escapeHtml(datos.empresa)}</b>: <b>${desdeTxt} ${horaPrev}</b> — concilio contra ese.\n\n` +
     `2) Ahora mandame el libro diario ("Diario de movimientos" de Sigma), como .xlsx.\n` +
     `📅 En Sigma exportá <b>del ${desdeTxt} al ${hoyTxt}</b> (podés poner unos días más para atrás, no molesta).\n` +
-    `⏱️ Yo corto solo por hora: entre las <b>${horaPrev}</b> del conteo anterior y las <b>${horaHoy}</b> de hoy.`
-  );
+    `⏱️ Yo corto solo por hora: entre las <b>${horaPrev}</b> del conteo anterior y las <b>${horaHoy}</b> de hoy.`;
+
+  // El atajo se ofrece SOLO si hay un libro que cubra el día que se está cerrando: mencionarlo
+  // cuando no sirve haría que el tesorero escriba "usar" y se coma un rechazo.
+  const lib = await conseguirLibro({ modo: 'cubre', fecha: datos.fecha });
+  if (!lib.ok) return base;
+  return `${base}\n\n♻️ O escribí <b>"usar"</b> y tomo el libro que ya cargó el admin ` +
+    `(del ${LM.diaLibro(lib.meta)}, trae ${LM.describirRango(lib.meta)}).`;
 }
 
 // Manda "✅ saldos guardados" + el pedido del libro, TOLERANDO fallos: si armar el texto
@@ -135,25 +143,33 @@ async function auditarYAvisarCambioSaldos(ctx, datos, cambios) {
 }
 
 // Paso final: recibido el libro, concilia todo y responde.
-async function conciliarYResponder(ctx, buffer) {
+//   buffer    el .xlsx que mandó el tesorero, o NULL si eligió usar el libro que ya está cargado.
+//   libroMeta metadata de ese libro (solo para dejar la traza de origen en el reporte).
+async function conciliarYResponder(ctx, buffer, { libroMeta = null } = {}) {
   const { datos } = ctx.wizard.state.data;
   const u = ctx.state.usuario;
   const empresa = datos.empresa;
-
-  let libro;
-  try {
-    libro = parsearLibro(buffer);
-  } catch (e) {
-    if (e instanceof LibroError) { await ctx.reply(e.message); return ctx.scene.leave(); }
-    throw e;
-  }
-
-  // Guardar el libro PRIMERO: la ventana se lee de la DB (tesoreria_movimientos), la MISMA
-  // fuente y función (movimientosDeRango) que usa el replay del acumulado → el número de hoy
-  // y el acumulado de mañana salen del mismo dato, no "de casualidad". El delete-por-día de
-  // guardarMovimientos recaptura además correcciones backdateadas de esos días.
   const uid = u ? u.id : null;
-  await guardarMovimientos({ empresa, movimientos: libro.movimientos, usuarioId: uid });
+
+  // CON buffer (camino de siempre): se parsea y se guarda. Guardar PRIMERO importa: la ventana
+  // se lee de la DB (tesoreria_movimientos), la MISMA fuente y función (movimientosDeRango) que
+  // usa el replay del acumulado → el número de hoy y el acumulado de mañana salen del mismo
+  // dato, no "de casualidad". El delete-por-día recaptura además correcciones backdateadas.
+  //
+  // SIN buffer: el tesorero eligió el libro que ya cargó el admin, así que esos movimientos YA
+  // están en la tabla. No se vuelve a guardar nada: la conciliación de abajo lee exactamente la
+  // misma fuente. Si por lo que sea no hubiera datos en la ventana, el chequeo de más abajo
+  // (movsPeriodo vacío) lo corta antes de conciliar contra nada.
+  if (buffer) {
+    let libro;
+    try {
+      libro = parsearLibro(buffer);
+    } catch (e) {
+      if (e instanceof LibroError) { await ctx.reply(e.message); return ctx.scene.leave(); }
+      throw e;
+    }
+    await guardarMovimientos({ empresa, movimientos: libro.movimientos, usuarioId: uid });
+  }
 
   // Ventana POR HORA (conteo anterior, conteo de hoy], por `ingreso`. Sin saldo previo =
   // primer cierre: queda como base (no se concilia).
@@ -163,13 +179,23 @@ async function conciliarYResponder(ctx, buffer) {
     : [];
 
   if (prev.contadoEn && movsPeriodo.length === 0) {
+    const ventana =
+      `entre el conteo anterior (${formatoVencimiento(prev.fecha)} ${horaDe(prev.contadoEn)}) ` +
+      `y este (${formatoVencimiento(datos.fecha)} ${horaDe(datos.contadoEn)})`;
+    if (buffer) {
+      await ctx.reply(
+        `El libro no tiene movimientos ${ventana}. ` +
+        `¿Exportaste el rango correcto (del ${formatoVencimiento(prev.fecha)} a hoy)?`
+      );
+      return ctx.scene.leave();
+    }
+    // Usó el libro cargado y no alcanza: NO se termina el cierre (los saldos ya están guardados
+    // y volver a empezar sería tedioso). Se le explica y se queda esperando el Excel.
     await ctx.reply(
-      `El libro no tiene movimientos entre el conteo anterior ` +
-      `(${formatoVencimiento(prev.fecha)} ${horaDe(prev.contadoEn)}) y este ` +
-      `(${formatoVencimiento(datos.fecha)} ${horaDe(datos.contadoEn)}). ` +
-      `¿Exportaste el rango correcto (del ${formatoVencimiento(prev.fecha)} a hoy)?`
+      `El libro que tengo cargado no cubre ${ventana}, así que no puedo conciliar todavía.\n\n` +
+      `Mandame el "Diario de movimientos" que cubra ese rango y sigo.`
     );
-    return ctx.scene.leave();
+    return;
   }
 
   const historial = await historialDiferencias({ empresa, hasta: datos.fecha });
@@ -188,7 +214,10 @@ async function conciliarYResponder(ctx, buffer) {
     detalle: { cuentas: filas.length, alertas: filas.filter((f) => f.nivel === 'alerta').map((f) => f.cuenta) },
   });
 
-  await ctx.reply(texto, { parse_mode: 'HTML' });
+  // Traza de origen: el reporte se reenvía y se mira al día siguiente, y sale idéntico venga
+  // del Excel que mandó el tesorero o del libro cargado por el admin. Va acá y NO dentro de
+  // formatearCierre porque esa función la comparten /semanal y /mensual.
+  await ctx.reply(`${texto}\n\n<i>${escapeHtml(LM.lineaOrigen(libroMeta))}</i>`, { parse_mode: 'HTML' });
 
   // Si hay 🔴 (acumulado que no se resuelve), avisar a los admins. (El cambio de saldos ya
   // se avisó en el paso 2.) telegram_id viene como string de pg → comparar como Number.
@@ -281,11 +310,48 @@ const cierreWizard = new Scenes.WizardScene(
       `✅ Saldos de ${formatoVencimiento(datos.fecha)} actualizados (les avisé a los administradores).`);
     return ctx.wizard.next(); // -> paso 3 (libro)
   },
-  // 3: recibir libro -> conciliar y responder
+  // 3: recibir libro -> conciliar y responder.
+  // Acepta el .xlsx (camino de siempre) o que escribas "usar" para tomar el libro que ya cargó
+  // el admin con /libro. A propósito NO se detecta el libro solo ni se saltea este paso: es el
+  // único momento del flujo donde las fechas del rango te saltan a la vista antes de que el
+  // cierre se persista, y ese checkpoint vale más que ahorrarte un mensaje.
   async (ctx) => {
     if (ctx.message && esCancelar(ctx.message.text)) { await ctx.reply('Cierre cancelado (los saldos ya quedaron guardados).'); return ctx.scene.leave(); }
     const doc = ctx.message && ctx.message.document;
-    if (!doc) { await ctx.reply('Mandame el libro diario como documento .xlsx (o "cancelar").'); return; }
+
+    // --- Sin archivo: puede ser el atajo "usar el libro cargado" ---
+    if (!doc) {
+      const txt = (ctx.message && typeof ctx.message.text === 'string') ? ctx.message.text.trim() : '';
+      if (!/^\/?usar/i.test(txt)) {
+        await ctx.reply('Mandame el libro diario como documento .xlsx, escribí "usar" para tomar el que ya está cargado, o "cancelar".');
+        return;
+      }
+      if (ctx.wizard.state.conciliando) return;
+      ctx.wizard.state.conciliando = true;
+      try {
+        const { datos } = ctx.wizard.state.data;
+        // El gate se calcula ACÁ y no antes: entre que se cargaron los saldos y este momento
+        // pasa tiempo real de usuario, y el libro pudo cargarse (o pisarse) en el medio.
+        const lib = await conseguirLibro({ modo: 'cubre', fecha: datos.fecha });
+        if (!lib.ok) {
+          await ctx.reply(`${LM.textoFallback(lib.motivo)}\n\nO mandame el "Diario de movimientos" y sigo.`);
+          ctx.wizard.state.conciliando = false;
+          return; // sigue esperando el archivo
+        }
+        await ctx.reply(
+          `⏳ Usando el libro del <b>${LM.diaLibro(lib.meta)}</b> (${LM.describirRango(lib.meta)}). Conciliando…`,
+          { parse_mode: 'HTML' }
+        );
+        return await conciliarYResponder(ctx, null, { libroMeta: lib.meta });
+      } catch (e) {
+        console.error('Error en /cierre (libro cargado):', e.message);
+        await ctx.reply('Hubo un problema usando el libro cargado. Mandame el Excel y sigo.');
+        ctx.wizard.state.conciliando = false;
+        return;
+      }
+    }
+
+    // --- Con archivo: exactamente como funcionaba antes ---
     if (ctx.wizard.state.conciliando) return;
     ctx.wizard.state.conciliando = true;
     try {

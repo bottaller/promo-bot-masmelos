@@ -14,6 +14,7 @@ Excel y devuelve un **dashboard HTML** (el "Control 2 — Seguí la plata") list
 
 | Comando | Qué hace |
 |---------|----------|
+| `/libro` | (**admin**) Carga el *"Diario de movimientos"* del día **una sola vez**, para que lo consuman todos los demás comandos. Guarda los movimientos parseados **y** el `.xlsx` crudo. Ver §Libro diario centralizado. |
 | `/flujos` | Pide el Excel del *"Diario de movimientos contables"* de Sigma (`.xlsx`), lo procesa y devuelve el HTML del flujo. Si el archivo no es un export válido, responde el mensaje de error de Sigma. |
 | `/cierre` | Cierre **diario**: pide los saldos (*"Existencias al cierre"*) **y** el libro del día, concilia realidad vs libro por cuenta, guarda todo y devuelve el reporte con las diferencias y el acumulado. Avisa a los admins si hay una cuenta en 🔴. |
 | `/semanal` | Control **semanal**: mandás el libro de la semana (los saldos ya están de los cierres diarios), concilia el período. **No modifica** los cierres diarios. |
@@ -23,6 +24,32 @@ Excel y devuelve un **dashboard HTML** (el "Control 2 — Seguí la plata") list
 **Flujo de uso (`/flujos`):** `/flujos` → el bot pide el archivo → mandás el `.xlsx` como documento →
 te devuelve `flujo_<desde>_<hasta>.html` (el nombre lleva el período, según
 [convenciones.md](../convenciones.md)).
+
+## Libro diario centralizado (`/libro`)
+
+Antes, **cada** comando pedía el mismo Excel de Sigma: `/cierre`, `/semanal`, `/mensual`, `/flujos` y
+`/mp`. Ahora el admin lo carga **una vez por día** con `/libro` y todos lo consumen.
+
+Qué guarda (migración **016**, tabla `bot.libro_diario`), y por qué las dos cosas:
+- **Los movimientos parseados** → van a `bot.tesoreria_movimientos` con la misma función que usa
+  `/cierre` (borra y reinserta por día: re-subir corrige, no duplica). Es lo que consumen `/cierre`,
+  `/arqueo` y los controles de período.
+- **El `.xlsx` crudo** (`bytea`, ~280 KB/día) → porque a algunos no les alcanza con los datos:
+  `/flujos` se lo pasa **por ruta** al motor Python, y `/mp` lo parsea con **otro** parser
+  (`mayor-excel`). Va en la base y no en disco porque el filesystem de Railway es efímero.
+
+Detalles operativos:
+- Es **admin-only**: si cada área pudiera pisarlo, dos personas podrían mirar reportes armados sobre
+  exports distintos del mismo día.
+- La **jornada** es el último día que trae el export (a la noche se sube el que termina hoy). El export
+  puede abarcar un rango (13→17) y `libroQueCubre()` lo resuelve.
+- Re-subir la misma jornada la **pisa** y el bot avisa que reemplazó (un export incompleto no debe
+  sustituir al bueno en silencio).
+- **21:00 (hora Argentina)**: si no se cargó el libro del día, el bot les avisa a los admins
+  (`src/aviso-libro.js`). Hora configurable con `LIBRO_HORA_UTC` (default `0` UTC = 21:00 ART).
+- **Para automatizar la carga** (exportar de Sigma con un robot), la lógica vive fuera del wizard:
+  `src/lib/registrar-libro.js`. Se invoca sin Telegram con
+  `node src/db/cargar-libro.js "<ruta.xlsx>" [DD/MM/AAAA]`.
 
 ## Conciliación diaria (`/cierre`) — control, seguridad y auditoría
 
