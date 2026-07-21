@@ -69,12 +69,12 @@ function procesarCierre({ fecha, empresa = 'HONRE', saldosAyer = [], saldosHoy =
     if (esPeriodo) {
       // Control de período: no hay "próximo cierre" que resuelva el timing; el acumulado
       // ES la diferencia del período.
-      const ev = evaluarPeriodo({ diferencia: f.diferencia, moneda: f.moneda });
+      const ev = evaluarPeriodo({ diferencia: f.diferencia, moneda: f.moneda, cuenta: f.cuenta });
       return { ...f, acumulado: f.diferencia, nivel: ev.nivel, motivo: ev.motivo };
     }
     const serie = [...(historialDiffs[f.cuenta] || []), { fecha, diferencia: f.diferencia }];
-    const { acumulado, diasSobreUmbral } = acumularCuenta(serie, f.moneda);
-    const ev = evaluarCuenta({ diferencia: f.diferencia, acumulado, moneda: f.moneda, diasSobreUmbral });
+    const { acumulado, diasSobreUmbral } = acumularCuenta(serie, f.moneda, f.cuenta);
+    const ev = evaluarCuenta({ diferencia: f.diferencia, acumulado, moneda: f.moneda, diasSobreUmbral, cuenta: f.cuenta });
     return { ...f, acumulado, nivel: ev.nivel, motivo: ev.motivo };
   });
   const destacados = movimientosDestacados(movimientos);

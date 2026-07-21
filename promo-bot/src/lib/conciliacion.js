@@ -49,6 +49,21 @@ const TOLERANCIA = 1;
 // Calibrable con más historia.
 const UMBRAL_ACUMULADO = { ARS: 5_000_000, USD: 3_000 };
 
+// Override por-cuenta (pisa al de la moneda). Mercado Pago tiene un ruido estructural más
+// alto: MP te descuenta la comisión (~1,6% de lo facturado) en cada cobro, pero el asiento de
+// esa comisión se hace UNA vez al mes cuando llega la factura. La caja MP ya está neta a
+// diario, así que ese asiento mensual le resta la comisión al libro una segunda vez → mete un
+// escalón de ~10M que no se lava. Umbral más alto para no dar 🔴 falso por ese timing de
+// calendario. No modelamos la comisión a propósito (decisión del dueño); ver docs/conciliacion.md.
+const UMBRAL_ACUMULADO_CUENTA = { 'Mercado Pago': 20_000_000 };
+
+// Baseline del acumulado: fecha (AAAA-MM-DD) DESDE la que se re-encadena en historialDiferencias.
+// Antes había datos SEED de prueba (02–10/07/2026) con saltos irreales (−37M, +33M) que
+// ensuciaban el acumulado. IMPORTANTE: avanzar esta fecha cada vez que se reconcilia la comisión
+// mensual de MP — como la comisión suma un escalón permanente por mes, sin re-baseline el
+// acumulado crece sin fin y el umbral pierde sentido.
+const ACUMULADO_DESDE = '2026-07-13';
+
 // Cuántos cierres seguidos puede estar el acumulado por encima del umbral antes de ALARMAR.
 // El timing (un depósito/transferencia que en el banco ya pasó pero se asienta 1-3 días
 // después) se resuelve solo en pocos días; si el acumulado NO baja en más de estos
@@ -56,9 +71,10 @@ const UMBRAL_ACUMULADO = { ARS: 5_000_000, USD: 3_000 };
 // la ventana documentada de 1-3 días (con 2, un timing legítimo de 3 días daba un 🔴 falso).
 const DIAS_TOLERANCIA_TIMING = 3;
 
-// ¿El acumulado de esta cuenta está por encima del umbral de su moneda?
-function sobreUmbral(acumulado, moneda) {
-  const umbral = UMBRAL_ACUMULADO[moneda] ?? UMBRAL_ACUMULADO.ARS;
+// ¿El acumulado de esta cuenta está por encima de su umbral? El override por-cuenta pisa al
+// de la moneda si existe (ej. Mercado Pago). `cuenta` es el nombre de la cuenta de control.
+function sobreUmbral(acumulado, moneda, cuenta) {
+  const umbral = (cuenta && UMBRAL_ACUMULADO_CUENTA[cuenta]) ?? UMBRAL_ACUMULADO[moneda] ?? UMBRAL_ACUMULADO.ARS;
   return Math.abs(Number(acumulado) || 0) >= umbral;
 }
 
@@ -153,9 +169,9 @@ function conciliar({ saldosAyer = [], saldosHoy = [], movimientos = [], cuentas 
 //   timing  🟡  hay diferencia pero el acumulado está sano (por debajo del umbral).
 //   revisar 🟠  acumulado alto pero reciente → probable depósito/transferencia en tránsito.
 //   alerta  🔴  acumulado alto y persistente → no se resuelve, hay que perseguirlo.
-function evaluarCuenta({ diferencia, acumulado, moneda, diasSobreUmbral = 0 }) {
+function evaluarCuenta({ diferencia, acumulado, moneda, diasSobreUmbral = 0, cuenta }) {
   const dif = Math.abs(Number(diferencia) || 0);
-  if (!sobreUmbral(acumulado, moneda)) {
+  if (!sobreUmbral(acumulado, moneda, cuenta)) {
     return dif < TOLERANCIA
       ? { nivel: 'ok', motivo: 'cierra' }
       : { nivel: 'timing', motivo: 'diferencia normal, acumulado sano' };
@@ -169,10 +185,10 @@ function evaluarCuenta({ diferencia, acumulado, moneda, diasSobreUmbral = 0 }) {
 // Evaluación para los controles de PERÍODO (semanal/mensual): acá no hay "próximo cierre"
 // que resuelva el timing — un residuo que sobrevivió todo el período ya es algo a mirar.
 // Por eso una diferencia neta del período por encima del umbral es alerta directamente.
-function evaluarPeriodo({ diferencia, moneda }) {
+function evaluarPeriodo({ diferencia, moneda, cuenta }) {
   const dif = Number(diferencia) || 0;
   if (Math.abs(dif) < TOLERANCIA) return { nivel: 'ok', motivo: 'cierra en el período' };
-  if (!sobreUmbral(dif, moneda)) return { nivel: 'timing', motivo: 'diferencia chica del período (dentro de lo normal)' };
+  if (!sobreUmbral(dif, moneda, cuenta)) return { nivel: 'timing', motivo: 'diferencia chica del período (dentro de lo normal)' };
   return { nivel: 'alerta', motivo: 'el residuo sobrevivió todo el período — revisar ya' };
 }
 
@@ -180,14 +196,14 @@ function evaluarPeriodo({ diferencia, moneda }) {
 // devuelve {acumulado, diasSobreUmbral}. `diasSobreUmbral` = cierres SEGUIDOS al final de
 // la serie con el acumulado corrido por encima del umbral (0 si el último cierra sano).
 //   serie: [{fecha, diferencia}] ascendente por fecha.
-function acumularCuenta(serie, moneda) {
+function acumularCuenta(serie, moneda, cuenta) {
   let acumulado = 0;
   let diasSobreUmbral = 0;
   for (const d of serie) {
     acumulado += Number(d.diferencia) || 0;
-    diasSobreUmbral = sobreUmbral(acumulado, moneda) ? diasSobreUmbral + 1 : 0;
+    diasSobreUmbral = sobreUmbral(acumulado, moneda, cuenta) ? diasSobreUmbral + 1 : 0;
   }
   return { acumulado, diasSobreUmbral };
 }
 
-module.exports = { conciliar, evaluarCuenta, evaluarPeriodo, sobreUmbral, acumularCuenta, CUENTAS_CONTROL, TOLERANCIA, UMBRAL_ACUMULADO, DIAS_TOLERANCIA_TIMING, norm };
+module.exports = { conciliar, evaluarCuenta, evaluarPeriodo, sobreUmbral, acumularCuenta, CUENTAS_CONTROL, TOLERANCIA, UMBRAL_ACUMULADO, UMBRAL_ACUMULADO_CUENTA, ACUMULADO_DESDE, DIAS_TOLERANCIA_TIMING, norm };

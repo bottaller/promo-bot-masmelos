@@ -3,7 +3,7 @@
 // (robusto a cargas retroactivas). Todo transaccional, mismo patrón que guardarSaldos.
 const { pool } = require('./pool');
 const { fechaISO, finDeDiaTs } = require('../lib/fechas');
-const { conciliar } = require('../lib/conciliacion');
+const { conciliar, ACUMULADO_DESDE } = require('../lib/conciliacion');
 
 // El corte por hora usa timestamps de "reloj de pared" (hora argentina literal). Se guardan
 // y comparan SIEMPRE como el string canónico 'AAAA-MM-DD HH:MM:SS'; se LEEN con to_char()
@@ -207,12 +207,15 @@ async function historialDiferencias({ empresa = 'HONRE', hasta, incluirHasta = f
   const op = incluirHasta ? '<=' : '<';
   // Momentos de conteo consecutivos (fecha + hora). El corte por hora usa el MISMO
   // movimientosDeRango que el cierre vivo → el acumulado coincide por construcción.
+  // Baseline: no encadenamos desde antes de ACUMULADO_DESDE (datos SEED de prueba con saltos
+  // irreales). La primera fecha en rango queda como ancla (sin diff propia); el acumulado
+  // arranca del primer par consecutivo dentro del rango.
   const filasR = await pool.query(
     `select distinct fecha,
             coalesce(to_char(contado_en, '${TS_FMT}'), to_char(fecha, 'YYYY-MM-DD') || ' 23:59:59') as momento
-       from bot.tesoreria_saldos where empresa = $1 and fecha ${op} $2::date
+       from bot.tesoreria_saldos where empresa = $1 and fecha >= $3::date and fecha ${op} $2::date
       order by momento`,
-    [empresa, fechaISO(hasta)]
+    [empresa, fechaISO(hasta), ACUMULADO_DESDE]
   );
   const filas = filasR.rows; // [{ fecha (Date), momento (string canónico) }] ordenados por momento
   const out = {};
