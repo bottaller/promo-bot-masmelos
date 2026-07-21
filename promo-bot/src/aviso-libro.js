@@ -6,10 +6,14 @@ const { cubreFecha, ultimoLibro } = require('./db/libro');
 const { telegramIdsAdmins } = require('./db/usuarios');
 const { fechaHoyArgISO, formatoVencimiento, parseVencimiento } = require('./lib/fechas');
 
-// 21:00 en Argentina (UTC-3) = 00:00 UTC del día siguiente. A esa hora `fechaHoyArgISO()`
-// todavía devuelve el día que está terminando, que es justo la jornada que hay que chequear.
+// Hora del chequeo, en UTC. Default 00:00 UTC = 21:00 Argentina (UTC-3). Para las
+// 20:30 Arg poné LIBRO_HORA_UTC=23 y LIBRO_MIN_UTC=30 (23:30 UTC). A esa hora
+// `fechaHoyArgISO()` todavía devuelve el día que está terminando, que es justo la
+// jornada que hay que chequear.
 const HORA_UTC_RAW = Number(process.env.LIBRO_HORA_UTC);
 const HORA_UTC = (Number.isInteger(HORA_UTC_RAW) && HORA_UTC_RAW >= 0 && HORA_UTC_RAW <= 23) ? HORA_UTC_RAW : 0;
+const MIN_UTC_RAW = Number(process.env.LIBRO_MIN_UTC);
+const MIN_UTC = (Number.isInteger(MIN_UTC_RAW) && MIN_UTC_RAW >= 0 && MIN_UTC_RAW <= 59) ? MIN_UTC_RAW : 0;
 
 // Guard en memoria: no repetir el aviso de la misma jornada dentro del mismo proceso.
 let ultimaJornadaAvisada = null;
@@ -58,7 +62,7 @@ async function revisarLibroDelDia(telegram, { empresa = 'HONRE' } = {}) {
 function msHastaProxima() {
   const ahora = Date.now();
   const d = new Date();
-  let prox = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), HORA_UTC, 0, 0);
+  let prox = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), HORA_UTC, MIN_UTC, 0);
   if (prox <= ahora) prox += 24 * 3600 * 1000;
   return prox - ahora;
 }
