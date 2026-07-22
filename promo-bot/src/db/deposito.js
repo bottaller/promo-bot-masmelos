@@ -11,4 +11,16 @@ async function crearInforme({ destinoArea, referencia, mensaje, usuarioId, usuar
   return rows[0].id;
 }
 
-module.exports = { crearInforme };
+// Informes dirigidos a un área, del más viejo al más nuevo (para el Excel de Compras).
+async function informesPorDestino(destinoArea) {
+  const { rows } = await pool.query(
+    `select fecha, referencia, mensaje, usuario_nombre
+       from bot.deposito_informes
+      where destino_area = $1
+      order by fecha`,
+    [destinoArea]
+  );
+  return rows;
+}
+
+module.exports = { crearInforme, informesPorDestino };
