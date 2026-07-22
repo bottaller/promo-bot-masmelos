@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "dotenv": "^16.4.5",
+    "pdfkit": "^0.19.1",
     "pg": "^8.13.1",
     "telegraf": "^4.16.3",
     "xlsx": "^0.18.5"
