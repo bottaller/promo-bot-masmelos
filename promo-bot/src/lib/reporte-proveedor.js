@@ -2,10 +2,27 @@
 // Se usa desde /reporte (a pedido) y desde /baja (aviso automático al equipo de compras).
 const { fechaHoyArg, formatoVencimiento } = require('./fechas');
 
-// Uno o varios % (varias camadas del mismo producto pueden llevar % distinto).
-function formatoDescuento(p) {
-  if (!p.descuentos.length) return 'sin dato de %';
-  return p.descuentos.map((d) => `${d}%`).join(' / ');
+// Uno o varios valores (% de descuento y/o precio promocional; varias camadas del mismo
+// producto pueden llevar un valor distinto).
+function formatoPromos(p) {
+  const partes = [...p.descuentos.map((d) => `${d}%`), ...p.precios.map((pr) => `$${pr}`)];
+  return partes.length ? partes.join(' / ') : 'sin dato de promo';
+}
+
+// "30% → 80u, 50% → 20u, $500 → 15u" — unidades vendidas por cada valor aplicado.
+function formatoVendidoPorValor(vendidoPorPct, vendidoPorPrecio) {
+  const partes = [
+    ...vendidoPorPct.map((v) => `${v.valor}% → ${v.unidades}u`),
+    ...vendidoPorPrecio.map((v) => `$${v.valor} → ${v.unidades}u`),
+  ];
+  return partes.join(', ');
+}
+
+// Bloque global (todo el proveedor): una línea por valor, con el total vendido a ese valor.
+function bloqueVendido(titulo, esPrecio, pares) {
+  if (!pares.length) return '';
+  const lineas = pares.map((v) => `  ${esPrecio ? '$' + v.valor : v.valor + '%'}: ${v.unidades} unidad(es)`);
+  return `\n\n${titulo}:\n${lineas.join('\n')}`;
 }
 
 function formatearReporteProveedor(r, desde) {
@@ -13,7 +30,12 @@ function formatearReporteProveedor(r, desde) {
   const tasa = Math.round(m.tasaDescarte * 100);
   const hayCerradas = m.puestasCerradas > 0;
   const detalle = r.porProducto
-    .map((p) => `• ${p.producto}: ${p.altas} alta(s), descuento ${formatoDescuento(p)}, ${p.hayCerradas ? p.efectividad + '% efectividad' : 'sin promociones cerradas todavía'}`)
+    .map((p) => {
+      const vendido = formatoVendidoPorValor(p.vendidoPorPct, p.vendidoPorPrecio);
+      let linea = `• ${p.producto}: ${p.altas} alta(s), ${formatoPromos(p)}, ${p.hayCerradas ? p.efectividad + '% efectividad' : 'sin promociones cerradas todavía'}`;
+      if (vendido) linea += `\n   vendido: ${vendido}`;
+      return linea;
+    })
     .join('\n');
   const enPromo = m.abiertas > 0
     ? `${m.puestasAbiertas} unidades (${m.abiertas} alta${m.abiertas > 1 ? 's' : ''} abierta${m.abiertas > 1 ? 's' : ''})`
@@ -29,8 +51,10 @@ function formatearReporteProveedor(r, desde) {
     `Vendidas en promo: ${m.vendidas}\n` +
     `Descartadas: ${m.descartadas}\n` +
     `Efectividad global: ${hayCerradas ? m.efectividad + '%' : 'sin promociones cerradas todavía'}\n` +
-    `Tasa de descarte: ${hayCerradas ? tasa + '%' : '—'}\n` +
-    `\nDetalle por producto:\n${detalle}`
+    `Tasa de descarte: ${hayCerradas ? tasa + '%' : '—'}` +
+    bloqueVendido('💰 Vendido por % de descuento', false, r.vendidoPorPct) +
+    bloqueVendido('💵 Vendido por precio promocional', true, r.vendidoPorPrecio) +
+    `\n\nDetalle por producto:\n${detalle}`
   );
 }
 

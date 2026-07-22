@@ -66,6 +66,15 @@ function parseUnidades(valor) {
   return Number.isInteger(n) ? n : null;
 }
 
+// Parsea un precio (número > 0, con decimales). Acepta "$" y coma decimal ("1500", "1500,50",
+// "$1500"). Rechaza (null) cualquier cosa que no sea un número positivo.
+function parsePrecio(valor) {
+  const limpio = (valor || '').trim().replace(/\$/g, '').replace(',', '.');
+  if (limpio === '') return null;
+  const n = Number(limpio);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 // Teclado inline: botones pegados al mensaje (se ven igual en celu, PC y web).
 // items: array de strings, o de [label, data]. Un botón por fila.
 function opciones(items) {
@@ -80,4 +89,4 @@ function opciones(items) {
 // Atajo para el clásico Sí / No.
 const SI_NO = opciones([['Sí', 'si'], ['No', 'no']]);
 
-module.exports = { texto, respuesta, preguntar, esCancelar, parseUnidades, opciones, SI_NO };
+module.exports = { texto, respuesta, preguntar, esCancelar, parseUnidades, parsePrecio, opciones, SI_NO };

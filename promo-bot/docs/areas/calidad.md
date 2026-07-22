@@ -1,7 +1,7 @@
 # Área Calidad
 
 > Un doc por área. Este cubre **Calidad**: sus comandos, el flujo de datos y los límites conocidos.
-> Última actualización: **2026-07-10**.
+> Última actualización: **2026-07-22**.
 
 ## Qué hace el rol
 
@@ -15,11 +15,11 @@ tiran, para la próxima comprar menos o pedir descuento al proveedor.
 
 | Comando | Qué hace |
 |---------|----------|
-| `/alta` | Registra una **camada** puesta en oferta por vencimiento (producto, vencimiento, cantidad, **% de descuento**, motivo). Busca el producto en el maestro (`bot.articulos`) por EAN/código/nombre, o se carga a mano. **Nota:** por ahora no pide lote (ver más abajo). |
+| `/alta` | Registra una **camada** puesta en oferta por vencimiento (producto, vencimiento, cantidad, motivo). Para la promoción, pregunta si es por **% de descuento** o por **precio promocional** (una cosa o la otra, nunca las dos). Busca el producto en el maestro (`bot.articulos`) por EAN/código/nombre, o se carga a mano. **Nota:** por ahora no pide lote (ver más abajo). |
 | `/reposicion` | Suma cantidad a una camada **ya abierta** del mismo producto con la **misma fecha de vencimiento**, en vez de crear otra alta. Si no hay ninguna camada abierta que matchee, avisa y sugiere `/alta`. |
-| `/cambiopromocion` | Cambia el % de descuento de una camada **vigente**. Arranca mostrando un **menú con todas las promociones abiertas** (sin pedir código/SKU) para elegir directo sobre cuál; después pregunta el % nuevo y a cuántas unidades de las actuales se le aplica. Por diferencia, cierra la camada vieja marcando lo no alcanzado como vendido al % viejo, y abre una camada nueva con las unidades restantes al % nuevo. |
+| `/cambiopromocion` | Cambia la promoción de una camada **vigente** — % de descuento o precio promocional, y se puede pasar de una a la otra. Arranca mostrando un **menú con todas las promociones abiertas** (sin pedir código/SKU) para elegir directo sobre cuál; después pregunta qué tipo de promoción nueva aplica, su valor, y a cuántas unidades de las actuales se le aplica. Por diferencia, cierra la camada vieja marcando lo no alcanzado como vendido con la promo vieja, y abre una camada nueva con las unidades restantes con la promo nueva. |
 | `/baja` | Cierra una camada abierta: cuántas se vendieron y qué pasó con el remanente (descartado/vencido o devuelto a góndola normal). |
-| `/control` | Excel de **todo lo que está en oferta ahora**, ordenado por fecha de vencimiento. Lleva la fecha de generación (ver [convenciones.md](../convenciones.md)). |
+| `/control` | Excel de **todo lo que está en oferta ahora**, ordenado por fecha de vencimiento (incluye columnas de % de descuento y precio promocional). Lleva la fecha de generación (ver [convenciones.md](../convenciones.md)). |
 
 ## Modelo de datos
 
@@ -39,16 +39,22 @@ existe, si no por nombre exacto) y la misma `vencimiento`, y le suma la cantidad
 `UPDATE ... SET cantidad = cantidad + X` — no inserta una fila nueva. Como `/baja` lee la `cantidad`
 de esa misma fila, el cierre ya refleja el total acumulado sin ningún cambio adicional.
 
-**Cambio de % de promoción:** el modelo no permite dos porcentajes en la misma fila (una fila = un
-solo resultado final), así que `/cambiopromocion` **divide la alta en dos** dentro de una
-transacción (con `SELECT … FOR UPDATE`, y aborta si otra operación cambió la cantidad entremedio):
-cierra la alta vieja (`fecha_baja`, `cantidad` y `cantidad_vendida` = la diferencia, `cantidad_remanente`
-= 0, `motivo_baja` = `'Cambio de % de promoción'` para no contarla como descarte real) y crea una alta
-nueva —mismo producto/proveedor/vencimiento/motivo— con las unidades restantes y el `descuento_pct`
-nuevo. **Ojo:** la `cantidad` de la vieja se reduce a la diferencia (no queda en el total original); si
-no, las unidades que siguen en promoción se contarían dos veces en "unidades puestas" y diluirían la
-efectividad del reporte. El histórico del producto queda con dos altas: una cerrada (lo del % viejo) y
-otra que se cierra después con el resultado al % nuevo.
+**Precio promocional:** alternativa al % de descuento (migración 018, columna `precio_promocional`).
+Son excluyentes por diseño (se valida en el código, no con una constraint) — una camada tiene **uno
+de los dos**, nunca ambos. El reporte de proveedor y el Excel de Compras muestran los dos tipos de
+dato.
+
+**Cambio de promoción:** el modelo no permite dos resultados en la misma fila (una fila = un solo
+resultado final), así que `/cambiopromocion` **divide la alta en dos** dentro de una transacción (con
+`SELECT … FOR UPDATE`, y aborta si otra operación cambió la cantidad entremedio): cierra la alta vieja
+(`fecha_baja`, `cantidad` y `cantidad_vendida` = la diferencia, `cantidad_remanente` = 0, `motivo_baja`
+= `'Cambio de promoción'` para no contarla como descarte real) y crea una alta nueva —mismo
+producto/proveedor/vencimiento/motivo— con las unidades restantes y la promo nueva (`descuento_pct` o
+`precio_promocional`, según lo que se haya elegido — puede ser distinto tipo al de la vieja). **Ojo:**
+la `cantidad` de la vieja se reduce a la diferencia (no queda en el total original); si no, las
+unidades que siguen en promoción se contarían dos veces en "unidades puestas" y diluirían la
+efectividad del reporte. El histórico del producto queda con dos altas: una cerrada (lo de la promo
+vieja) y otra que se cierra después con el resultado de la promo nueva.
 
 **Aviso al equipo de Compras:** solo se avisa cuando se hace **`/baja`** (no en `/alta`,
 `/reposicion` ni `/cambiopromocion`). No manda el resultado puntual de esa baja: manda el **reporte

@@ -16,13 +16,13 @@ function escLike(s) {
 async function crearAlta(a) {
   const { rows } = await pool.query(
     `insert into bot.compras_altas
-       (usuario_id, usuario_nombre, articulo_codigo, ean, producto, proveedor, vencimiento, cantidad, motivo, descuento_pct)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       (usuario_id, usuario_nombre, articulo_codigo, ean, producto, proveedor, vencimiento, cantidad, motivo, descuento_pct, precio_promocional)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      returning id`,
     [
       a.usuarioId ?? null, a.usuarioNombre ?? null, a.articuloCodigo ?? null, a.ean ?? null,
       a.producto, a.proveedor ?? null, a.vencimiento ?? null, a.cantidad, a.motivo ?? null,
-      a.descuentoPct ?? null,
+      a.descuentoPct ?? null, a.precioPromocional ?? null,
     ]
   );
   return rows[0].id;
@@ -64,10 +64,17 @@ async function altasEnOferta() {
 }
 
 // Todas las altas, abiertas y cerradas, ordenadas por proveedor y fecha (para el Excel de
-// promociones que puede ver Compras).
-async function todasLasAltas() {
+// promociones que puede ver Compras). `desde` (opcional): Date -> solo altas de ese lapso a hoy.
+async function todasLasAltas({ desde } = {}) {
+  const params = [];
+  let condicion = '';
+  if (desde) {
+    params.push(fechaISO(desde));
+    condicion = `where fecha >= $1::date`;
+  }
   const { rows } = await pool.query(
-    `select * from bot.compras_altas order by proveedor nulls last, fecha`
+    `select * from bot.compras_altas ${condicion} order by proveedor nulls last, fecha`,
+    params
   );
   return rows;
 }
@@ -158,8 +165,9 @@ async function sumarCantidadAlta({ altaId, cantidadAdicional }) {
 // una cerrada (lo que se vendió al % viejo) y otra que se cierra después con el resultado final
 // al % nuevo.
 // Transacción atómica con lock de fila: si la alta ya se cerró justo antes (carrera con /baja),
-// no hace nada y devuelve null.
-async function cambiarPorcentajePromocion({ altaId, unidadesNuevoPct, nuevoPct, cantidadEsperada }) {
+// no hace nada y devuelve null. Sirve tanto para cambiar el % de descuento como el precio
+// promocional (exactamente uno de nuevoPct/nuevoPrecio viene con valor, el otro null).
+async function cambiarPromocion({ altaId, unidadesNuevo, nuevoPct, nuevoPrecio, cantidadEsperada }) {
   const client = await pool.connect();
   try {
     await client.query('begin');
@@ -182,29 +190,30 @@ async function cambiarPorcentajePromocion({ altaId, unidadesNuevoPct, nuevoPct, 
       return { cambiada: true, cantidadActual: Number(alta.cantidad) };
     }
 
-    const diferencia = Number(alta.cantidad) - unidadesNuevoPct;
+    const diferencia = Number(alta.cantidad) - unidadesNuevo;
 
-    // La alta vieja pasa a representar SOLO lo que se cerró al % viejo (la diferencia): por eso
-    // se reduce `cantidad` a la diferencia además de marcarla como vendida. Si no, las unidades
+    // La alta vieja pasa a representar SOLO lo que se cerró a la promo vieja (la diferencia): por
+    // eso se reduce `cantidad` a la diferencia además de marcarla como vendida. Si no, las unidades
     // que siguen en promoción (que se re-insertan abajo) quedarían contadas dos veces en
     // "unidades puestas" de los reportes, diluyendo la efectividad. Con esto la fila queda
     // consistente: cantidad == cantidad_vendida + cantidad_remanente (= diferencia + 0).
     await client.query(
       `update bot.compras_altas
           set fecha_baja = now(), cantidad = $2, cantidad_vendida = $2, cantidad_remanente = 0,
-              motivo_baja = 'Cambio de % de promoción'
+              motivo_baja = 'Cambio de promoción'
         where id = $1`,
       [altaId, diferencia]
     );
 
     const { rows: nuevaRows } = await client.query(
       `insert into bot.compras_altas
-         (usuario_id, usuario_nombre, articulo_codigo, ean, producto, proveedor, vencimiento, cantidad, motivo, descuento_pct)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         (usuario_id, usuario_nombre, articulo_codigo, ean, producto, proveedor, vencimiento, cantidad, motivo, descuento_pct, precio_promocional)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        returning id`,
       [
         alta.usuario_id, alta.usuario_nombre, alta.articulo_codigo, alta.ean,
-        alta.producto, alta.proveedor, alta.vencimiento, unidadesNuevoPct, alta.motivo, nuevoPct,
+        alta.producto, alta.proveedor, alta.vencimiento, unidadesNuevo, alta.motivo,
+        nuevoPct ?? null, nuevoPrecio ?? null,
       ]
     );
 
@@ -289,20 +298,19 @@ async function reportePorProveedor(nombreProveedor, { desde } = {}) {
 
   const porProducto = [...grupos.values()].map((g) => {
     const met = calcularMetricas(g.altas);
-    // % de descuento aplicado en cada alta de este producto (sin repetidos, ordenado). Puede haber
-    // más de uno: distintas camadas del mismo producto, o un /cambiopromocion que partió una camada
-    // en dos con % distinto.
-    const descuentos = [...new Set(
-      g.altas
-        .map((a) => (a.descuento_pct === null || a.descuento_pct === undefined ? null : Number(a.descuento_pct)))
-        .filter((d) => d !== null)
-    )].sort((a, b) => a - b);
     return {
       producto: g.producto,
       altas: g.altas.length,
       efectividad: met.efectividad,
       hayCerradas: met.puestasCerradas > 0, // si no, la efectividad 0% no significa nada
-      descuentos,
+      // Valores (sin repetidos, ordenados) aplicados en cada alta de este producto. Puede haber
+      // más de uno: distintas camadas del mismo producto, o un /cambiopromocion que partió una
+      // camada en dos con un valor distinto.
+      descuentos: valoresUnicos(g.altas, 'descuento_pct'),
+      precios: valoresUnicos(g.altas, 'precio_promocional'),
+      // Unidades VENDIDAS (camadas cerradas), agrupadas por el valor que tenían.
+      vendidoPorPct: vendidoPorValor(g.altas, 'descuento_pct'),
+      vendidoPorPrecio: vendidoPorValor(g.altas, 'precio_promocional'),
     };
   });
 
@@ -311,7 +319,29 @@ async function reportePorProveedor(nombreProveedor, { desde } = {}) {
     productos: grupos.size,
     metricas: calcularMetricas(altas),
     porProducto,
+    vendidoPorPct: vendidoPorValor(altas, 'descuento_pct'),
+    vendidoPorPrecio: vendidoPorValor(altas, 'precio_promocional'),
   };
+}
+
+// Valores distintos (sin repetidos, ordenados) que tomó una columna (descuento_pct o
+// precio_promocional) en un conjunto de altas.
+function valoresUnicos(altas, campo) {
+  return [...new Set(
+    altas.map((a) => (a[campo] === null || a[campo] === undefined ? null : Number(a[campo]))).filter((v) => v !== null)
+  )].sort((a, b) => a - b);
+}
+
+// Unidades vendidas (camadas cerradas), agrupadas por el valor de descuento_pct o
+// precio_promocional que tenía cada una. [{ valor, unidades }], ordenado por valor.
+function vendidoPorValor(altas, campo) {
+  const mapa = new Map();
+  for (const a of altas) {
+    if (!a.fecha_baja || a[campo] === null || a[campo] === undefined) continue;
+    const valor = Number(a[campo]);
+    mapa.set(valor, (mapa.get(valor) || 0) + Number(a.cantidad_vendida || 0));
+  }
+  return [...mapa.entries()].sort((a, b) => a[0] - b[0]).map(([valor, unidades]) => ({ valor, unidades }));
 }
 
 module.exports = {
@@ -320,7 +350,7 @@ module.exports = {
   buscarAltasAbiertas,
   buscarAltasParaReponer,
   sumarCantidadAlta,
-  cambiarPorcentajePromocion,
+  cambiarPromocion,
   altasEnOferta,
   todasLasAltas,
   altaAbiertaPorId,

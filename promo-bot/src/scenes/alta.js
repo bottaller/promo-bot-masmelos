@@ -1,7 +1,7 @@
 const { Scenes } = require('telegraf');
 const { buscarArticulos } = require('../db/articulos');
 const { crearAlta, historialProducto } = require('../db/compras');
-const { respuesta, esCancelar, parseUnidades, opciones, preguntar } = require('../lib/wizard');
+const { respuesta, esCancelar, parseUnidades, parsePrecio, opciones, preguntar } = require('../lib/wizard');
 const { parseVencimiento, formatoVencimiento, diasHasta } = require('../lib/fechas');
 
 async function cancelar(ctx) {
@@ -99,7 +99,7 @@ const altaWizard = new Scenes.WizardScene(
     await ctx.reply(`Vence en ${dias} día(s).\n\n¿Cantidad que se pasa a promoción?`);
     return ctx.wizard.next();
   },
-  // 6: cantidad -> % de descuento
+  // 6: cantidad -> tipo de promoción (botones inline)
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
@@ -109,30 +109,63 @@ const altaWizard = new Scenes.WizardScene(
       return;
     }
     ctx.wizard.state.data.cantidad = cantidad;
-    await ctx.reply('¿Qué % de descuento tiene la promoción? (ej: 30)');
+    await preguntar(
+      ctx,
+      '¿La promoción es por % de descuento o por un precio promocional?',
+      opciones([['% Descuento', 'pct'], ['Precio promocional', 'precio']])
+    );
     return ctx.wizard.next();
   },
-  // 7: % de descuento -> motivo (botones inline)
+  // 7: tipo de promoción -> pedir el valor (% o precio)
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
-    if (r === null) { await ctx.reply('Escribí el % de descuento (un número entre 0 y 100, ej: 30).'); return; }
-    const descuento = Number(r.replace(',', '.').replace('%', ''));
-    if (!Number.isFinite(descuento) || descuento < 0 || descuento > 100) {
-      await ctx.reply('Ingresá un % válido, entre 0 y 100 (ej: 30).');
+    if (r !== 'pct' && r !== 'precio') { await ctx.reply('Elegí "% Descuento" o "Precio promocional".'); return; }
+    ctx.wizard.state.data.tipoPromo = r;
+    await ctx.reply(r === 'pct'
+      ? '¿Qué % de descuento tiene la promoción? (ej: 30)'
+      : '¿Cuál es el precio promocional? (ej: 1500)');
+    return ctx.wizard.next();
+  },
+  // 8: valor de la promoción -> motivo (botones inline)
+  async (ctx) => {
+    const r = await respuesta(ctx);
+    if (esCancelar(r)) return cancelar(ctx);
+    const d = ctx.wizard.state.data;
+    if (r === null) {
+      await ctx.reply(d.tipoPromo === 'pct'
+        ? 'Escribí el % de descuento (un número entre 0 y 100, ej: 30).'
+        : 'Escribí el precio promocional (ej: 1500).');
       return;
     }
-    ctx.wizard.state.data.descuentoPct = descuento;
+    if (d.tipoPromo === 'pct') {
+      const descuento = Number(r.replace(',', '.').replace('%', ''));
+      if (!Number.isFinite(descuento) || descuento < 0 || descuento > 100) {
+        await ctx.reply('Ingresá un % válido, entre 0 y 100 (ej: 30).');
+        return;
+      }
+      d.descuentoPct = descuento;
+      d.precioPromocional = null;
+    } else {
+      const precio = parsePrecio(r);
+      if (precio === null) {
+        await ctx.reply('Ingresá un precio válido, mayor a 0 (ej: 1500).');
+        return;
+      }
+      d.precioPromocional = precio;
+      d.descuentoPct = null;
+    }
     await preguntar(ctx, '¿Motivo? (elegí uno o escribí otro)', opciones(['Vencimiento próximo', 'Exceso de stock']));
     return ctx.wizard.next();
   },
-  // 8: motivo -> confirmar (botones inline)
+  // 9: motivo -> confirmar (botones inline)
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) return cancelar(ctx);
     if (!r) { await ctx.reply('Elegí o escribí el motivo.'); return; }
     ctx.wizard.state.data.motivo = r;
     const d = ctx.wizard.state.data;
+    const promoTxt = d.tipoPromo === 'pct' ? `Descuento: ${d.descuentoPct}%` : `Precio promocional: $${d.precioPromocional}`;
     await preguntar(
       ctx,
       'Confirmá el alta:\n\n' +
@@ -140,13 +173,13 @@ const altaWizard = new Scenes.WizardScene(
       `Proveedor: ${d.proveedor || '-'}\n` +
       `Vencimiento: ${d.vencimiento}\n` +
       `Cantidad: ${d.cantidad}\n` +
-      `Descuento: ${d.descuentoPct}%\n` +
+      `${promoTxt}\n` +
       `Motivo: ${d.motivo}`,
       opciones([['✅ Confirmar', 'si'], ['❌ Cancelar', 'no']])
     );
     return ctx.wizard.next();
   },
-  // 9: confirmar -> guardar
+  // 10: confirmar -> guardar
   async (ctx) => {
     const raw = await respuesta(ctx);
     if (raw === null) return; // botón viejo / doble-tap / no-texto: el paso sigue esperando
@@ -171,6 +204,7 @@ const altaWizard = new Scenes.WizardScene(
       cantidad: d.cantidad,
       motivo: d.motivo,
       descuentoPct: d.descuentoPct,
+      precioPromocional: d.precioPromocional,
     });
 
     const hist = await historialProducto({ articuloCodigo: d.articuloCodigo || null, producto: d.producto });
