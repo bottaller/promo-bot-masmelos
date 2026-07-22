@@ -63,6 +63,15 @@ async function altasEnOferta() {
   return rows;
 }
 
+// Todas las altas, abiertas y cerradas, ordenadas por proveedor y fecha (para el Excel de
+// promociones que puede ver Compras).
+async function todasLasAltas() {
+  const { rows } = await pool.query(
+    `select * from bot.compras_altas order by proveedor nulls last, fecha`
+  );
+  return rows;
+}
+
 // Una alta puntual, solo si sigue abierta. Se usa para revalidar justo antes de operar sobre
 // ella (p. ej. al elegirla de un menú armado unos segundos antes, por si alguien la cerró
 // mientras tanto con /baja).
@@ -313,6 +322,7 @@ module.exports = {
   sumarCantidadAlta,
   cambiarPorcentajePromocion,
   altasEnOferta,
+  todasLasAltas,
   altaAbiertaPorId,
   altasParaAviso,
   marcarAvisoPorVencer,

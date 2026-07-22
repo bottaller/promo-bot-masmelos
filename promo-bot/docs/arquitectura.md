@@ -161,7 +161,7 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
 - **Autorización por comando:** cada comando declara su área (`requiereArea('calidad')`).
   Áreas y sus comandos hoy:
   - **Calidad:** `/alta` (poner un producto en oferta por vencimiento), `/baja` (retirarlo), `/control` (Excel de lo que está en oferta por vencimiento).
-  - **Compras:** `/reporte` (por proveedor, buscado por código de proveedor; histórico o por lapso de tiempo).
+  - **Compras:** `/reporte` (por proveedor, buscado por código de proveedor; histórico o por lapso de tiempo) y `/excel` (todas las promociones, abiertas y cerradas, una hoja por proveedor + hoja con los informes de Depósito dirigidos a Compras).
   - **Tesorería:** `/flujos` (recibe el Excel de Sigma y devuelve el HTML del flujo del dinero — corre el motor Python, ver §6 y [areas/tesoreria.md](areas/tesoreria.md)) y `/cierre` (cierre diario: carga los saldos del día; la conciliación saldos-vs-libro está en curso, ver [conciliacion.md](conciliacion.md)).
   - **Caja Central:** `/mp` (conciliación de Mercado Pago **operación por operación**: export de Sigma + liquidación de MP → aparea cada cobranza con su cobro y marca lo que no cierra, ver [areas/caja-central.md](areas/caja-central.md) y [conciliacion-mp.md](conciliacion-mp.md)).
   - **Depósito:** `/informe` (informe en texto libre sobre un proveedor o producto, dirigido a Calidad o Compras; se guarda en `bot.deposito_informes` y se avisa automáticamente a todos los que tengan ese rol, ver [areas/deposito.md](areas/deposito.md)).
