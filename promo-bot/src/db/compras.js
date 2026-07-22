@@ -280,11 +280,20 @@ async function reportePorProveedor(nombreProveedor, { desde } = {}) {
 
   const porProducto = [...grupos.values()].map((g) => {
     const met = calcularMetricas(g.altas);
+    // % de descuento aplicado en cada alta de este producto (sin repetidos, ordenado). Puede haber
+    // más de uno: distintas camadas del mismo producto, o un /cambiopromocion que partió una camada
+    // en dos con % distinto.
+    const descuentos = [...new Set(
+      g.altas
+        .map((a) => (a.descuento_pct === null || a.descuento_pct === undefined ? null : Number(a.descuento_pct)))
+        .filter((d) => d !== null)
+    )].sort((a, b) => a - b);
     return {
       producto: g.producto,
       altas: g.altas.length,
       efectividad: met.efectividad,
       hayCerradas: met.puestasCerradas > 0, // si no, la efectividad 0% no significa nada
+      descuentos,
     };
   });
 

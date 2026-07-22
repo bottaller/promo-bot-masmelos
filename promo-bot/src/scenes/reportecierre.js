@@ -23,8 +23,8 @@ async function reporteCierreHandler(ctx) {
     if (r.estado === 'sin_saldo_ayer' || r.estado === 'sin_saldo_hoy') {
       return { cuenta: r.cuenta, moneda, saldo_ayer: num(r.saldo_ayer), ingresos: num(r.ingresos), egresos: num(r.egresos), saldo_teorico: null, saldo_real: num(r.saldo_real), diferencia: null, estado: r.estado, acumulado: null, nivel: r.estado, motivo: null };
     }
-    const { acumulado, diasSobreUmbral } = acumularCuenta(historial[r.cuenta] || [], moneda);
-    const ev = evaluarCuenta({ diferencia: num(r.diferencia), acumulado, moneda, diasSobreUmbral });
+    const { acumulado, diasSobreUmbral } = acumularCuenta(historial[r.cuenta] || [], moneda, r.cuenta);
+    const ev = evaluarCuenta({ diferencia: num(r.diferencia), acumulado, moneda, diasSobreUmbral, cuenta: r.cuenta });
     return {
       cuenta: r.cuenta, moneda, saldo_ayer: num(r.saldo_ayer), ingresos: num(r.ingresos), egresos: num(r.egresos),
       saldo_teorico: num(r.saldo_teorico), saldo_real: num(r.saldo_real), diferencia: num(r.diferencia),

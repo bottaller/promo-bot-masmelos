@@ -8,8 +8,9 @@ const mpWizard = require('../src/scenes/mp');
 const { conciliarMP, CUENTA_MP } = require('../src/lib/conciliacion-mp');
 const { parsearMayor, MayorError } = require('../src/lib/mayor-excel');
 const { parsearLiquidacion, LiquidacionError } = require('../src/lib/liquidacion-excel');
-const { formatearMP, construirExcelMP } = require('../src/lib/reporte-mp');
-const { isoAHoraArg, tsASegundos } = require('../src/lib/fechas');
+const { formatearMP } = require('../src/lib/reporte-mp');
+const { construirInformePDF, veredictoMP } = require('../src/lib/informe-mp-pdf');
+const { isoAHoraArg, tsASegundos, fechaHoraArg } = require('../src/lib/fechas');
 
 let pass = 0;
 function t(nombre, fn) { fn(); pass++; console.log('  ok:', nombre); }
@@ -204,6 +205,79 @@ t('los totales NO cuentan lo que está fuera de alcance', () => {
   assert.strictEqual(r.resumen.totalFueraMp, 999999);
 });
 
+console.log('conciliarMP(): rastreo del contramovimiento (con el Diario completo)');
+// Caso REAL del 11/07/2026: MP cobró $152.577,45 por transferencia, nadie lo asentó como
+// cobro de MP, y al cerrar la CAJA 4 dio ese faltante exacto contra DESVIO DE CAJA.
+const ASIENTO_FALTANTE = [
+  { asiento: 8299656, cuenta_id: 111100004, cuenta: 'CAJA 4 MORENO', comp: 'DIFC',
+    concepto: 'faltante caja 4 camila 11-7', comprobante: 'DIFERENCIA DE CAJA', cliente: '',
+    usuario: 'LATERZAFLOR', ingreso: '2026-07-11 17:21:50', debe: 0, haber: 152577.45 },
+  { asiento: 8299656, cuenta_id: 501100006, cuenta: 'DESVIO DE CAJA', comp: 'DIFC',
+    concepto: 'faltante caja 4 camila 11-7', comprobante: 'DIFERENCIA DE CAJA', cliente: '',
+    usuario: 'LATERZAFLOR', ingreso: '2026-07-11 17:21:50', debe: 152577.45, haber: 0 },
+  { asiento: 8299600, cuenta_id: 111100002, cuenta: 'CAJA 2 MORENO', comp: 'DIFC',
+    concepto: 'sobrante caja 2 sabrina 11-7', comprobante: 'DIFERENCIA DE CAJA', cliente: '',
+    usuario: 'LATERZAFLOR', ingreso: '2026-07-11 17:14:54', debe: 300, haber: 0 },
+];
+const soloMpDe = (r) => r.soloMp[0];
+
+t('encuentra el faltante de caja que explica el cobro sin asentar', () => {
+  const r = conciliarMP({
+    movimientos: [], operaciones: [O(152577.45, '2026-07-11 14:15:12', { instrumento: 'Bank transfer' })],
+    otrasCuentas: ASIENTO_FALTANTE,
+  });
+  const c = soloMpDe(r).contrapartidas;
+  assert.strictEqual(c.length, 1, 'debería encontrar UN asiento');
+  assert.strictEqual(c[0].asiento, 8299656);
+  assert.match(c[0].concepto, /faltante caja 4/);
+  assert.strictEqual(c[0].usuario, 'LATERZAFLOR');
+  // trae la partida doble entera: de dónde salió y adónde fue
+  assert.deepStrictEqual(c[0].renglones.map((g) => g.cuenta), ['CAJA 4 MORENO', 'DESVIO DE CAJA']);
+  assert.strictEqual(r.resumen.rastreo, true);
+  assert.strictEqual(r.resumen.nConContrapartida, 1);
+});
+t('no inventa contrapartida si el importe no está en ninguna otra cuenta', () => {
+  const r = conciliarMP({
+    movimientos: [], operaciones: [O(99999.99, '2026-07-11 14:15:12')],
+    otrasCuentas: ASIENTO_FALTANTE,
+  });
+  assert.deepStrictEqual(soloMpDe(r).contrapartidas, []);
+  assert.strictEqual(r.resumen.nConContrapartida, 0);
+});
+t('sin el Diario (solo el Mayor) no hay rastreo, pero tampoco rompe', () => {
+  const r = conciliarMP({ movimientos: [], operaciones: [O(152577.45, '2026-07-11 14:15:12')] });
+  assert.deepStrictEqual(soloMpDe(r).contrapartidas, []);
+  assert.strictEqual(r.resumen.rastreo, false);
+});
+t('también rastrea al revés: asentado que MP no tiene', () => {
+  const r = conciliarMP({
+    movimientos: [M(152577.45, '2026-07-11 10:00:00')], operaciones: [],
+    otrasCuentas: ASIENTO_FALTANTE,
+  });
+  assert.strictEqual(r.soloSistema[0].contrapartidas.length, 1);
+});
+t('el mensaje muestra dónde apareció el importe', () => {
+  const r = conciliarMP({
+    movimientos: [], operaciones: [O(152577.45, '2026-07-11 14:15:12', { instrumento: 'Bank transfer' })],
+    otrasCuentas: ASIENTO_FALTANTE,
+  });
+  const txt = formatearMP({ fecha: '11/07/2026', cuenta: 'MP', resultado: r, origen: 'diario' });
+  assert.match(txt, /aparece en:/);
+  assert.match(txt, /CAJA 4 MORENO → DESVIO DE CAJA/); // Haber primero: de dónde salió
+  assert.match(txt, /faltante caja 4 camila/);
+  assert.match(txt, /LATERZAFLOR/);
+});
+t('si NO se pudo rastrear, el mensaje sugiere mandar el Diario', () => {
+  const r = conciliarMP({ movimientos: [], operaciones: [O(50000, '2026-07-11 14:15:12')] });
+  const txt = formatearMP({ fecha: '11/07/2026', cuenta: 'MP', resultado: r, origen: 'mayor' });
+  assert.match(txt, /Diario de movimientos.*otra cuenta/s);
+});
+t('sin huérfanas no molesta con la sugerencia del Diario', () => {
+  const r = conciliarMP({ movimientos: [M(100, '2026-07-11 10:00:10')], operaciones: [O(100, '2026-07-11 10:00:00')] });
+  const txt = formatearMP({ fecha: '11/07/2026', cuenta: 'MP', resultado: r, origen: 'mayor' });
+  assert.ok(!/Mandame el "Diario/.test(txt));
+});
+
 // --- parsers ---------------------------------------------------------------
 function aBuffer(aoa) {
   const wb = XLSX.utils.book_new();
@@ -263,6 +337,28 @@ t('NO agrega los renglones del mismo segundo (romperia el match 1 a 1)', () => {
   const r = parsearMayor(buf, { cuentaId: CUENTA_MP });
   assert.strictEqual(r.movimientos.length, 2);
   assert.deepStrictEqual(r.movimientos.map((m) => m.debe), [100000, 111393.93]);
+});
+t('el Diario CONSERVA las otras cuentas (para rastrear el contramovimiento)', () => {
+  const buf = aBuffer([
+    ['Empresa: 0008-HONRE_2'],
+    ['Diario de movimientos contables del 07/11/2026 al 07/11/2026'],
+    HDR_DIARIO,
+    filaDiario(422101014, 88146.06, '11/07/2026 08:38:28'),
+    filaDiario(111100004, 152577.45, '11/07/2026 17:21:50'), // CAJA 4: otra cuenta
+    filaDiario(501100006, 152577.45, '11/07/2026 17:21:50'), // DESVIO: otra cuenta
+  ]);
+  const r = parsearMayor(buf, { cuentaId: CUENTA_MP });
+  assert.strictEqual(r.movimientos.length, 1);          // la cuenta MP
+  assert.strictEqual(r.otrasCuentas.length, 2);          // el resto del libro
+  assert.deepStrictEqual(r.otrasCuentas.map((m) => m.cuenta_id), [111100004, 501100006]);
+  assert.ok(r.otrasCuentas.every((m) => m.cuenta_id !== CUENTA_MP), 'no debe colar la cuenta de MP');
+});
+t('el Mayor (una sola cuenta) no trae otras cuentas: rastreo no disponible', () => {
+  const buf = aBuffer([
+    ['Empresa: 0008-HONRE_2'], ['Mayor de Cta 422101014'], HDR_MAYOR,
+    filaMayor(8301513, 24320.61, '16/07/2026 08:13:48'),
+  ]);
+  assert.deepStrictEqual(parsearMayor(buf, { cuentaId: CUENTA_MP }).otrasCuentas, []);
 });
 t('el Mayor de OTRA cuenta se rechaza con un mensaje claro', () => {
   const buf = aBuffer([['Empresa: X'], ['Mayor de Cta 111201014'], HDR_MAYOR,
@@ -332,25 +428,85 @@ t('el mensaje se mantiene bajo el tope de Telegram con muchas huérfanas', () =>
   assert.ok(txt.length < 4096, `el mensaje mide ${txt.length}`);
   assert.match(txt, /y 292 más/);
 });
-t('la diferencia de redondeo se muestra con formato de plata argentino', () => {
+// Si el mensaje se pasa de 4096, la API de Telegram RECHAZA el envío entero y el control no
+// llega — peor que recortarlo. Las líneas del rastreo son largas: sin tope duro, 40 huérfanas
+// con contrapartidas daban 5334 caracteres y el reporte no se enviaba.
+function escenarioHuerfanasConRastreo(n, largoNombre) {
+  const ops = [], movs = [], otras = [];
+  for (let i = 0; i < n; i++) {
+    const monto = 100000 + i;
+    ops.push(O(monto, `2026-07-11 1${i % 10}:00:00`, { source_id: `1684${i}` }));
+    movs.push(M(monto + 1000, `2026-07-11 09:00:0${i % 10}`, { cliente: 'C'.repeat(largoNombre) + i }));
+    for (let k = 0; k < 3; k++) {
+      const asiento = 900000 + i * 10 + k;
+      const base = { asiento, concepto: 'faltante caja 4 camila 11-7 revisar con tesoreria',
+        comprobante: 'DIFERENCIA DE CAJA', cliente: '', usuario: 'LATERZAFLOR', ingreso: '2026-07-11 17:21:50' };
+      otras.push({ ...base, cuenta_id: 111100004, cuenta: 'CAJA 4 MORENO SUCURSAL CENTRO', debe: 0, haber: monto });
+      otras.push({ ...base, cuenta_id: 501100006, cuenta: 'DESVIO DE CAJA MORENO', debe: monto, haber: 0 });
+    }
+  }
+  return conciliarMP({ movimientos: movs, operaciones: ops, otrasCuentas: otras });
+}
+t('peor caso realista (40 huérfanas con rastreo): entra sin recortar', () => {
+  const resultado = escenarioHuerfanasConRastreo(40, 25);
+  assert.strictEqual(resultado.resumen.nSoloMp, 40);
+  const txt = formatearMP({ fecha: '11/07/2026', cuenta: 'MERCADO PAGO MORENO', resultado, origen: 'diario' });
+  assert.ok(txt.length <= 4096, `mide ${txt.length}: Telegram lo rechazaría`);
+  assert.ok(!/recortado/.test(txt), 'no debería hacer falta recortar en un caso realista');
+  assert.match(txt, /aparece en:/); // el rastreo se sigue viendo
+});
+t('caso extremo: recorta para no pasarse, y AVISA que recortó', () => {
+  const resultado = escenarioHuerfanasConRastreo(100, 300); // nombres absurdos
+  const txt = formatearMP({ fecha: '11/07/2026', cuenta: 'MERCADO PAGO MORENO', resultado, origen: 'diario' });
+  assert.ok(txt.length <= 4096, `mide ${txt.length}: Telegram lo rechazaría`);
+  assert.match(txt, /recortado/);          // nunca en silencio
+  assert.match(txt, /sin aparear/);        // lo importante sobrevive: va primero
+  assert.match(txt, /Totales/);
+});
+t('el redondeo se RESUME en una línea con el total, no se lista uno por uno', () => {
+  // 3 diferencias de redondeo, como el 16/07 real. No tienen que aparecer las 3 líneas
+  // con cliente; solo "N por redondeo · $total".
   const resultado = conciliarMP({
-    movimientos: [M(357358.76, '2026-07-16 14:25:07')],
-    operaciones: [O(357358.80, '2026-07-16 14:24:50')],
+    movimientos: [
+      M(357358.76, '2026-07-16 14:25:07', { cliente: 'MELLADO' }),
+      M(111189.72, '2026-07-16 14:36:32', { cliente: 'ESCOBAR' }),
+      M(408351.70, '2026-07-16 15:33:54', { cliente: 'RAMIREZ' }),
+    ],
+    operaciones: [
+      O(357358.80, '2026-07-16 14:24:50'),
+      O(111189.71, '2026-07-16 14:36:26'),
+      O(408351.71, '2026-07-16 15:33:45'),
+    ],
   });
   const txt = formatearMP({ fecha: '16/07/2026', cuenta: 'MP', resultado });
-  assert.match(txt, /diferencia de \$0,04 por redondeo/);
+  assert.match(txt, /🟡 3 por redondeo · −\$0,04/); // 3 pares, neto -0,04 (-0,04+0,01-0,01)
+  assert.ok(!/MELLADO/.test(txt), 'no debe listar el cliente de un redondeo');
+  assert.ok(!/por redondeo · .*MELLADO/s.test(txt));
+  assert.ok(!/14:24/.test(txt), 'no debe listar la hora de un redondeo');
 });
-t('el Excel sale con las dos hojas y sin romperse', () => {
+t('las salidas de dinero (Mercado Libre negativo, Haber) NO van al mensaje', () => {
   const resultado = conciliarMP({
-    movimientos: [M(100, '2026-07-16 10:00:10')],
-    operaciones: [O(100, '2026-07-16 10:00:00'), O(9999, '2026-07-16 11:00:00', { canal: 'Point' })],
+    movimientos: [
+      M(100, '2026-07-16 10:00:10'),
+      M(0, '2026-07-16 18:00:00', { debe: 0, haber: 20000000, cliente: 'TRANSFER A SANTANDER' }), // Haber = salida
+    ],
+    operaciones: [
+      O(100, '2026-07-16 10:00:00'),
+      O(-2924560.09, '2026-07-16 16:26:32', { unidad: 'Mercado Libre', canal: '' }), // salida
+      O(324915.32, '2026-07-16 06:16:11', { canal: '', unidad: '', instrumento: '' }), // fuera pero POSITIVO: sí se muestra
+    ],
   });
-  const buf = construirExcelMP({ fecha: '16/07/2026', cuenta: 'MERCADO PAGO MORENO', resultado });
-  const wb = XLSX.read(buf, { type: 'buffer' });
-  assert.deepStrictEqual(wb.SheetNames, ['Conciliación', 'Fuera de alcance']);
-  const filas = XLSX.utils.sheet_to_json(wb.Sheets['Conciliación'], { header: 1 });
-  assert.ok(filas.some((f) => String(f[0]).includes('Generado')));
-  assert.ok(XLSX.utils.sheet_to_json(wb.Sheets['Fuera de alcance'], { header: 1 }).some((f) => /Point/.test(String(f[7]))));
+  const txt = formatearMP({ fecha: '16/07/2026', cuenta: 'MP', resultado });
+  assert.ok(!/Mercado Libre/.test(txt), 'la salida de ML no debe aparecer en el mensaje');
+  assert.ok(!/2\.924\.560/.test(txt));
+  assert.ok(!/no son cobranzas/.test(txt), 'los Haber no van al mensaje');
+  assert.ok(!/20\.000\.000/.test(txt));
+  assert.match(txt, /revisar con MP/); // lo positivo fuera de alcance SÍ sigue
+});
+t('el reporte no arma ningún archivo: solo exporta el mensaje', () => {
+  // /mp ya no devuelve Excel. Si vuelve a exportar un builder, revisar el wizard (mp.js).
+  const rep = require('../src/lib/reporte-mp');
+  assert.deepStrictEqual(Object.keys(rep), ['formatearMP']);
 });
 
 console.log('área Caja Central (el rol dueño del comando)');
@@ -370,6 +526,40 @@ t('registra el comando UNA sola vez (si no, se ejecutaría duplicado)', () => {
   const registrados = [];
   cajaCentral.registrar({ command: (n) => registrados.push(n) });
   assert.deepStrictEqual(registrados, ['mp']);
+});
+
+console.log('informe PDF: el veredicto (control bien/mal)');
+t('aparea todo -> CONTROL OK', () => {
+  const r = conciliarMP({
+    movimientos: [M(100, '2026-07-16 10:00:10')],
+    operaciones: [O(100, '2026-07-16 10:00:00')],
+  });
+  const v = veredictoMP(r);
+  assert.strictEqual(v.ok, true);
+  assert.strictEqual(v.sinAparear, 0);
+  assert.strictEqual(v.titulo, 'CONTROL OK');
+});
+t('las diferencias de redondeo NO tumban el control (siguen siendo OK)', () => {
+  const r = conciliarMP({
+    movimientos: [M(357358.76, '2026-07-16 14:25:07')],
+    operaciones: [O(357358.80, '2026-07-16 14:24:50')], // dif 0,04 -> aviso, no huérfano
+  });
+  assert.strictEqual(r.resumen.nAviso, 1);
+  assert.strictEqual(veredictoMP(r).ok, true);
+});
+t('cobró MP y no está asentado -> CONTROL CON DIFERENCIAS', () => {
+  const r = conciliarMP({ movimientos: [], operaciones: [O(50000, '2026-07-16 10:00:00')] });
+  const v = veredictoMP(r);
+  assert.strictEqual(v.ok, false);
+  assert.strictEqual(v.sinAparear, 1);
+  assert.strictEqual(v.titulo, 'CONTROL CON DIFERENCIAS');
+});
+t('asentado y MP no lo tiene -> también CON DIFERENCIAS', () => {
+  const r = conciliarMP({ movimientos: [M(50000, '2026-07-16 10:00:00')], operaciones: [] });
+  assert.strictEqual(veredictoMP(r).ok, false);
+});
+t('fechaHoraArg: DD/MM/AAAA HH:MM, sin coma', () => {
+  assert.match(fechaHoraArg(), /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/);
 });
 
 // --- el wizard: los textos que ve el usuario -------------------------------
@@ -408,6 +598,59 @@ function ctxFalso() {
     assert.strictEqual((txt.match(/<b>/g) || []).length, (txt.match(/<\/b>/g) || []).length);
     assert.strictEqual((txt.match(/<code>/g) || []).length, (txt.match(/<\/code>/g) || []).length);
     assert.ok(!/&(?!amp;|lt;|gt;|#)/.test(txt)); // ningún & suelto
+  });
+
+  console.log('informe PDF: se genera un PDF válido');
+  const esPDF = (buf) => Buffer.isBuffer(buf) && buf.slice(0, 4).toString() === '%PDF' && buf.length > 800;
+  const okRes = conciliarMP({ movimientos: [M(100, '2026-07-16 10:00:10')], operaciones: [O(100, '2026-07-16 10:00:00')] });
+  const malRes = conciliarMP({ movimientos: [], operaciones: [O(50000, '2026-07-16 10:00:00'), O(70000, '2026-07-16 11:00:00', { source_id: 'x2' })] });
+  const pdfOk = await construirInformePDF({ fecha: '16/07/2026', cuenta: 'MERCADO PAGO MORENO', resultado: okRes, generadoEn: '17/07/2026 15:42' });
+  const pdfMal = await construirInformePDF({ fecha: '16/07/2026', cuenta: 'MERCADO PAGO MORENO', resultado: malRes, generadoEn: '17/07/2026 15:42' });
+  t('control OK -> PDF válido', () => { assert.ok(esPDF(pdfOk), 'no es un PDF'); });
+  t('control con diferencias -> PDF válido', () => { assert.ok(esPDF(pdfMal), 'no es un PDF'); });
+  t('el PDF con diferencias pesa más (lista lo que no cierra)', () => { assert.ok(pdfMal.length > pdfOk.length); });
+
+  // El RE-CHEQUEO de acceso del wizard tiene que ser la MISMA área que registra el comando.
+  // Regresión: quedó pidiendo 'tesoreria' al mudar /mp a Caja Central -> un usuario CON el rol
+  // entraba pero se trababa al mandar el archivo. Se maneja el paso 1 con distintos usuarios.
+  console.log('acceso: el rol cajacentral puede usar /mp de punta a punta');
+  // El paso 1 recibe la LIQUIDACIÓN (de ahí sale el día contra el que se concilia, y recién con
+  // el día se busca el libro). Acá corre sin DATABASE_URL, así que conseguirLibro devuelve
+  // ok:false —sin tirar, que es su contrato— y el wizard pide el export de Sigma.
+  const liqBuf = aBuffer([HDR_LIQ,
+    ['168263949797', 'available_money', 'Approved payment', '127241.52', '2026-07-16T16:10:56.000-04:00',
+      '-1231.70', '2026-07-16T16:10:56.000-04:00', '125245.10', '-764.72', 'Mercado Pago', 'QR Code', '']]);
+  async function correrPaso1(usuario) {
+    const replies = []; let salio = false;
+    global.fetch = async () => ({ arrayBuffer: async () => liqBuf.buffer.slice(liqBuf.byteOffset, liqBuf.byteOffset + liqBuf.byteLength) });
+    const ctx = {
+      state: { usuario },
+      message: { document: { file_id: 'mem://liq', file_name: 'settlement.xlsx' } },
+      telegram: { getFileLink: async () => ({ href: 'mem://liq' }) },
+      reply: async (t) => { replies.push(t); },
+      scene: { leave: async () => { salio = true; } },
+      wizard: { state: { data: {} }, next() {}, selectStep() {} }, // el paso 0 crea state.data
+    };
+    await mpWizard.steps[1](ctx);
+    return { replies, salio };
+  }
+  const rolSolo = await correrPaso1({ es_admin: false, areas: ['cajacentral'] });
+  t('un usuario con SOLO el rol cajacentral NO se traba en el paso del archivo', () => {
+    assert.ok(!rolSolo.replies.some((r) => /no tenés acceso/i.test(r)), 'lo bloqueó teniendo el rol correcto');
+    assert.ok(rolSolo.replies.some((r) => /export de Sigma/i.test(r)), 'no avanzó después de la liquidación');
+    assert.strictEqual(rolSolo.salio, false);
+  });
+  t('el día a conciliar sale de la liquidación (16/07), no de un default', () => {
+    assert.ok(rolSolo.replies.some((r) => /16\/07\/2026/.test(r)), 'no nombró el día de la liquidación');
+  });
+  const otroRol = await correrPaso1({ es_admin: false, areas: ['tesoreria'] });
+  t('un usuario sin el rol cajacentral SÍ queda bloqueado (y se nombra Caja Central)', () => {
+    assert.ok(otroRol.replies.some((r) => /acceso al área Caja Central/i.test(r)));
+    assert.strictEqual(otroRol.salio, true);
+  });
+  const admin = await correrPaso1({ es_admin: true, areas: [] });
+  t('un admin pasa igual (acceso total)', () => {
+    assert.ok(admin.replies.some((r) => /export de Sigma/i.test(r)));
   });
 
   console.log(`\n✅ ${pass} tests OK`);

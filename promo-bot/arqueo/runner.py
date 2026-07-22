@@ -31,7 +31,12 @@ def _main() -> int:
         return 0
     # --sin-snapshot: no acumular (no dependemos del disco persistente de Railway).
     # --json: el motor imprime la línea JSON con las rutas; el resumen humano va a stderr.
-    return main([sys.argv[1], "--sin-snapshot", "--json"])
+    #
+    # Los argumentos extra se REENVÍAN tal cual (sys.argv[2:]): así el bot puede acotar la
+    # ventana del reporte con --desde/--hasta (update_arqueo.py los acepta y de ahí sale el
+    # nombre del HTML). Antes se descartaban, y el período era siempre el rango completo del
+    # export: quien quería ver un día puntual de un export semanal no tenía cómo pedirlo.
+    return main([sys.argv[1], "--sin-snapshot", "--json", *sys.argv[2:]])
 
 
 if __name__ == "__main__":

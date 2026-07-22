@@ -89,6 +89,19 @@ t('timing grande pero acumulado sano NO alarma', () => {
   // Diferencia enorme del día pero acumulado bajo umbral (se dio vuelta).
   assert.strictEqual(evaluarCuenta({ diferencia: 150000000, acumulado: 1000, moneda: 'ARS', diasSobreUmbral: 0 }).nivel, 'timing');
 });
+t('umbral por-cuenta: Mercado Pago tolera más que el resto (comisión mensual)', () => {
+  // 9M ARS ya está sobre el umbral general (5M) para una cuenta normal...
+  assert.strictEqual(sobreUmbral(9000000, 'ARS'), true);
+  assert.strictEqual(sobreUmbral(9000000, 'ARS', 'Santander'), true);
+  // ...pero Mercado Pago (umbral propio 20M) sigue sano hasta 20M.
+  assert.strictEqual(sobreUmbral(9000000, 'ARS', 'Mercado Pago'), false);
+  assert.strictEqual(sobreUmbral(19999999, 'ARS', 'Mercado Pago'), false);
+  assert.strictEqual(sobreUmbral(20000000, 'ARS', 'Mercado Pago'), true);
+  // evaluarCuenta usa el override: 18M acumulado persistente en MP = timing, NO alerta...
+  assert.strictEqual(evaluarCuenta({ diferencia: 10000000, acumulado: 18000000, moneda: 'ARS', diasSobreUmbral: 8, cuenta: 'Mercado Pago' }).nivel, 'timing');
+  // ...la MISMA cifra en otra cuenta = alerta (no aflojamos el control del resto).
+  assert.strictEqual(evaluarCuenta({ diferencia: 10000000, acumulado: 18000000, moneda: 'ARS', diasSobreUmbral: 8, cuenta: 'Santander' }).nivel, 'alerta');
+});
 
 console.log('procesarCierre()');
 t('end-to-end: filas evaluadas + destacados de seguridad', () => {

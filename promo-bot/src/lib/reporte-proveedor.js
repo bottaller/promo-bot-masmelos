@@ -2,12 +2,18 @@
 // Se usa desde /reporte (a pedido) y desde /baja (aviso automático al equipo de compras).
 const { fechaHoyArg, formatoVencimiento } = require('./fechas');
 
+// Uno o varios % (varias camadas del mismo producto pueden llevar % distinto).
+function formatoDescuento(p) {
+  if (!p.descuentos.length) return 'sin dato de %';
+  return p.descuentos.map((d) => `${d}%`).join(' / ');
+}
+
 function formatearReporteProveedor(r, desde) {
   const m = r.metricas;
   const tasa = Math.round(m.tasaDescarte * 100);
   const hayCerradas = m.puestasCerradas > 0;
   const detalle = r.porProducto
-    .map((p) => `• ${p.producto}: ${p.altas} alta(s), ${p.hayCerradas ? p.efectividad + '% efectividad' : 'sin promociones cerradas todavía'}`)
+    .map((p) => `• ${p.producto}: ${p.altas} alta(s), descuento ${formatoDescuento(p)}, ${p.hayCerradas ? p.efectividad + '% efectividad' : 'sin promociones cerradas todavía'}`)
     .join('\n');
   const enPromo = m.abiertas > 0
     ? `${m.puestasAbiertas} unidades (${m.abiertas} alta${m.abiertas > 1 ? 's' : ''} abierta${m.abiertas > 1 ? 's' : ''})`

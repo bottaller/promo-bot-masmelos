@@ -3,7 +3,7 @@
 // (robusto a cargas retroactivas). Todo transaccional, mismo patrón que guardarSaldos.
 const { pool } = require('./pool');
 const { fechaISO, finDeDiaTs } = require('../lib/fechas');
-const { conciliar } = require('../lib/conciliacion');
+const { conciliar, ACUMULADO_DESDE } = require('../lib/conciliacion');
 
 // El corte por hora usa timestamps de "reloj de pared" (hora argentina literal). Se guardan
 // y comparan SIEMPRE como el string canónico 'AAAA-MM-DD HH:MM:SS'; se LEEN con to_char()
@@ -104,14 +104,27 @@ async function guardarMovimientos({ empresa = 'HONRE', movimientos, usuarioId })
   const client = await pool.connect();
   try {
     await client.query('begin');
+    // Insert EN LOTE (un query por cada LOTE filas), no uno por fila: con el grano por hora un
+    // día trae miles de renglones (uno por asiento), y 1 INSERT por fila tardaba ~2 min para dos
+    // días y hacía fallar el cierre (el envío del reporte expiraba). Ahora son pocas queries.
+    const COLS = 10;      // columnas del insert (los 10 placeholders de cada fila)
+    const LOTE = 1000;    // 1000×10 = 10.000 parámetros, holgado bajo el límite de 65.535 de pg
     for (const [iso, movs] of porDia) {
       await client.query('delete from bot.tesoreria_movimientos where fecha = $1::date and empresa = $2', [iso, empresa]);
-      for (const m of movs) {
+      for (let i = 0; i < movs.length; i += LOTE) {
+        const lote = movs.slice(i, i + LOTE);
+        const params = [];
+        const filas = lote.map((m, j) => {
+          const b = j * COLS;
+          params.push(iso, empresa, m.cuenta_id, m.cuenta || '', m.debe || 0, m.haber || 0,
+            m.debe_nominal || 0, m.haber_nominal || 0, m.ingreso || finDeDiaTs(iso), usuarioId ?? null);
+          return `($${b + 1}::date,$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9}::timestamp,$${b + 10})`;
+        }).join(',');
         await client.query(
           `insert into bot.tesoreria_movimientos
              (fecha, empresa, cuenta_id, cuenta, debe, haber, debe_nominal, haber_nominal, ingreso, cargado_por)
-           values ($1::date, $2, $3, $4, $5, $6, $7, $8, $9::timestamp, $10)`,
-          [iso, empresa, m.cuenta_id, m.cuenta || '', m.debe || 0, m.haber || 0, m.debe_nominal || 0, m.haber_nominal || 0, m.ingreso || finDeDiaTs(iso), usuarioId ?? null]
+           values ${filas}`,
+          params
         );
       }
     }
@@ -194,12 +207,15 @@ async function historialDiferencias({ empresa = 'HONRE', hasta, incluirHasta = f
   const op = incluirHasta ? '<=' : '<';
   // Momentos de conteo consecutivos (fecha + hora). El corte por hora usa el MISMO
   // movimientosDeRango que el cierre vivo → el acumulado coincide por construcción.
+  // Baseline: no encadenamos desde antes de ACUMULADO_DESDE (datos SEED de prueba con saltos
+  // irreales). La primera fecha en rango queda como ancla (sin diff propia); el acumulado
+  // arranca del primer par consecutivo dentro del rango.
   const filasR = await pool.query(
     `select distinct fecha,
             coalesce(to_char(contado_en, '${TS_FMT}'), to_char(fecha, 'YYYY-MM-DD') || ' 23:59:59') as momento
-       from bot.tesoreria_saldos where empresa = $1 and fecha ${op} $2::date
+       from bot.tesoreria_saldos where empresa = $1 and fecha >= $3::date and fecha ${op} $2::date
       order by momento`,
-    [empresa, fechaISO(hasta)]
+    [empresa, fechaISO(hasta), ACUMULADO_DESDE]
   );
   const filas = filasR.rows; // [{ fecha (Date), momento (string canónico) }] ordenados por momento
   const out = {};
