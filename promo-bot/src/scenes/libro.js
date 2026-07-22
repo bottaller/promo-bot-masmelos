@@ -12,6 +12,7 @@
 const { Scenes } = require('telegraf');
 const { esCancelar } = require('../lib/wizard');
 const { registrarLibro, LibroError } = require('../lib/registrar-libro');
+const { avisarLibroResuelto } = require('../aviso-libro');
 const { formatoVencimiento } = require('../lib/fechas');
 
 function esAdmin(u) {
@@ -123,6 +124,14 @@ const libroWizard = new Scenes.WizardScene(
       partes.push('', 'Ya lo pueden usar /cierre, /mp y /flujos.');
 
       await ctx.reply(partes.join('\n'), { parse_mode: 'HTML' });
+
+      // Si este libro resuelve un aviso "falta el libro" que ya había salido, avisarle al resto de
+      // los admins que ya está (para que no lo carguen de nuevo). Fire-and-forget: no debe demorar
+      // ni romper la carga, que ya quedó confirmada arriba. avisarLibroResuelto nunca tira.
+      const subidoPorTxt = (u && u.nombre) || (ctx.from.username ? '@' + ctx.from.username : String(ctx.from.id));
+      avisarLibroResuelto(ctx.telegram, { subidoPorTxt, subidoPorTelegramId: ctx.from.id })
+        .catch((e) => console.error('No pude anunciar el libro resuelto:', e.message));
+
       return ctx.scene.leave();
     } catch (e) {
       console.error('Error en /libro:', e.message);
