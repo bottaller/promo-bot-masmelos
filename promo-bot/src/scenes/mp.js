@@ -17,6 +17,7 @@ const { parsearLiquidacion, LiquidacionError } = require('../lib/liquidacion-exc
 const { conciliarMP, CUENTA_MP } = require('../lib/conciliacion-mp');
 const { formatearMP } = require('../lib/reporte-mp');
 const { construirInformePDF } = require('../lib/informe-mp-pdf');
+const { guardarMpConciliacion } = require('../db/mp-conciliacion');
 const { formatoVencimiento, fechaISO, fechaHoraArgDe } = require('../lib/fechas');
 
 // El área dueña del comando. El acceso ya lo garantiza requiereArea(AREA) al entrar, pero lo
@@ -195,6 +196,15 @@ async function conciliarYResponder(ctx, mayorEntrada, liq, libroMeta) {
   } catch (e) {
     console.error('No pude armar el informe PDF de /mp (el control ya se envió por mensaje):', e.message);
     await ctx.reply('⚠️ El control salió (arriba), pero no pude generar el PDF. Avisá al admin si lo necesitás.');
+  }
+
+  // Guardar cómo salió el control del día → lo consume el RESUMEN SEMANAL (aviso-mp-semanal.js).
+  // Robusto: el reporte ya salió; si la base falla, se loguea y no se cae. Re-correr el día pisa.
+  try {
+    const u = ctx.state.usuario;
+    await guardarMpConciliacion({ fecha: mayor.desde, resultado, fuente: mayor.origen, usuarioId: u ? u.id : null });
+  } catch (e) {
+    console.error('No pude guardar la conciliación de MP del día (el control ya se envió):', e.message);
   }
   return ctx.scene.leave();
 }

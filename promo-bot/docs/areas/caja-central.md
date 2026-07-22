@@ -37,6 +37,20 @@ rastrear y el bot lo avisa. Detalle en [conciliacion-mp.md](../conciliacion-mp.m
 **Detalle completo** (alcance validado, cómo aparea, tolerancias, el huso horario de MP):
 [conciliacion-mp.md](../conciliacion-mp.md).
 
+## Se guarda cada día + resumen semanal automático
+
+Cada corrida de `/mp` **guarda cómo salió el control del día** en `bot.mp_conciliacion` (migración
+**018**): veredicto, totales, diferencia y las huérfanas con su rastreo. Re-correr el día lo pisa (la
+última corrida es la verdad). El guardado es robusto: el reporte ya salió, si la base falla se loguea y
+no rompe el comando.
+
+**Los lunes a las 8:00 (hora Argentina)**, el bot arma un **resumen de la semana pasada** (lunes a
+domingo) y se lo manda a los **admins + al rol Caja Central** (`src/aviso-mp-semanal.js`). Día por día:
+si cerró, si tuvo diferencias (con el importe y dónde apareció) o **si no se corrió el control** — un
+día saltado es en sí un hallazgo. Hora configurable con `RESUMEN_MP_HORA_UTC` (default `11` UTC = 8:00
+ART). La parte que arma el texto (`src/lib/resumen-mp-semanal.js`) es pura y testeada
+(`test/resumen-mp-semanal.test.js`).
+
 ## Acceso
 
 `/mp` está gated por `requiereArea('cajacentral')` = **admin o rol `cajacentral`** (la misma tabla

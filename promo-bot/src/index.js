@@ -14,6 +14,7 @@ const deposito = require('./areas/deposito');
 const admin = require('./admin');
 const { iniciarAvisos } = require('./avisos');
 const { iniciarAvisoLibro } = require('./aviso-libro');
+const { iniciarAvisoMpSemanal } = require('./aviso-mp-semanal');
 const { iniciarEntregaCierres } = require('./entrega-cierres');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
@@ -129,6 +130,7 @@ bot.catch((err, ctx) => {
   try {
     iniciarAvisos(bot); // programa el chequeo diario de vencimientos
     iniciarAvisoLibro(bot); // 21:00 ART: avisa a los admins si falta el libro diario del día
+    iniciarAvisoMpSemanal(bot); // lunes 8:00 ART: resumen semanal del control de MP a admins + Caja Central
     iniciarEntregaCierres(bot); // 08:00 ART: concilia los cierres pendientes y entrega el reporte
     await publicarComandos(bot); // publica el menú "/" de Telegram (antes de arrancar el polling)
     await bot.launch();
