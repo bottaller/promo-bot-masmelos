@@ -1,12 +1,13 @@
-// Arma el Excel de promociones para Compras: todas las altas (abiertas y cerradas), una hoja
-// por proveedor, más un resumen y los informes de Depósito dirigidos a Compras.
+// Arma el Excel de promociones para Compras: todas las altas (abiertas y cerradas) en una sola
+// hoja de detalle, agrupadas por proveedor y con AutoFilter para que Compras filtre como quiera,
+// más un resumen y los informes de Depósito dirigidos a Compras.
 // Todo reporte lleva la fecha de generación (ver docs/convenciones.md).
 const XLSX = require('xlsx');
 const { fechaHoyArg, fechaHoraArgDe } = require('./fechas');
 
-const COLUMNAS_PROMOS = [
-  'Producto', 'EAN', 'Código', 'Vencimiento', 'Cantidad', 'Descuento %', 'Motivo alta', 'Fecha alta',
-  'Estado', 'Vendida', 'Remanente', 'Motivo baja', 'Fecha baja',
+const COLUMNAS_DETALLE = [
+  'Proveedor', 'Producto', 'EAN', 'Código', 'Vencimiento', 'Cantidad', 'Descuento %', 'Precio promocional',
+  'Motivo alta', 'Fecha alta', 'Estado', 'Vendida', 'Remanente', 'Motivo baja', 'Fecha baja',
 ];
 
 // timestamptz -> 'AAAA-MM-DD' en hora de pared argentina (no toISOString(), que puede correr el día).
@@ -15,14 +16,16 @@ function fechaCorta(fechaLike) {
   return f ? f.iso : '';
 }
 
-function filaPromo(a) {
+function filaDetalle(a) {
   return [
+    a.proveedor || 'Sin proveedor',
     a.producto || '',
     a.ean || '',
     a.articulo_codigo || '',
     a.vencimiento || '',
     Number(a.cantidad),
     a.descuento_pct === null || a.descuento_pct === undefined ? '' : Number(a.descuento_pct),
+    a.precio_promocional === null || a.precio_promocional === undefined ? '' : Number(a.precio_promocional),
     a.motivo || '',
     fechaCorta(a.fecha),
     a.fecha_baja ? 'Cerrada' : 'Abierta',
@@ -33,26 +36,11 @@ function filaPromo(a) {
   ];
 }
 
-// Nombre de hoja válido para Excel: máx 31 caracteres, sin : \ / ? * [ ], sin repetidos
-// (dos proveedores distintos podrían truncar al mismo nombre).
-function nombreDeHoja(nombre, usados) {
-  const base = (nombre || 'Sin proveedor').replace(/[:\\/?*[\]]/g, ' ').trim().slice(0, 31) || 'Proveedor';
-  let candidato = base;
-  let i = 2;
-  while (usados.has(candidato.toLowerCase())) {
-    const sufijo = ` (${i})`;
-    candidato = base.slice(0, 31 - sufijo.length) + sufijo;
-    i++;
-  }
-  usados.add(candidato.toLowerCase());
-  return candidato;
-}
-
 function construirExcelCompras(altas, informes) {
   const wb = XLSX.utils.book_new();
-  const usados = new Set();
 
-  // Agrupar altas por proveedor (null -> "Sin proveedor", cargas manuales sin ese dato).
+  // Agrupar por proveedor solo para ORDENAR el detalle (no para separar en hojas): "Sin proveedor"
+  // (cargas manuales sin ese dato) al final.
   const grupos = new Map();
   for (const a of altas) {
     const clave = a.proveedor || 'Sin proveedor';
@@ -74,25 +62,32 @@ function construirExcelCompras(altas, informes) {
     ['Proveedor', 'Altas totales', 'Abiertas', 'Cerradas', 'Unidades puestas'],
     ...filasResumen,
   ]);
-  XLSX.utils.book_append_sheet(wb, wsResumen, nombreDeHoja('Resumen', usados));
+  XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen');
 
-  // Una hoja por proveedor con el detalle de cada alta, abierta o cerrada.
-  for (const p of proveedores) {
-    const filas = grupos.get(p)
-      .slice()
-      .sort((x, y) => new Date(x.fecha) - new Date(y.fecha))
-      .map(filaPromo);
-    const ws = XLSX.utils.aoa_to_sheet([
-      [p],
-      [`Generado: ${fechaHoyArg()}`],
-      [],
-      COLUMNAS_PROMOS,
-      ...filas,
-    ]);
-    XLSX.utils.book_append_sheet(wb, ws, nombreDeHoja(p, usados));
-  }
+  // Hoja 2: detalle completo, agrupado por proveedor, con AutoFilter para filtrar por
+  // proveedor (o cualquier otra columna) desde el propio Excel.
+  const encabezadoFilaIdx = 3; // 0-based: título, generado, blanco, encabezado
+  const filasDetalle = proveedores.flatMap((p) => grupos.get(p)
+    .slice()
+    .sort((x, y) => new Date(x.fecha) - new Date(y.fecha))
+    .map(filaDetalle));
+  const wsDetalle = XLSX.utils.aoa_to_sheet([
+    ['Detalle de promociones (agrupado por proveedor)'],
+    [`Generado: ${fechaHoyArg()}`],
+    [],
+    COLUMNAS_DETALLE,
+    ...filasDetalle,
+  ]);
+  const ultimaFila = encabezadoFilaIdx + filasDetalle.length;
+  wsDetalle['!autofilter'] = {
+    ref: XLSX.utils.encode_range(
+      { r: encabezadoFilaIdx, c: 0 },
+      { r: ultimaFila, c: COLUMNAS_DETALLE.length - 1 }
+    ),
+  };
+  XLSX.utils.book_append_sheet(wb, wsDetalle, 'Detalle');
 
-  // Última hoja: informes de Depósito dirigidos a Compras.
+  // Hoja 3: informes de Depósito dirigidos a Compras.
   const filasInformes = informes.map((i) => [
     fechaCorta(i.fecha), i.referencia || '', i.mensaje || '', i.usuario_nombre || '',
   ]);
@@ -103,7 +98,7 @@ function construirExcelCompras(altas, informes) {
     ['Fecha', 'Proveedor/producto', 'Informe', 'Cargado por'],
     ...filasInformes,
   ]);
-  XLSX.utils.book_append_sheet(wb, wsInformes, nombreDeHoja('Informes Depósito', usados));
+  XLSX.utils.book_append_sheet(wb, wsInformes, 'Informes Depósito');
 
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
