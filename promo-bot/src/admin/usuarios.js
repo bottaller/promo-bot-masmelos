@@ -1,6 +1,8 @@
-// Comando /usuarios (solo admin): ver usuarios, gestionar roles y admins,
+// Comando /usuarios (admin o rol "sistemas"): ver usuarios, gestionar roles y admins,
 // sin tocar la base a mano ni redeployar.
-const { requiereAdmin } = require('../middleware/authz');
+// Los subcomandos "admin"/"quitaradmin" quedan solo para admin DE VERDAD (ver ese chequeo abajo):
+// si "sistemas" pudiera hacer admin a cualquiera, sería una forma indirecta de autopromoverse.
+const { requiereAdminOSistemas } = require('../middleware/authz');
 const {
   listarUsuarios, agregarUsuarioAArea, quitarUsuarioDeArea, listarAreas, hacerAdmin, quitarAdmin,
 } = require('../db/usuarios');
@@ -46,6 +48,9 @@ async function manejarUsuarios(ctx) {
   }
 
   if (sub === 'admin') {
+    if (!ctx.state.usuario.es_admin) {
+      return ctx.reply('Este subcomando es solo para administradores (no alcanza con el rol "sistemas").');
+    }
     const telegramId = args[1];
     if (!telegramId || !/^\d+$/.test(telegramId)) {
       return ctx.reply('Uso: /usuarios admin <telegram_id>');
@@ -55,6 +60,9 @@ async function manejarUsuarios(ctx) {
   }
 
   if (sub === 'quitaradmin') {
+    if (!ctx.state.usuario.es_admin) {
+      return ctx.reply('Este subcomando es solo para administradores (no alcanza con el rol "sistemas").');
+    }
     const telegramId = args[1];
     if (!telegramId || !/^\d+$/.test(telegramId)) {
       return ctx.reply('Uso: /usuarios quitaradmin <telegram_id>');
@@ -73,7 +81,8 @@ async function manejarUsuarios(ctx) {
   if (usuarios.length === 0) return ctx.reply('No hay usuarios cargados todavía.');
 
   const lineas = usuarios.map((u) => {
-    const tags = [u.es_admin ? 'admin' : null, u.activo ? null : 'inactivo'].filter(Boolean);
+    const esSistemas = !u.es_admin && u.areas && u.areas.includes('sistemas');
+    const tags = [u.es_admin ? 'admin' : null, esSistemas ? 'sistemas' : null, u.activo ? null : 'inactivo'].filter(Boolean);
     const tagTxt = tags.length ? ` [${tags.join(', ')}]` : '';
     let linea = `• ${u.nombre || '(sin nombre)'} — ${u.telegram_id}${tagTxt}`;
     // El rol solo se muestra para los NO admin (el admin accede a todo igual).
@@ -96,7 +105,7 @@ async function manejarUsuarios(ctx) {
 }
 
 function registrar(bot) {
-  bot.command('usuarios', requiereAdmin(), manejarUsuarios);
+  bot.command('usuarios', requiereAdminOSistemas(), manejarUsuarios);
 }
 
 module.exports = { registrar };

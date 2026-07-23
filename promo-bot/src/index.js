@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Telegraf, Scenes, session } = require('telegraf');
 
 const { auth } = require('./middleware/auth');
+const { tieneAccesoTotal } = require('./middleware/authz');
 const { setBot } = require('./notificar');
 const { listarUsuarios } = require('./db/usuarios');
 
@@ -46,14 +47,16 @@ const COMANDOS_ADMIN = [
   { comando: 'avisos', descripcion: 'Chequear vencimientos ahora' },
 ];
 
-// Comandos de un área visibles para un usuario: los admin-only solo si es admin.
+// Comandos de un área visibles para un usuario: los admin-only solo si tiene acceso total
+// (admin real o rol "sistemas" — ver src/middleware/authz.js).
 function comandosVisibles(area, usuario) {
-  return (area.comandos || []).filter((c) => !c.admin || usuario.es_admin);
+  return (area.comandos || []).filter((c) => !c.admin || tieneAccesoTotal(usuario));
 }
 
 // Arma el texto del menú según las áreas del usuario.
 function menuPara(usuario) {
-  const misAreas = usuario.es_admin ? areas.map((a) => a.codigo) : usuario.areas || [];
+  const veTodo = tieneAccesoTotal(usuario);
+  const misAreas = veTodo ? areas.map((a) => a.codigo) : usuario.areas || [];
   const lineas = [];
   for (const area of areas) {
     if (!misAreas.includes(area.codigo)) continue;
@@ -65,7 +68,7 @@ function menuPara(usuario) {
   let texto = lineas.length
     ? `Comandos disponibles para vos:${lineas.join('\n')}`
     : 'Todavía no tenés comandos asignados. Pedile un área al admin.';
-  if (usuario.es_admin) {
+  if (veTodo) {
     texto += '\n\nAdmin:';
     for (const c of COMANDOS_ADMIN) texto += `\n  /${c.comando} — ${c.descripcion}`;
   }
@@ -85,12 +88,13 @@ async function publicarComandos(bot) {
     for (const u of await listarUsuarios()) {
       if (!u.activo) continue;
       const lista = [...GLOBAL];
-      const misAreas = u.es_admin ? areas.map((a) => a.codigo) : u.areas || [];
+      const veTodo = tieneAccesoTotal(u);
+      const misAreas = veTodo ? areas.map((a) => a.codigo) : u.areas || [];
       for (const area of areas) {
         if (!misAreas.includes(area.codigo)) continue;
         for (const c of comandosVisibles(area, u)) lista.push(aCmd(c));
       }
-      if (u.es_admin) for (const c of COMANDOS_ADMIN) lista.push(aCmd(c));
+      if (veTodo) for (const c of COMANDOS_ADMIN) lista.push(aCmd(c));
       try {
         await bot.telegram.setMyCommands(lista, { scope: { type: 'chat', chat_id: Number(u.telegram_id) } });
       } catch (e) {

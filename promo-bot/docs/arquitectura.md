@@ -167,6 +167,13 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
   - **Depósito:** `/informe` (informe en texto libre sobre un proveedor o producto, dirigido a Calidad o Compras; se guarda en `bot.deposito_informes` y se avisa automáticamente a todos los que tengan ese rol, ver [areas/deposito.md](areas/deposito.md)).
 - **Menú dinámico:** cada usuario ve **solo los comandos de sus áreas**.
 - **Comandos de admin:** `/usuarios` (dar de alta gente, asignar áreas/roles, hacer admin), `/actartic` (subir el maestro de artículos) y `/avisos` (disparar a mano el chequeo de vencimientos).
+- **Rol "Sistemas"** (migración 019): ve y usa **todos los comandos** — todas las áreas más `/usuarios`,
+  `/actartic`, `/avisos`, `/libro` y `/reportecierre` (gateados con `requiereAdminOSistemas()`,
+  `src/middleware/authz.js`) — pero **no es admin de verdad**: los avisos proactivos que van "a los
+  admins" siguen filtrando por `es_admin = true` (`telegramIdsAdmins()`), así que no le llegan, y
+  dentro de `/usuarios` no puede hacer ni sacar admin a nadie (esos dos subcomandos quedan atrás de
+  un chequeo de `es_admin` aparte, para que no sea una forma indirecta de autopromoverse). Se asigna
+  igual que cualquier otro rol: `/usuarios agregar <telegram_id> sistemas`.
 - **Avisos proactivos:** un scheduler diario avisa a Calidad de lo que vence mañana/hoy y al creador + admins de lo ya vencido (ver §14).
 - **Registro por carpeta:** agregar un área = agregar una carpeta en `src/areas/`, sin tocar el núcleo.
 

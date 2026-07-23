@@ -15,9 +15,10 @@ const { guardarSaldos, saldosDeFecha, saldosAnteriores, registrarAuditoria } = r
 const { registrarCierrePendiente } = require('../db/cierres-pendientes');
 const { telegramIdsAdmins } = require('../db/usuarios');
 const { formatoVencimiento } = require('../lib/fechas');
+const { tieneAccesoTotal } = require('../middleware/authz');
 
 function tieneAccesoTesoreria(u) {
-  return !!(u && (u.es_admin || (u.areas && u.areas.includes('tesoreria'))));
+  return !!(u && (tieneAccesoTotal(u) || (u.areas && u.areas.includes('tesoreria'))));
 }
 function fmt(m) { return Math.round(Number(m)).toLocaleString('es-AR'); }
 // Escapa texto libre (nombre de empresa/cuenta, usuario) antes de meterlo en un mensaje con

@@ -18,6 +18,7 @@ const { conciliarMP, CUENTA_MP } = require('../lib/conciliacion-mp');
 const { formatearMP } = require('../lib/reporte-mp');
 const { construirInformePDF } = require('../lib/informe-mp-pdf');
 const { formatoVencimiento, fechaISO, fechaHoraArgDe } = require('../lib/fechas');
+const { tieneAccesoTotal } = require('../middleware/authz');
 
 // El área dueña del comando. El acceso ya lo garantiza requiereArea(AREA) al entrar, pero lo
 // re-chequeamos en cada paso con documento por si le quitan el rol a mitad de camino (es data
@@ -25,7 +26,7 @@ const { formatoVencimiento, fechaISO, fechaHoraArgDe } = require('../lib/fechas'
 // — si no, un usuario con el rol entra pero se traba al mandar el archivo.
 const AREA = 'cajacentral';
 function tieneAcceso(u) {
-  return !!(u && (u.es_admin || (u.areas && u.areas.includes(AREA))));
+  return !!(u && (tieneAccesoTotal(u) || (u.areas && u.areas.includes(AREA))));
 }
 
 async function bajarDoc(ctx, doc) {

@@ -13,9 +13,10 @@ const { Scenes } = require('telegraf');
 const { esCancelar } = require('../lib/wizard');
 const { registrarLibro, LibroError } = require('../lib/registrar-libro');
 const { formatoVencimiento } = require('../lib/fechas');
+const { tieneAccesoTotal } = require('../middleware/authz');
 
 function esAdmin(u) {
-  return !!(u && u.es_admin);
+  return tieneAccesoTotal(u);
 }
 
 async function bajarDoc(ctx, doc) {

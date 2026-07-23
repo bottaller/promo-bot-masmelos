@@ -13,7 +13,7 @@ const flujosWizard = require('../../scenes/flujos');
 const cierreWizard = require('../../scenes/cierre');
 const { crearControlPeriodo } = require('../../scenes/control-periodo');
 const { reporteCierreHandler } = require('../../scenes/reportecierre');
-const { requiereArea, requiereAdmin } = require('../../middleware/authz');
+const { requiereArea, requiereAdminOSistemas } = require('../../middleware/authz');
 
 const CODIGO = 'tesoreria';
 
@@ -32,13 +32,13 @@ const comandos = [
 function registrar(bot) {
   // La carga del libro es admin-only: si cada área pudiera pisarlo, dos personas podrían
   // estar mirando reportes armados sobre exports distintos del mismo día.
-  bot.command('libro', requiereAdmin(), (ctx) => ctx.scene.enter('libro-wizard'));
+  bot.command('libro', requiereAdminOSistemas(), (ctx) => ctx.scene.enter('libro-wizard'));
   bot.command('flujos', requiereArea(CODIGO), (ctx) => ctx.scene.enter('flujos-wizard'));
   bot.command('cierre', requiereArea(CODIGO), (ctx) => ctx.scene.enter('cierre-wizard'));
   bot.command('semanal', requiereArea(CODIGO), (ctx) => ctx.scene.enter('semanal-wizard'));
   bot.command('mensual', requiereArea(CODIGO), (ctx) => ctx.scene.enter('mensual-wizard'));
-  // Auditoría: recuperar un cierre pasado. Solo admin.
-  bot.command('reportecierre', requiereAdmin(), reporteCierreHandler);
+  // Auditoría: recuperar un cierre pasado. Admin o "sistemas".
+  bot.command('reportecierre', requiereAdminOSistemas(), reporteCierreHandler);
 }
 
 module.exports = {
