@@ -48,6 +48,7 @@ function escapeHtml(s) {
 function textoAvisos(p) {
   return p.avisos.map((tipo) => {
     if (tipo === 'redondeo') return `diferencia de ${fmtC(Math.abs(p.dif))} por redondeo`;
+    if (tipo === 'centavos') return `diferencia de ${fmtC(Math.abs(p.dif))} en centavos (misma venta)`;
     if (tipo === 'hora') {
       const min = Math.round(Math.abs(p.delta) / 60);
       return `el asiento se cargó ${min} min ${p.delta < 0 ? 'ANTES' : 'después'} del cobro`;
@@ -132,12 +133,13 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
   } else {
     L.push(`🔴 <b>Hay ${soloSistema.length + soloMp.length} sin aparear</b> — ${r.nPares} de ${Math.max(r.nSistema, r.nMp)} cerraron.`);
   }
-  // Las diferencias de redondeo son ruido contable: NO se listan una por una, solo el total.
-  // (Las de HORA sí se muestran más abajo: un asiento cargado lejos del cobro puede ser un problema.)
-  const soloRedondeo = pares.filter((p) => p.nivel === 'aviso' && !p.avisos.includes('hora'));
-  if (soloRedondeo.length) {
-    const totalRedondeo = soloRedondeo.reduce((a, p) => a + p.dif, 0);
-    L.push(`🟡 ${soloRedondeo.length} por redondeo · ${fmtC(totalRedondeo)}`);
+  // Las diferencias de centavos (redondeo ≤ $0,05 o el rescate de la misma venta con IVA/POS
+  // vs MP) son ruido contable: NO se listan una por una, solo el total. Las de HORA sí se
+  // muestran más abajo: un asiento cargado lejos del cobro puede ser un problema.
+  const soloCentavos = pares.filter((p) => p.nivel === 'aviso' && !p.avisos.includes('hora'));
+  if (soloCentavos.length) {
+    const total = soloCentavos.reduce((a, p) => a + p.dif, 0);
+    L.push(`🟡 ${soloCentavos.length} con diferencia de centavos · ${fmtC(total)}`);
   }
   L.push('');
 

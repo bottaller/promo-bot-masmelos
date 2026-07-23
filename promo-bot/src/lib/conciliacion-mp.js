@@ -29,8 +29,18 @@ const TIPO_COBRO = 'Approved payment';
 
 // Tolerancia de importe para dar dos renglones por apareados. Sigma redondea distinto que MP
 // en algunos asientos: el 16/07 pasó en 3 de 108, siempre por ≤ 4 centavos. Por encima de
-// esto NO es redondeo y no se aparean (quedan como huérfanos, que es lo que hay que mirar).
+// esto NO es redondeo y no se aparean en la primera pasada.
 const TOLERANCIA_REDONDEO = 0.05;
+
+// Rescate por CENTAVOS (segunda pasada): la MISMA venta cuyo importe difiere por más de 4
+// centavos entre el sistema y MP. Pasa en ventas con IVA: el sistema registra el total con el
+// IVA calculado al centavo y MP liquida un importe redondeado apenas distinto. Casos reales:
+// 20/07 ($0,54) y 22/07 ($0,30) salían como DOS 🔴 falsos (una venta = "cobró MP sin asentar"
+// + "asentado sin MP"). Se apuntan con un margen mayor de importe PERO ventana corta (la misma
+// operación se carga a segundos del cobro), para no aparear dos ventas distintas que por
+// casualidad estén a menos de $1 pero lejos en el tiempo.
+const TOLERANCIA_CENTAVOS = 1.00;
+const DELTA_CENTAVOS_SEG = 5 * 60;
 
 // Ventana máxima para considerar que un asiento y un cobro son la misma venta. El asiento se
 // carga DESPUÉS del pago (el 16/07: entre 5 y 210 segundos, mediana 16). 12 h es holgadísimo
@@ -126,6 +136,40 @@ function buscarContrapartidas(importe, otrasCuentas) {
   });
 }
 
+// Una pasada de apareo GREEDY entre las cobranzas del sistema y las operaciones de MP libres
+// (los que no marca `usadosS`/`usadosM`), con la tolerancia de importe y la ventana dadas.
+// Ordena por (importe exacto primero → menor diferencia → menor distancia de hora), así los
+// matches seguros cierran antes de los dudosos. Cada par apareado con diferencia lleva el
+// aviso `avisoImporte` ('redondeo' o 'centavos'); si además la hora está muy corrida, 'hora'.
+// Muta usadosS/usadosM/pares (para encadenar dos pasadas sobre los mismos arreglos).
+function emparejar({ sistema, mp, usadosS, usadosM, pares, tolImporte, deltaMax, avisoImporte }) {
+  const candidatos = [];
+  for (let i = 0; i < sistema.length; i++) {
+    if (usadosS.has(i)) continue;
+    for (let j = 0; j < mp.length; j++) {
+      if (usadosM.has(j)) continue;
+      const dif = redondear(sistema[i].debe - mp[j].bruto);
+      if (Math.abs(dif) > tolImporte) continue;
+      const delta = deltaSeg(sistema[i].ingreso, mp[j].hora);
+      const adelta = delta === null ? Infinity : Math.abs(delta);
+      if (adelta > deltaMax) continue;
+      candidatos.push({ i, j, dif, delta, exacto: dif === 0 ? 0 : 1, adif: Math.abs(dif), adelta });
+    }
+  }
+  candidatos.sort((a, b) => a.exacto - b.exacto || a.adif - b.adif || a.adelta - b.adelta);
+  for (const c of candidatos) {
+    if (usadosS.has(c.i) || usadosM.has(c.j)) continue;
+    usadosS.add(c.i);
+    usadosM.add(c.j);
+    // Los avisos son TIPOS, no texto: el importe y los segundos ya viajan en el par, y darle
+    // formato de plata es tarea del reporte (reporte-mp.js::textoAvisos), no del motor.
+    const avisos = [];
+    if (c.dif !== 0) avisos.push(avisoImporte);
+    if (c.adelta > DELTA_SOSPECHOSO_SEG) avisos.push('hora');
+    pares.push({ mov: sistema[c.i], op: mp[c.j], dif: c.dif, delta: c.delta, nivel: avisos.length ? 'aviso' : 'ok', avisos });
+  }
+}
+
 // conciliarMP({ movimientos, operaciones, otrasCuentas })
 //   movimientos:  renglones de la cuenta MP (mayor-excel.js)
 //   operaciones:  filas de la liquidación (liquidacion-excel.js)
@@ -133,10 +177,9 @@ function buscarContrapartidas(importe, otrasCuentas) {
 //                 `contrapartidas`: los asientos donde ese importe aparece en otra cuenta.
 // ->  { pares, soloSistema, soloMp, fuera: {sistema, mp}, resumen }
 //
-// El apareo es GREEDY sobre los pares candidatos ordenados por (importe exacto primero,
-// después menor diferencia, después menor distancia de hora). Con los importes casi únicos
-// que tiene un día real, eso resuelve solo; la hora está para desempatar los repetidos (el
-// 16/07 hubo dos ventas de $380 de cajas distintas) y para no aparear entre días.
+// Apareo en DOS pasadas (ver emparejar): 1) exacto/redondeo ≤ $0,05 con ventana amplia, y
+// 2) rescate por centavos (≤ $1, ventana corta) para la misma venta con importes apenas
+// distintos. Con los importes casi únicos de un día real esto resuelve solo.
 function conciliarMP({ movimientos = [], operaciones = [], otrasCuentas = [] }) {
   const sistema = repartir(movimientos, (m) => m.debe > 0, motivoFueraSistema);
   const mp = repartir(
@@ -145,38 +188,15 @@ function conciliarMP({ movimientos = [], operaciones = [], otrasCuentas = [] }) 
     motivoFueraMp
   );
 
-  const candidatos = [];
-  for (let i = 0; i < sistema.dentro.length; i++) {
-    for (let j = 0; j < mp.dentro.length; j++) {
-      const dif = redondear(sistema.dentro[i].debe - mp.dentro[j].bruto);
-      if (Math.abs(dif) > TOLERANCIA_REDONDEO) continue;
-      const delta = deltaSeg(sistema.dentro[i].ingreso, mp.dentro[j].hora);
-      const adelta = delta === null ? Infinity : Math.abs(delta);
-      if (adelta > DELTA_MAXIMO_SEG) continue;
-      candidatos.push({ i, j, dif, delta, exacto: dif === 0 ? 0 : 1, adif: Math.abs(dif), adelta });
-    }
-  }
-  candidatos.sort((a, b) => a.exacto - b.exacto || a.adif - b.adif || a.adelta - b.adelta);
-
+  // El apareo va en DOS pasadas, y el EXACTO cierra primero para que nada se robe un match
+  // seguro. La 2ª rescata la misma venta con centavos distintos que si no quedaba como 🔴 falso.
   const usadosS = new Set();
   const usadosM = new Set();
   const pares = [];
-  for (const c of candidatos) {
-    if (usadosS.has(c.i) || usadosM.has(c.j)) continue;
-    usadosS.add(c.i);
-    usadosM.add(c.j);
-    // Los avisos son TIPOS, no texto: el importe y los segundos ya viajan en el par, y darle
-    // formato de plata es tarea del reporte (reporte-mp.js::textoAvisos), no del motor.
-    const avisos = [];
-    if (c.dif !== 0) avisos.push('redondeo');
-    if (c.adelta > DELTA_SOSPECHOSO_SEG) avisos.push('hora');
-    pares.push({
-      mov: sistema.dentro[c.i], op: mp.dentro[c.j],
-      dif: c.dif, delta: c.delta,
-      nivel: avisos.length ? 'aviso' : 'ok',
-      avisos,
-    });
-  }
+  emparejar({ sistema: sistema.dentro, mp: mp.dentro, usadosS, usadosM, pares,
+    tolImporte: TOLERANCIA_REDONDEO, deltaMax: DELTA_MAXIMO_SEG, avisoImporte: 'redondeo' });
+  emparejar({ sistema: sistema.dentro, mp: mp.dentro, usadosS, usadosM, pares,
+    tolImporte: TOLERANCIA_CENTAVOS, deltaMax: DELTA_CENTAVOS_SEG, avisoImporte: 'centavos' });
   pares.sort((a, b) => (a.op.hora < b.op.hora ? -1 : a.op.hora > b.op.hora ? 1 : 0));
 
   // Las huérfanas se enriquecen con el rastreo: dónde más aparece ese importe en el libro.
@@ -218,5 +238,6 @@ function conciliarMP({ movimientos = [], operaciones = [], otrasCuentas = [] }) 
 
 module.exports = {
   conciliarMP, buscarContrapartidas, CUENTA_MP,
-  TOLERANCIA_REDONDEO, DELTA_MAXIMO_SEG, DELTA_SOSPECHOSO_SEG, CANAL_QR, TIPO_COBRO,
+  TOLERANCIA_REDONDEO, TOLERANCIA_CENTAVOS, DELTA_MAXIMO_SEG, DELTA_CENTAVOS_SEG,
+  DELTA_SOSPECHOSO_SEG, CANAL_QR, TIPO_COBRO,
 };

@@ -70,15 +70,40 @@ t('diferencia de centavos: aparea igual, con aviso de redondeo', () => {
   assert.deepStrictEqual(r.pares[0].avisos, ['redondeo']);
   assert.strictEqual(r.resumen.nivel, 'aviso'); // 🟡: hay que verlo, no alarma
 });
-t('diferencia MAYOR a la tolerancia: NO aparea (quedan los dos huérfanos)', () => {
+t('rescate por centavos: misma venta con dif > redondeo pero < $1 y a segundos APAREA (aviso)', () => {
+  // El caso real del 20/07 ($0,54) y 22/07 ($0,30): una venta con IVA cuyo importe difiere por
+  // centavos entre el sistema y MP. Antes salía como DOS 🔴 falsos; ahora aparea como aviso.
+  const r = conciliarMP({
+    movimientos: [M(598412.71, '2026-07-20 15:33:05')],
+    operaciones: [O(598412.17, '2026-07-20 15:32:40')], // dif 0,54 · 25 s
+  });
+  assert.strictEqual(r.pares.length, 1);
+  assert.strictEqual(r.soloSistema.length, 0);
+  assert.strictEqual(r.soloMp.length, 0);
+  assert.strictEqual(r.pares[0].nivel, 'aviso');
+  assert.deepStrictEqual(r.pares[0].avisos, ['centavos']);
+  assert.strictEqual(r.resumen.nivel, 'aviso'); // 🟡, no 🔴
+});
+t('diferencia > $1: NO aparea aunque estén juntos (quedan huérfanos)', () => {
   const r = conciliarMP({
     movimientos: [M(1000.00, '2026-07-16 10:00:10')],
-    operaciones: [O(1000.50, '2026-07-16 10:00:00')],
+    operaciones: [O(1002.00, '2026-07-16 10:00:00')], // $2 > tope de centavos
   });
   assert.strictEqual(r.pares.length, 0);
   assert.strictEqual(r.soloSistema.length, 1);
   assert.strictEqual(r.soloMp.length, 1);
   assert.strictEqual(r.resumen.nivel, 'alerta');
+});
+t('near-miss por centavos pero LEJOS en el tiempo: NO aparea (ventana corta del rescate)', () => {
+  // Dif de $0,50 (dentro del margen de centavos) pero a 40 min: son dos ventas distintas, no la
+  // misma cargada al toque. El rescate usa ventana corta justamente para no aparear esto.
+  const r = conciliarMP({
+    movimientos: [M(1000.00, '2026-07-16 10:40:00')],
+    operaciones: [O(1000.50, '2026-07-16 10:00:00')],
+  });
+  assert.strictEqual(r.pares.length, 0);
+  assert.strictEqual(r.soloSistema.length, 1);
+  assert.strictEqual(r.soloMp.length, 1);
 });
 t('cobró MP y no está asentado -> soloMp + 🔴', () => {
   const r = conciliarMP({ movimientos: [], operaciones: [O(50000, '2026-07-16 10:00:00')] });
@@ -479,7 +504,7 @@ t('el redondeo se RESUME en una línea con el total, no se lista uno por uno', (
     ],
   });
   const txt = formatearMP({ fecha: '16/07/2026', cuenta: 'MP', resultado });
-  assert.match(txt, /🟡 3 por redondeo · −\$0,04/); // 3 pares, neto -0,04 (-0,04+0,01-0,01)
+  assert.match(txt, /🟡 3 con diferencia de centavos · −\$0,04/); // 3 pares, neto -0,04 (-0,04+0,01-0,01)
   assert.ok(!/MELLADO/.test(txt), 'no debe listar el cliente de un redondeo');
   assert.ok(!/por redondeo · .*MELLADO/s.test(txt));
   assert.ok(!/14:24/.test(txt), 'no debe listar la hora de un redondeo');
