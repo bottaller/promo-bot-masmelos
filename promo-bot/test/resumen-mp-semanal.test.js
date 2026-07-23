@@ -31,14 +31,14 @@ t('diasDelRango: 7 días inclusive', () => {
 
 console.log('formatearResumenSemanal(): día por día');
 const semana = { desde: '2026-07-13', hasta: '2026-07-19' };
-const filaOK = (fecha, extra = {}) => ({ fecha, veredicto: 'ok', n_pares: 100, n_aviso: 0, ...extra });
-const filaDif = (fecha, extra = {}) => ({ fecha, veredicto: 'diferencias', n_pares: 99, n_solo_mp: 1, n_solo_sistema: 0, diferencia: -152577.45, huerfanas: [], ...extra });
+const filaOK = (fecha, extra = {}) => ({ fecha, plataforma: 'mp', veredicto: 'ok', n_pares: 100, n_aviso: 0, ...extra });
+const filaDif = (fecha, extra = {}) => ({ fecha, plataforma: 'mp', veredicto: 'diferencias', n_pares: 99, n_solo_mp: 1, n_solo_sistema: 0, diferencia: -152577.45, huerfanas: [], ...extra });
 
-t('marca los días que NO se corrieron', () => {
+t('marca los días que NO se arquearon', () => {
   const filas = [filaOK('2026-07-13'), filaOK('2026-07-14')]; // faltan mié a dom
   const { lineas, stats } = formatearResumenSemanal({ ...semana, filas });
   const texto = lineas.join('\n');
-  assert.match(texto, /no se corrió el control/);
+  assert.match(texto, /no se arqueó/);
   assert.strictEqual(stats.sinCorrer, 5); // 15,16,17,18,19
   assert.strictEqual(stats.ok, 2);
 });

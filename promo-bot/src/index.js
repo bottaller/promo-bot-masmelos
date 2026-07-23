@@ -17,6 +17,7 @@ const { iniciarAvisos } = require('./avisos');
 const { iniciarAvisoLibro } = require('./aviso-libro');
 const { iniciarAvisoMpSemanal } = require('./aviso-mp-semanal');
 const { iniciarEntregaCierres } = require('./entrega-cierres');
+const { iniciarEntregaArqueo } = require('./entrega-arqueo');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
 const areas = [calidad, compras, tesoreria, cajaCentral, carritoWeb, deposito];
@@ -145,9 +146,10 @@ bot.catch((err, ctx) => {
 (async () => {
   try {
     iniciarAvisos(bot); // programa el chequeo diario de vencimientos
-    iniciarAvisoLibro(bot); // 21:00 ART: avisa a los admins si falta el libro diario del día
-    iniciarAvisoMpSemanal(bot); // lunes 8:00 ART: resumen semanal del control de MP a admins + Caja Central
+    iniciarAvisoLibro(bot); // 21:30 ART: avisa a los admins qué documentos del día faltan (libro/MP/Talo)
+    iniciarAvisoMpSemanal(bot); // lunes 8:00 ART: resumen semanal MP + Talo a admins + Caja Central
     iniciarEntregaCierres(bot); // 08:00 ART: concilia los cierres pendientes y entrega el reporte
+    iniciarEntregaArqueo(bot); // 08:00 ART: arquea MP/Talo del día y manda los reportes a Tesorería + Caja Central
     await publicarComandos(bot); // publica el menú "/" de Telegram (antes de arrancar el polling)
     await bot.launch();
     console.log('Bot de Más Melos corriendo. Áreas:', areas.map((a) => a.codigo).join(', '));
