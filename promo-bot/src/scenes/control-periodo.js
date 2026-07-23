@@ -10,6 +10,8 @@ const { procesarCierre } = require('../lib/control-tesoreria');
 const { saldosDeFecha, saldosAnteriores, momentoConteo, registrarAuditoria } = require('../db/tesoreria');
 const { formatoVencimiento } = require('../lib/fechas');
 
+// Tesorería queda afuera del bypass de "sistemas" (a pedido): acá solo admin real o el rol
+// "tesoreria" de verdad, sin pasar por tieneAccesoTotal().
 function tieneAccesoTesoreria(u) {
   return !!(u && (u.es_admin || (u.areas && u.areas.includes('tesoreria'))));
 }

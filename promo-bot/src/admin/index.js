@@ -1,7 +1,7 @@
-// Comandos de administración (solo admin). Agrupa el /usuarios y el /actartic.
+// Comandos de administración (admin o rol "sistemas"). Agrupa el /usuarios y el /actartic.
 const usuarios = require('./usuarios');
 const actArticWizard = require('./scenes/actArtic');
-const { requiereAdmin } = require('../middleware/authz');
+const { requiereAdminOSistemas } = require('../middleware/authz');
 const { revisarVencimientos } = require('../avisos');
 
 // Scenes de admin que hay que registrar en el Stage.
@@ -9,10 +9,10 @@ const scenes = [actArticWizard];
 
 function registrar(bot) {
   usuarios.registrar(bot);
-  bot.command('actartic', requiereAdmin(), (ctx) => ctx.scene.enter('actartic-wizard'));
+  bot.command('actartic', requiereAdminOSistemas(), (ctx) => ctx.scene.enter('actartic-wizard'));
 
   // Dispara el chequeo de vencimientos al instante (para probar sin esperar la corrida diaria).
-  bot.command('avisos', requiereAdmin(), async (ctx) => {
+  bot.command('avisos', requiereAdminOSistemas(), async (ctx) => {
     const r = await revisarVencimientos(ctx.telegram);
     await ctx.reply(
       'Chequeo de vencimientos hecho.\n' +

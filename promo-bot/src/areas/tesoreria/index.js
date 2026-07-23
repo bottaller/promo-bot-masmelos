@@ -37,7 +37,7 @@ function registrar(bot) {
   bot.command('cierre', requiereArea(CODIGO), (ctx) => ctx.scene.enter('cierre-wizard'));
   bot.command('semanal', requiereArea(CODIGO), (ctx) => ctx.scene.enter('semanal-wizard'));
   bot.command('mensual', requiereArea(CODIGO), (ctx) => ctx.scene.enter('mensual-wizard'));
-  // Auditoría: recuperar un cierre pasado. Solo admin.
+  // Auditoría: recuperar un cierre pasado. Solo admin (Tesorería queda afuera de "sistemas").
   bot.command('reportecierre', requiereAdmin(), reporteCierreHandler);
 }
 

@@ -16,10 +16,16 @@ const MIN_UTC_RAW = Number(process.env.LIBRO_MIN_UTC);
 const MIN_UTC = (Number.isInteger(MIN_UTC_RAW) && MIN_UTC_RAW >= 0 && MIN_UTC_RAW <= 59) ? MIN_UTC_RAW : 0;
 
 // Guard en memoria: no repetir el aviso de la misma jornada dentro del mismo proceso.
+// Además marca que hay un aviso PENDIENTE de resolver: si después alguien carga el libro,
+// avisarLibroResuelto() lo usa para anunciarle al resto que ya está.
 let ultimaJornadaAvisada = null;
 
 function isoALinda(iso) {
   return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // Chequea la jornada de hoy y avisa si falta. Devuelve { jornada, cargado, avisados }.
@@ -59,6 +65,41 @@ async function revisarLibroDelDia(telegram, { empresa = 'HONRE' } = {}) {
   return { jornada: hoyISO, cargado: false, avisados };
 }
 
+// Cuando un admin carga el libro DESPUÉS de que salió el aviso "falta el libro", le avisa al RESTO
+// de los admins que ya está — así no se ponen todos a buscarlo ni a cargarlo de nuevo. Solo dispara
+// si había un aviso pendiente Y el libro recién cargado efectivamente cubre ese día (por si subieron
+// otro día distinto). Consume el pendiente: no vuelve a anunciar ni el aviso de las 21:00 re-reclama.
+//
+// Best-effort y en memoria: si Railway reinició entre el aviso y la carga, el pendiente se perdió y
+// no hay anuncio (mismo criterio que el dedup del aviso: perder el anuncio es más barato que spamear).
+// NUNCA tira: se llama desde el wizard /libro y no debe romper la carga.
+// Devuelve { anuncio, avisados }.
+async function avisarLibroResuelto(telegram, { empresa = 'HONRE', subidoPorTxt = '', subidoPorTelegramId = null } = {}) {
+  try {
+    const pend = ultimaJornadaAvisada;
+    if (!pend) return { anuncio: false, avisados: 0 }; // no había aviso pendiente
+    const fecha = parseVencimiento(isoALinda(pend));
+    const cubierto = await cubreFecha({ fecha, empresa });
+    if (!cubierto) return { anuncio: false, avisados: 0 }; // el libro que subieron no cubre el día avisado
+    ultimaJornadaAvisada = null; // consumido: ni re-anunciar ni que el aviso vuelva a reclamar
+    const quien = escapeHtml(subidoPorTxt).trim();
+    const msg =
+      `✅ <b>Ya se cargó el libro diario del ${isoALinda(pend)}</b>` +
+      (quien ? `\nLo subió ${quien}.` : '') +
+      '\nNo hace falta que lo cargue nadie más.';
+    const admins = (await telegramIdsAdmins()).filter((tid) => Number(tid) !== Number(subidoPorTelegramId));
+    let avisados = 0;
+    for (const tid of admins) {
+      try { await telegram.sendMessage(tid, msg, { parse_mode: 'HTML' }); avisados++; }
+      catch (e) { console.error(`Aviso libro resuelto: no pude avisar a ${tid}:`, e.message); }
+    }
+    return { anuncio: true, avisados };
+  } catch (e) {
+    console.error('Aviso libro resuelto:', e.message);
+    return { anuncio: false, avisados: 0 };
+  }
+}
+
 function msHastaProxima() {
   const ahora = Date.now();
   const d = new Date();
@@ -85,4 +126,4 @@ function iniciarAvisoLibro(bot) {
   setTimeout(correr, ms);
 }
 
-module.exports = { revisarLibroDelDia, iniciarAvisoLibro };
+module.exports = { revisarLibroDelDia, iniciarAvisoLibro, avisarLibroResuelto };

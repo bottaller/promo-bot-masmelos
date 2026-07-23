@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Telegraf, Scenes, session } = require('telegraf');
 
 const { auth } = require('./middleware/auth');
+const { tieneAccesoTotal, AREAS_SIN_BYPASS_SISTEMAS } = require('./middleware/authz');
 const { setBot } = require('./notificar');
 const { listarUsuarios } = require('./db/usuarios');
 
@@ -14,6 +15,7 @@ const deposito = require('./areas/deposito');
 const admin = require('./admin');
 const { iniciarAvisos } = require('./avisos');
 const { iniciarAvisoLibro } = require('./aviso-libro');
+const { iniciarAvisoMpSemanal } = require('./aviso-mp-semanal');
 const { iniciarEntregaCierres } = require('./entrega-cierres');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
@@ -46,14 +48,28 @@ const COMANDOS_ADMIN = [
   { comando: 'avisos', descripcion: 'Chequear vencimientos ahora' },
 ];
 
-// Comandos de un área visibles para un usuario: los admin-only solo si es admin.
+// Comandos de un área visibles para un usuario: los admin-only solo si tiene acceso total
+// (admin real o rol "sistemas" — ver src/middleware/authz.js). Como Tesorería ya queda afuera
+// de `misAreas` para "sistemas" (ver areasDe), este filtro ni se llega a evaluar para ella.
 function comandosVisibles(area, usuario) {
-  return (area.comandos || []).filter((c) => !c.admin || usuario.es_admin);
+  return (area.comandos || []).filter((c) => !c.admin || tieneAccesoTotal(usuario));
+}
+
+// Áreas que ve un usuario: admin real, todas; "sistemas", todas MENOS las excluidas (Tesorería
+// hoy) salvo que además tenga esa área asignada de verdad; el resto, solo las suyas.
+function areasDe(usuario) {
+  if (usuario.es_admin) return areas.map((a) => a.codigo);
+  const propias = usuario.areas || [];
+  if (propias.includes('sistemas')) {
+    return areas.map((a) => a.codigo).filter((c) => !AREAS_SIN_BYPASS_SISTEMAS.includes(c) || propias.includes(c));
+  }
+  return propias;
 }
 
 // Arma el texto del menú según las áreas del usuario.
 function menuPara(usuario) {
-  const misAreas = usuario.es_admin ? areas.map((a) => a.codigo) : usuario.areas || [];
+  const veTodo = tieneAccesoTotal(usuario);
+  const misAreas = areasDe(usuario);
   const lineas = [];
   for (const area of areas) {
     if (!misAreas.includes(area.codigo)) continue;
@@ -65,7 +81,7 @@ function menuPara(usuario) {
   let texto = lineas.length
     ? `Comandos disponibles para vos:${lineas.join('\n')}`
     : 'Todavía no tenés comandos asignados. Pedile un área al admin.';
-  if (usuario.es_admin) {
+  if (veTodo) {
     texto += '\n\nAdmin:';
     for (const c of COMANDOS_ADMIN) texto += `\n  /${c.comando} — ${c.descripcion}`;
   }
@@ -85,12 +101,13 @@ async function publicarComandos(bot) {
     for (const u of await listarUsuarios()) {
       if (!u.activo) continue;
       const lista = [...GLOBAL];
-      const misAreas = u.es_admin ? areas.map((a) => a.codigo) : u.areas || [];
+      const veTodo = tieneAccesoTotal(u);
+      const misAreas = areasDe(u);
       for (const area of areas) {
         if (!misAreas.includes(area.codigo)) continue;
         for (const c of comandosVisibles(area, u)) lista.push(aCmd(c));
       }
-      if (u.es_admin) for (const c of COMANDOS_ADMIN) lista.push(aCmd(c));
+      if (veTodo) for (const c of COMANDOS_ADMIN) lista.push(aCmd(c));
       try {
         await bot.telegram.setMyCommands(lista, { scope: { type: 'chat', chat_id: Number(u.telegram_id) } });
       } catch (e) {
@@ -129,6 +146,7 @@ bot.catch((err, ctx) => {
   try {
     iniciarAvisos(bot); // programa el chequeo diario de vencimientos
     iniciarAvisoLibro(bot); // 21:00 ART: avisa a los admins si falta el libro diario del día
+    iniciarAvisoMpSemanal(bot); // lunes 8:00 ART: resumen semanal del control de MP a admins + Caja Central
     iniciarEntregaCierres(bot); // 08:00 ART: concilia los cierres pendientes y entrega el reporte
     await publicarComandos(bot); // publica el menú "/" de Telegram (antes de arrancar el polling)
     await bot.launch();

@@ -33,6 +33,8 @@ function hace(ms) {
 
 // El acceso ya lo garantiza requiereArea('tesoreria') al entrar, pero lo re-chequeamos
 // en el paso del documento por si le quitan el rol a mitad de camino (es data financiera).
+// Tesorería queda afuera del bypass de "sistemas" (a pedido): acá solo admin real o el rol
+// "tesoreria" de verdad, sin pasar por tieneAccesoTotal().
 function tieneAccesoTesoreria(u) {
   return !!(u && (u.es_admin || (u.areas && u.areas.includes('tesoreria'))));
 }
