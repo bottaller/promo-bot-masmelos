@@ -528,10 +528,12 @@ t('las salidas de dinero (Mercado Libre negativo, Haber) NO van al mensaje', () 
   assert.ok(!/20\.000\.000/.test(txt));
   assert.match(txt, /revisar con MP/); // lo positivo fuera de alcance SÍ sigue
 });
-t('el reporte no arma ningún archivo: solo exporta el mensaje', () => {
-  // /mp ya no devuelve Excel. Si vuelve a exportar un builder, revisar el wizard (mp.js).
+t('el reporte solo arma mensajes: ningún generador de archivos', () => {
+  // El detalle en archivo va por el PDF (informe-mp-pdf.js). Si acá reaparece un builder de
+  // Excel, es que volvió el camino viejo: revisar el wizard (mp.js).
   const rep = require('../src/lib/reporte-mp');
-  assert.deepStrictEqual(Object.keys(rep), ['formatearMP']);
+  assert.ok(Object.keys(rep).every((k) => /^(formatear|lineas)/.test(k)), Object.keys(rep).join(','));
+  assert.ok(!Object.keys(rep).some((k) => /excel|xlsx|pdf/i.test(k)));
 });
 
 console.log('área Caja Central (el rol dueño del comando)');
@@ -606,23 +608,24 @@ function ctxFalso() {
   const ctx = ctxFalso();
   await mpWizard.steps[0](ctx);
   const txt = ctx.replies[0];
-  t('el primer mensaje enumera los 2 archivos, de dónde salen y de qué día', () => {
-    assert.match(txt, /2 archivos/);
-    assert.match(txt, /MISMO día/);
-    assert.match(txt, /Diario de movimientos contables/);
-    assert.match(txt, /Mayor de cuenta/);
-    assert.match(txt, /liquidación de Mercado Pago/i);
-    assert.match(txt, new RegExp(String(CUENTA_MP)));  // la cuenta, para que sepa cuál exportar
-    assert.match(txt, /Exportá.*el día que querés conciliar/s);
+  t('el primer mensaje lista TODAS las plataformas y qué archivo pedir de cada una', () => {
+    const { PLATAFORMAS } = require('../src/lib/plataformas');
+    for (const p of PLATAFORMAS) assert.match(txt, new RegExp(p.nombre), `falta ${p.nombre}`);
+    assert.match(txt, /liquidaciones/i);
+    assert.match(txt, /mismo día/i);
   });
-  t('el primer mensaje deja claro el alcance (QR/transferencia, Point no)', () => {
-    assert.match(txt, /QR o transferencia/);
-    assert.match(txt, /Point/);
+  t('avisa que detecta la plataforma solo y cómo terminar', () => {
+    assert.match(txt, /no hace falta que me digas cuál es cuál/i);
+    assert.match(txt, /listo/i);
   });
-  t('el HTML del mensaje está balanceado (si no, Telegram lo rechaza entero)', () => {
+  t('el HTML del mensaje está balanceado y sin < sueltos (si no, Telegram lo rechaza)', () => {
+    // El nombre de archivo de Talo es 'Movimientos_<desde>_<hasta>.xlsx': si no se escapa,
+    // Telegram lee <desde> como etiqueta y rechaza el mensaje ENTERO.
     assert.strictEqual((txt.match(/<b>/g) || []).length, (txt.match(/<\/b>/g) || []).length);
     assert.strictEqual((txt.match(/<code>/g) || []).length, (txt.match(/<\/code>/g) || []).length);
     assert.ok(!/&(?!amp;|lt;|gt;|#)/.test(txt)); // ningún & suelto
+    const sinTags = txt.replace(/<\/?(b|i|code|a|u|s)>/g, '');
+    assert.ok(!/<[a-zA-Z]/.test(sinTags), 'quedó un < sin escapar: ' + sinTags.match(/<[a-zA-Z][^>]*/));
   });
 
   console.log('informe PDF: se genera un PDF válido');
@@ -645,6 +648,8 @@ function ctxFalso() {
   const liqBuf = aBuffer([HDR_LIQ,
     ['168263949797', 'available_money', 'Approved payment', '127241.52', '2026-07-16T16:10:56.000-04:00',
       '-1231.70', '2026-07-16T16:10:56.000-04:00', '125245.10', '-764.72', 'Mercado Pago', 'QR Code', '']]);
+  // El paso 1 ahora ACUMULA liquidaciones (pueden ser varias plataformas): primero se manda el
+  // archivo y después "listo" para que arranque. Se maneja esa secuencia completa.
   async function correrPaso1(usuario) {
     const replies = []; let salio = false;
     global.fetch = async () => ({ arrayBuffer: async () => liqBuf.buffer.slice(liqBuf.byteOffset, liqBuf.byteOffset + liqBuf.byteLength) });
@@ -654,9 +659,13 @@ function ctxFalso() {
       telegram: { getFileLink: async () => ({ href: 'mem://liq' }) },
       reply: async (t) => { replies.push(t); },
       scene: { leave: async () => { salio = true; } },
-      wizard: { state: { data: {} }, next() {}, selectStep() {} }, // el paso 0 crea state.data
+      wizard: { state: { data: { liquidaciones: [] } }, next() {}, selectStep() {} },
     };
-    await mpWizard.steps[1](ctx);
+    await mpWizard.steps[1](ctx);        // manda la liquidación
+    if (!salio) {
+      ctx.message = { text: 'listo' };
+      await mpWizard.steps[1](ctx);      // arranca el arqueo
+    }
     return { replies, salio };
   }
   const rolSolo = await correrPaso1({ es_admin: false, areas: ['cajacentral'] });

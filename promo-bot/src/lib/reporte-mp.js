@@ -119,17 +119,29 @@ function agruparPorMotivo(filas, monto) {
   return [...g.values()].sort((a, b) => b.n - a.n);
 }
 
-// formatearMP({fecha, cuenta, resultado, origen}) -> string HTML para Telegram
-function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
+// Las líneas del arqueo de UNA plataforma. `seccion:true` la prepara para ir dentro de un
+// reporte multi-plataforma (encabezado corto, sin la línea "Generado", que va una sola vez
+// arriba de todo). `plataforma` es el descriptor (plataformas.js); si no viene, Mercado Pago.
+function lineasPlataforma({ fecha, cuenta, resultado, origen = 'mayor', plataforma = null, seccion = false,
+  maxLista = MAX_LISTA }) {
   const { pares, soloSistema, soloMp, fuera, resumen: r } = resultado;
+  const nombre = (plataforma && plataforma.nombre) || 'Mercado Pago';
+  // En el CUERPO se repite en cada renglón: va el nombre corto (MP, Talo) para no inflar el
+  // mensaje, que tiene tope de 4096. El largo queda para el encabezado.
+  const corto = (plataforma && plataforma.corto) || 'MP';
+  const alcance = (plataforma && plataforma.alcanceTxt) || 'QR / transferencia';
   const L = [];
-  L.push(`🔎 <b>Conciliación Mercado Pago</b> — ${escapeHtml(cuenta)} · ${fecha}`);
-  L.push(`<i>Generado: ${fechaHoyArg()} · fuente: ${origen === 'mayor' ? 'Mayor de cuenta' : 'Diario de movimientos'}</i>`);
+  if (seccion) {
+    L.push(`🔎 <b>${escapeHtml(nombre)}</b> — ${escapeHtml(cuenta)}`);
+  } else {
+    L.push(`🔎 <b>Conciliación ${escapeHtml(nombre)}</b> — ${escapeHtml(cuenta)} · ${fecha}`);
+    L.push(`<i>Generado: ${fechaHoyArg()} · fuente: ${origen === 'mayor' ? 'Mayor de cuenta' : 'Diario de movimientos'}</i>`);
+  }
   L.push('');
 
   // El titular: ¿aparea todo o no?
   if (!soloSistema.length && !soloMp.length) {
-    L.push(`🟢 <b>Aparea todo</b>: ${r.nPares} cobranzas ↔ ${r.nPares} operaciones de MP (QR/transferencia).`);
+    L.push(`🟢 <b>Aparea todo</b>: ${r.nPares} cobranzas ↔ ${r.nPares} operaciones (${escapeHtml(alcance)}).`);
   } else {
     L.push(`🔴 <b>Hay ${soloSistema.length + soloMp.length} sin aparear</b> — ${r.nPares} de ${Math.max(r.nSistema, r.nMp)} cerraron.`);
   }
@@ -144,30 +156,36 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
   L.push('');
 
   // Totales.
-  L.push('<b>Totales (QR / transferencia)</b>');
-  L.push(`Sistema: <b>${fmt(r.totalSistema)}</b> · MP: <b>${fmt(r.totalMp)}</b> · dif: <b>${fmtC(r.diferencia)}</b>`);
-  L.push(`MP acredita <b>${fmt(r.neto)}</b> — comisión ${fmt(Math.abs(r.comision))} + impuestos ${fmt(Math.abs(r.impuestos))}`);
+  L.push(`<b>Totales (${escapeHtml(alcance)})</b>`);
+  L.push(`Sistema: <b>${fmt(r.totalSistema)}</b> · ${escapeHtml(corto)}: <b>${fmt(r.totalMp)}</b> · dif: <b>${fmtC(r.diferencia)}</b>`);
+  L.push(`${escapeHtml(corto)} acredita <b>${fmt(r.neto)}</b> — comisión ${fmt(Math.abs(r.comision))} + impuestos ${fmt(Math.abs(r.impuestos))}`);
 
-  // Lo que está mal: operaciones de MP sin asiento (entró plata y no se registró).
+  // Lo que está mal: cobros de la plataforma sin asiento (entró plata y no se registró).
   if (soloMp.length) {
     L.push('');
-    L.push(`🔴 <b>Cobró MP y no está asentado</b> — ${soloMp.length} · ${fmt(r.totalSoloMp)}`);
-    for (const o of soloMp.slice(0, MAX_LISTA)) {
-      L.push(`• ${hora(o.hora)} · <b>${fmt(o.bruto)}</b> · ${escapeHtml(instrumento(o))} · id ${escapeHtml(o.source_id)}`);
+    L.push(`🔴 <b>Cobró ${escapeHtml(corto)} y no está asentado</b> — ${soloMp.length} · ${fmt(r.totalSoloMp)}`);
+    for (const o of soloMp.slice(0, maxLista)) {
+      // Cómo se identifica la operación depende de la plataforma: MP tiene un id estable,
+      // Talo casi nunca (pero trae el titular). Lo resuelve el descriptor.
+      const ref = plataforma && plataforma.referencia ? plataforma.referencia(o) : `id ${o.source_id || ''}`;
+      const partes = [hora(o.hora), `<b>${fmt(o.bruto)}</b>`];
+      if (o.instrumento) partes.push(escapeHtml(instrumento(o)));
+      if (ref) partes.push(escapeHtml(ref));
+      L.push(`• ${partes.join(' · ')}`);
       L.push(...lineasContrapartida(o));
     }
-    if (soloMp.length > MAX_LISTA) L.push(`<i>…y ${soloMp.length - MAX_LISTA} más.</i>`);
+    if (soloMp.length > maxLista) L.push(`<i>…y ${soloMp.length - maxLista} más.</i>`);
   }
 
-  // Lo que está mal al revés: asentado y MP no lo tiene.
+  // Lo que está mal al revés: asentado y la plataforma no lo tiene.
   if (soloSistema.length) {
     L.push('');
-    L.push(`🔴 <b>Asentado y MP no lo tiene</b> — ${soloSistema.length} · ${fmt(r.totalSoloSistema)}`);
-    for (const m of soloSistema.slice(0, MAX_LISTA)) {
+    L.push(`🔴 <b>Asentado y ${escapeHtml(corto)} no lo tiene</b> — ${soloSistema.length} · ${fmt(r.totalSoloSistema)}`);
+    for (const m of soloSistema.slice(0, maxLista)) {
       L.push(`• ${hora(m.ingreso)} · <b>${fmt(m.debe)}</b> · ${escapeHtml(m.comprobante || 'asiento ' + m.asiento)} · ${escapeHtml(m.cliente)} (${escapeHtml(m.usuario)})`);
       L.push(...lineasContrapartida(m));
     }
-    if (soloSistema.length > MAX_LISTA) L.push(`<i>…y ${soloSistema.length - MAX_LISTA} más.</i>`);
+    if (soloSistema.length > maxLista) L.push(`<i>…y ${soloSistema.length - maxLista} más.</i>`);
   }
 
   // Si hay huérfanas y NO se pudo rastrear (mandaron el Mayor, que trae una sola cuenta),
@@ -183,10 +201,10 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
   if (avisoHora.length) {
     L.push('');
     L.push(`🟡 <b>Apareadas con la hora corrida</b> — ${avisoHora.length}`);
-    for (const p of avisoHora.slice(0, MAX_LISTA)) {
+    for (const p of avisoHora.slice(0, maxLista)) {
       L.push(`• ${hora(p.op.hora)} · ${fmt(p.op.bruto)} · ${escapeHtml(textoAvisos(p))} · ${escapeHtml(p.mov.cliente)}`);
     }
-    if (avisoHora.length > MAX_LISTA) L.push(`<i>…y ${avisoHora.length - MAX_LISTA} más.</i>`);
+    if (avisoHora.length > maxLista) L.push(`<i>…y ${avisoHora.length - maxLista} más.</i>`);
   }
 
   // Fuera de alcance: se listan para que quede claro que NO se ignoraron en silencio, PERO
@@ -200,7 +218,45 @@ function formatearMP({ fecha, cuenta, resultado, origen = 'mayor' }) {
     for (const g of grupos) L.push(`• ${escapeHtml(g.motivo)}: ${g.n} · ${fmt(g.total)}`);
   }
 
+  return L;
+}
+
+// Arqueo de UNA plataforma (compatibilidad: lo que se usaba cuando solo existía /mp).
+function formatearMP({ fecha, cuenta, resultado, origen = 'mayor', plataforma = null }) {
+  return unirRecortando(lineasPlataforma({ fecha, cuenta, resultado, origen, plataforma }));
+}
+
+// Arqueo de VARIAS plataformas en un solo mensaje: un titular global y una sección por
+// plataforma. `resultados` = [{ plataforma, cuenta, resultado }].
+function formatearArqueo({ fecha, origen = 'mayor', resultados }) {
+  const conProblema = resultados.filter((x) => x.resultado.soloSistema.length || x.resultado.soloMp.length);
+  const L = [];
+  L.push(`📊 <b>Arqueo de cobros</b> — ${fecha}`);
+  L.push(`<i>Generado: ${fechaHoyArg()} · fuente: ${origen === 'mayor' ? 'Mayor de cuenta' : 'Diario de movimientos'}</i>`);
+  L.push('');
+  if (!resultados.length) {
+    L.push('No recibí ninguna liquidación para conciliar.');
+    return unirRecortando(L);
+  }
+  // Titular global: lo primero que se lee es si el día cerró o no, sin importar cuántas
+  // plataformas haya.
+  if (!conProblema.length) {
+    const total = resultados.reduce((a, x) => a + x.resultado.resumen.nPares, 0);
+    L.push(`🟢 <b>Cerró todo</b> — ${resultados.length} plataforma(s), ${total} cobranzas apareadas.`);
+  } else {
+    const sinAparear = conProblema.reduce(
+      (a, x) => a + x.resultado.soloSistema.length + x.resultado.soloMp.length, 0);
+    L.push(`🔴 <b>${sinAparear} sin aparear</b> en ${conProblema.length} de ${resultados.length} plataforma(s).`);
+  }
+  // Con varias plataformas el mensaje se duplica y el tope de Telegram se alcanza enseguida:
+  // se listan menos ítems por sección para que ninguna quede recortada de entrada.
+  const maxLista = resultados.length > 1 ? 4 : MAX_LISTA;
+  for (const x of resultados) {
+    L.push('');
+    L.push('━━━━━━━━━━━━━━━');
+    L.push(...lineasPlataforma({ ...x, fecha, origen, seccion: true, maxLista }));
+  }
   return unirRecortando(L);
 }
 
-module.exports = { formatearMP };
+module.exports = { formatearMP, formatearArqueo, lineasPlataforma };

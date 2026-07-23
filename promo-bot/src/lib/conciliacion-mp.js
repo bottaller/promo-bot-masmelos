@@ -107,19 +107,28 @@ function repartir(items, enAlcance, motivo) {
 // devuelve el asiento completo —con cuentas, concepto, hora y usuario— para que lo juzgue
 // una persona.
 
-// Cuántos asientos candidatos se devuelven por huérfana (si hay más, es ruido: el importe
-// es poco distintivo y la pista no sirve).
+// Cuántos asientos candidatos se devuelven por huérfana.
 const MAX_CONTRAPARTIDAS = 3;
+
+// El rastreo sirve porque el importe es DISTINTIVO ($152.577,45 no se repite por casualidad).
+// Con importes chicos o redondos deja de ser una pista y pasa a ser ruido: en el 23/07, un
+// cobro de prueba de $1 "apareció" en un asiento de proveedores de 8 renglones. Dos guardas:
+//  - por debajo de este importe no se rastrea (no es distintivo);
+//  - si el importe pega en MÁS asientos que el tope, tampoco: que aparezca en todos lados es
+//    justamente la prueba de que no identifica nada.
+const MIN_IMPORTE_RASTREO = 1000;
 
 // Los asientos del libro que contienen un renglón por ese importe, en una cuenta que no sea
 // la de MP. Devuelve [{asiento, ingreso, concepto, comprobante, usuario, renglones:[...]}]
 // con TODOS los renglones del asiento (la partida doble entera: de dónde salió y adónde fue).
 function buscarContrapartidas(importe, otrasCuentas) {
   if (!otrasCuentas || !otrasCuentas.length) return [];
+  if (Math.abs(importe) < MIN_IMPORTE_RASTREO) return []; // importe poco distintivo: sería ruido
   const pega = (m) => Math.abs(m.debe - importe) <= TOLERANCIA_REDONDEO
     || Math.abs(m.haber - importe) <= TOLERANCIA_REDONDEO;
 
   const asientos = [...new Set(otrasCuentas.filter(pega).map((m) => m.asiento))];
+  if (asientos.length > MAX_CONTRAPARTIDAS) return []; // aparece en todos lados: no identifica nada
   return asientos.slice(0, MAX_CONTRAPARTIDAS).map((nro) => {
     const renglones = otrasCuentas.filter((m) => m.asiento === nro);
     const cab = renglones.find(pega) || renglones[0];
@@ -142,7 +151,8 @@ function buscarContrapartidas(importe, otrasCuentas) {
 // matches seguros cierran antes de los dudosos. Cada par apareado con diferencia lleva el
 // aviso `avisoImporte` ('redondeo' o 'centavos'); si además la hora está muy corrida, 'hora'.
 // Muta usadosS/usadosM/pares (para encadenar dos pasadas sobre los mismos arreglos).
-function emparejar({ sistema, mp, usadosS, usadosM, pares, tolImporte, deltaMax, avisoImporte }) {
+function emparejar({ sistema, mp, usadosS, usadosM, pares, tolImporte, deltaMax, avisoImporte,
+  deltaSospechoso = DELTA_SOSPECHOSO_SEG }) {
   const candidatos = [];
   for (let i = 0; i < sistema.length; i++) {
     if (usadosS.has(i)) continue;
@@ -165,7 +175,7 @@ function emparejar({ sistema, mp, usadosS, usadosM, pares, tolImporte, deltaMax,
     // formato de plata es tarea del reporte (reporte-mp.js::textoAvisos), no del motor.
     const avisos = [];
     if (c.dif !== 0) avisos.push(avisoImporte);
-    if (c.adelta > DELTA_SOSPECHOSO_SEG) avisos.push('hora');
+    if (c.adelta > deltaSospechoso) avisos.push('hora');
     pares.push({ mov: sistema[c.i], op: mp[c.j], dif: c.dif, delta: c.delta, nivel: avisos.length ? 'aviso' : 'ok', avisos });
   }
 }
@@ -180,22 +190,29 @@ function emparejar({ sistema, mp, usadosS, usadosM, pares, tolImporte, deltaMax,
 // Apareo en DOS pasadas (ver emparejar): 1) exacto/redondeo ≤ $0,05 con ventana amplia, y
 // 2) rescate por centavos (≤ $1, ventana corta) para la misma venta con importes apenas
 // distintos. Con los importes casi únicos de un día real esto resuelve solo.
-function conciliarMP({ movimientos = [], operaciones = [], otrasCuentas = [] }) {
+// `plataforma` (opcional) define QUÉ operaciones entran y cuándo la hora es sospechosa. Si no
+// viene, se usan las reglas de Mercado Pago — así los llamadores viejos siguen andando igual.
+// El apareo, las tolerancias y el rastreo son agnósticos: valen para cualquier plataforma.
+const REGLAS_MP = {
+  enAlcance: (o) => o.canal === CANAL_QR && o.tipo === TIPO_COBRO && o.bruto > 0,
+  motivoFuera: motivoFueraMp,
+  deltaSospechosoSeg: DELTA_SOSPECHOSO_SEG,
+};
+
+function conciliarMP({ movimientos = [], operaciones = [], otrasCuentas = [], plataforma = null }) {
+  const P = plataforma || REGLAS_MP;
+  const deltaSospechoso = P.deltaSospechosoSeg || DELTA_SOSPECHOSO_SEG;
   const sistema = repartir(movimientos, (m) => m.debe > 0, motivoFueraSistema);
-  const mp = repartir(
-    operaciones,
-    (o) => o.canal === CANAL_QR && o.tipo === TIPO_COBRO && o.bruto > 0,
-    motivoFueraMp
-  );
+  const mp = repartir(operaciones, P.enAlcance, P.motivoFuera);
 
   // El apareo va en DOS pasadas, y el EXACTO cierra primero para que nada se robe un match
   // seguro. La 2ª rescata la misma venta con centavos distintos que si no quedaba como 🔴 falso.
   const usadosS = new Set();
   const usadosM = new Set();
   const pares = [];
-  emparejar({ sistema: sistema.dentro, mp: mp.dentro, usadosS, usadosM, pares,
+  emparejar({ sistema: sistema.dentro, mp: mp.dentro, usadosS, usadosM, pares, deltaSospechoso,
     tolImporte: TOLERANCIA_REDONDEO, deltaMax: DELTA_MAXIMO_SEG, avisoImporte: 'redondeo' });
-  emparejar({ sistema: sistema.dentro, mp: mp.dentro, usadosS, usadosM, pares,
+  emparejar({ sistema: sistema.dentro, mp: mp.dentro, usadosS, usadosM, pares, deltaSospechoso,
     tolImporte: TOLERANCIA_CENTAVOS, deltaMax: DELTA_CENTAVOS_SEG, avisoImporte: 'centavos' });
   pares.sort((a, b) => (a.op.hora < b.op.hora ? -1 : a.op.hora > b.op.hora ? 1 : 0));
 
