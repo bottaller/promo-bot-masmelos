@@ -14,10 +14,10 @@ const { esCancelar } = require('../lib/wizard');
 const { registrarLibro, LibroError } = require('../lib/registrar-libro');
 const { avisarLibroResuelto } = require('../aviso-libro');
 const { formatoVencimiento } = require('../lib/fechas');
-const { tieneAccesoTotal } = require('../middleware/authz');
 
+// Solo admin real: Tesorería (y /libro en particular) queda afuera del bypass de "sistemas".
 function esAdmin(u) {
-  return tieneAccesoTotal(u);
+  return !!(u && u.es_admin);
 }
 
 async function bajarDoc(ctx, doc) {

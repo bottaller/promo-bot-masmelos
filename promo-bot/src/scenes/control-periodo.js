@@ -9,10 +9,11 @@ const { parsearLibro, LibroError } = require('../lib/libro-excel');
 const { procesarCierre } = require('../lib/control-tesoreria');
 const { saldosDeFecha, saldosAnteriores, momentoConteo, registrarAuditoria } = require('../db/tesoreria');
 const { formatoVencimiento } = require('../lib/fechas');
-const { tieneAccesoTotal } = require('../middleware/authz');
 
+// Tesorería queda afuera del bypass de "sistemas" (a pedido): acá solo admin real o el rol
+// "tesoreria" de verdad, sin pasar por tieneAccesoTotal().
 function tieneAccesoTesoreria(u) {
-  return !!(u && (tieneAccesoTotal(u) || (u.areas && u.areas.includes('tesoreria'))));
+  return !!(u && (u.es_admin || (u.areas && u.areas.includes('tesoreria'))));
 }
 const NIVEL_ORD = { ok: 0, timing: 1, revisar: 2, alerta: 3 };
 function peorNivel(filas) {

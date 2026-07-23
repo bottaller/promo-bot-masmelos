@@ -2,7 +2,7 @@ require('dotenv').config();
 const { Telegraf, Scenes, session } = require('telegraf');
 
 const { auth } = require('./middleware/auth');
-const { tieneAccesoTotal } = require('./middleware/authz');
+const { tieneAccesoTotal, AREAS_SIN_BYPASS_SISTEMAS } = require('./middleware/authz');
 const { setBot } = require('./notificar');
 const { listarUsuarios } = require('./db/usuarios');
 
@@ -49,15 +49,27 @@ const COMANDOS_ADMIN = [
 ];
 
 // Comandos de un área visibles para un usuario: los admin-only solo si tiene acceso total
-// (admin real o rol "sistemas" — ver src/middleware/authz.js).
+// (admin real o rol "sistemas" — ver src/middleware/authz.js). Como Tesorería ya queda afuera
+// de `misAreas` para "sistemas" (ver areasDe), este filtro ni se llega a evaluar para ella.
 function comandosVisibles(area, usuario) {
   return (area.comandos || []).filter((c) => !c.admin || tieneAccesoTotal(usuario));
+}
+
+// Áreas que ve un usuario: admin real, todas; "sistemas", todas MENOS las excluidas (Tesorería
+// hoy) salvo que además tenga esa área asignada de verdad; el resto, solo las suyas.
+function areasDe(usuario) {
+  if (usuario.es_admin) return areas.map((a) => a.codigo);
+  const propias = usuario.areas || [];
+  if (propias.includes('sistemas')) {
+    return areas.map((a) => a.codigo).filter((c) => !AREAS_SIN_BYPASS_SISTEMAS.includes(c) || propias.includes(c));
+  }
+  return propias;
 }
 
 // Arma el texto del menú según las áreas del usuario.
 function menuPara(usuario) {
   const veTodo = tieneAccesoTotal(usuario);
-  const misAreas = veTodo ? areas.map((a) => a.codigo) : usuario.areas || [];
+  const misAreas = areasDe(usuario);
   const lineas = [];
   for (const area of areas) {
     if (!misAreas.includes(area.codigo)) continue;
@@ -90,7 +102,7 @@ async function publicarComandos(bot) {
       if (!u.activo) continue;
       const lista = [...GLOBAL];
       const veTodo = tieneAccesoTotal(u);
-      const misAreas = veTodo ? areas.map((a) => a.codigo) : u.areas || [];
+      const misAreas = areasDe(u);
       for (const area of areas) {
         if (!misAreas.includes(area.codigo)) continue;
         for (const c of comandosVisibles(area, u)) lista.push(aCmd(c));

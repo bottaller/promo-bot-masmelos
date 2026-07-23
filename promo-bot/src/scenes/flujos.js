@@ -12,7 +12,6 @@ const { esCancelar, respuesta, preguntar, opciones } = require('../lib/wizard');
 const { conseguirLibro, materializarLibro } = require('../lib/libro-fuente');
 const LM = require('../lib/libro-mensajes');
 const { parseVencimiento, formatoVencimiento, fechaISO, fechaHoyArgISO } = require('../lib/fechas');
-const { tieneAccesoTotal } = require('../middleware/authz');
 
 const RUNNER = path.resolve(__dirname, '..', '..', 'arqueo', 'runner.py');
 const PYTHON = process.env.PYTHON_BIN || 'python';
@@ -34,8 +33,10 @@ function hace(ms) {
 
 // El acceso ya lo garantiza requiereArea('tesoreria') al entrar, pero lo re-chequeamos
 // en el paso del documento por si le quitan el rol a mitad de camino (es data financiera).
+// Tesorería queda afuera del bypass de "sistemas" (a pedido): acá solo admin real o el rol
+// "tesoreria" de verdad, sin pasar por tieneAccesoTotal().
 function tieneAccesoTesoreria(u) {
-  return !!(u && (tieneAccesoTotal(u) || (u.areas && u.areas.includes('tesoreria'))));
+  return !!(u && (u.es_admin || (u.areas && u.areas.includes('tesoreria'))));
 }
 
 // Interpreta el rango que escribió el usuario. Acepta "01/07/2026 15/07/2026",
