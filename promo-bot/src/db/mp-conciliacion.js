@@ -31,15 +31,15 @@ function huerfanasDe(resultado) {
 }
 
 // Guarda (upsert por día) el resultado de un /mp. Re-correr el día pisa la fila.
-async function guardarMpConciliacion({ fecha, empresa = 'HONRE', resultado, fuente, usuarioId }) {
+async function guardarMpConciliacion({ fecha, empresa = 'HONRE', plataforma = 'mp', resultado, fuente, usuarioId }) {
   const r = resultado.resumen;
   const veredicto = veredictoMP(resultado).ok ? 'ok' : 'diferencias';
   await pool.query(
     `insert into bot.mp_conciliacion
-       (fecha, empresa, veredicto, fuente, total_sistema, total_mp, diferencia,
+       (fecha, empresa, plataforma, veredicto, fuente, total_sistema, total_mp, diferencia,
         n_pares, n_aviso, n_solo_mp, n_solo_sistema, n_con_contrapartida, huerfanas, generado_por)
-     values ($1::date,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)
-     on conflict (fecha, empresa) do update set
+     values ($1::date,$2,$15,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)
+     on conflict (fecha, empresa, plataforma) do update set
        veredicto=excluded.veredicto, fuente=excluded.fuente, total_sistema=excluded.total_sistema,
        total_mp=excluded.total_mp, diferencia=excluded.diferencia, n_pares=excluded.n_pares,
        n_aviso=excluded.n_aviso, n_solo_mp=excluded.n_solo_mp, n_solo_sistema=excluded.n_solo_sistema,
@@ -48,7 +48,7 @@ async function guardarMpConciliacion({ fecha, empresa = 'HONRE', resultado, fuen
     [fechaISO(fecha), empresa, veredicto, fuente || null,
       r.totalSistema, r.totalMp, r.diferencia,
       r.nPares, r.nAviso, r.nSoloMp, r.nSoloSistema, r.nConContrapartida || 0,
-      JSON.stringify(huerfanasDe(resultado)), usuarioId ?? null]
+      JSON.stringify(huerfanasDe(resultado)), usuarioId ?? null, plataforma]
   );
   return { veredicto };
 }
@@ -57,7 +57,7 @@ async function guardarMpConciliacion({ fecha, empresa = 'HONRE', resultado, fuen
 // son ISO 'AAAA-MM-DD', ambos inclusive. Devuelve las filas ordenadas por fecha.
 async function conciliacionesDeRango({ desde, hasta, empresa = 'HONRE' }) {
   const { rows } = await pool.query(
-    `select to_char(fecha, 'YYYY-MM-DD') as fecha, veredicto, fuente,
+    `select to_char(fecha, 'YYYY-MM-DD') as fecha, plataforma, veredicto, fuente,
             total_sistema, total_mp, diferencia,
             n_pares, n_aviso, n_solo_mp, n_solo_sistema, n_con_contrapartida, huerfanas
        from bot.mp_conciliacion
