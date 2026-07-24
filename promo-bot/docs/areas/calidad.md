@@ -69,7 +69,7 @@ sacar gente es un `/usuarios agregar` / `/usuarios quitar`, sin tocar código ni
 ## El ciclo de `/ajuste` y `/promoprecios`
 
 Estos dos comandos no tocan `bot.compras_altas`: viven en tablas propias (`bot.calidad_ajustes`,
-`bot.promoprecios`, `bot.promoprecios_imagenes`, migración 021) y arman una cadena de reenvíos por
+`bot.promoprecios`, `bot.promoprecios_imagenes`, migración 024) y arman una cadena de reenvíos por
 botón, no un wizard de punta a punta. La lógica de los botones vive en `src/acciones-calidad.js`
 (se registra una sola vez en `src/index.js`, aparte de los wizards).
 
@@ -101,7 +101,7 @@ Como hay como mucho un ciclo de `/promoprecios` por semana, `/imagenes` y el wiz
 necesitan elegir "cuál" — siempre operan sobre el único activo (`promoPreciosActivo()`: el más
 reciente ya validado por el dueño que todavía no se terminó de reenviar).
 
-**Roles nuevos** (migración 021): `marketing`, `ventas`, `compras_promo`. Ninguno tiene gente
+**Roles nuevos** (migración 024): `marketing`, `ventas`, `compras_promo`. Ninguno tiene gente
 asignada por defecto — se asignan con `/usuarios agregar <telegram_id> <rol>` cuando se decida quién.
 
 ## Avisos de vencimiento

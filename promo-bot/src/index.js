@@ -19,6 +19,8 @@ const { iniciarAvisoLibro } = require('./aviso-libro');
 const { iniciarAvisoMpSemanal } = require('./aviso-mp-semanal');
 const { iniciarEntregaCierres } = require('./entrega-cierres');
 const { registrarAccionesCalidad } = require('./acciones-calidad');
+const { iniciarEntregaArqueo } = require('./entrega-arqueo');
+const { anunciarDeploy } = require('./aviso-deploy');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
 const areas = [calidad, compras, tesoreria, cajaCentral, carritoWeb, deposito, marketing];
@@ -155,12 +157,17 @@ bot.catch((err, ctx) => {
 (async () => {
   try {
     iniciarAvisos(bot); // programa el chequeo diario de vencimientos
-    iniciarAvisoLibro(bot); // 21:00 ART: avisa a los admins si falta el libro diario del día
-    iniciarAvisoMpSemanal(bot); // lunes 8:00 ART: resumen semanal del control de MP a admins + Caja Central
+    iniciarAvisoLibro(bot); // 21:30 ART: avisa a los admins qué documentos del día faltan (libro/MP/Talo)
+    iniciarAvisoMpSemanal(bot); // lunes 8:00 ART: resumen semanal MP + Talo a admins + Caja Central
     iniciarEntregaCierres(bot); // 08:00 ART: concilia los cierres pendientes y entrega el reporte
+    iniciarEntregaArqueo(bot); // 08:00 ART: arquea MP/Talo del día y manda los reportes a Tesorería + Caja Central
     await publicarComandos(bot); // publica el menú "/" de Telegram (antes de arrancar el polling)
-    await bot.launch();
+    // OJO: bot.launch() NO resuelve — startPolling corre el loop de polling para siempre. Por eso
+    // TODO lo que tenga que pasar al arrancar (aviso de deploy, log) va ANTES; launch() queda último
+    // y mantiene vivo el proceso. (sendMessage no necesita el polling, así que el aviso funciona acá.)
+    await anunciarDeploy(bot); // avisa a los admins "Deploy terminado: commit X por Y" si es un commit nuevo
     console.log('Bot de Más Melos corriendo. Áreas:', areas.map((a) => a.codigo).join(', '));
+    await bot.launch();
   } catch (err) {
     console.error('No se pudo iniciar el bot:');
     console.error(err);

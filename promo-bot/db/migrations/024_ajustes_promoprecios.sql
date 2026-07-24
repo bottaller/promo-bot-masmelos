@@ -1,5 +1,5 @@
 -- ============================================================
--- Migración 021 — /ajuste y /promoprecios (Calidad): dos flujos de archivos que le llegan al
+-- Migración 024 — /ajuste y /promoprecios (Calidad): dos flujos de archivos que le llegan al
 -- DUEÑO del bot (OWNER_TELEGRAM_ID, no "admin" — puede haber varios admins reales) para revisar,
 -- con reenvío en cadena a Compras, Marketing, Ventas y Depósito.
 --

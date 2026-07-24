@@ -182,7 +182,7 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
 - **"Dueño del bot"** (`OWNER_TELEGRAM_ID` en `.env`, `src/lib/owner.js`): distinto de "admin real" —
   es una sola persona específica, no un nivel de permiso. Hoy lo usan `/ajuste` y `/promoprecios`
   (Calidad): son los únicos que le llegan exclusivamente a esta persona en vez de a un rol.
-- **Roles nuevos sin comandos propios de área** (migración 021): `ventas` y `compras_promo` — solo
+- **Roles nuevos sin comandos propios de área** (migración 024): `ventas` y `compras_promo` — solo
   reciben notificaciones (como "Sistemas" antes de tener comandos), se asignan igual que cualquier
   rol. `compras_promo` existe **aparte** del `compras` general para que `/promoprecios` no le llegue
   a todo el equipo de compras, solo al responsable puntual que designe el dueño.

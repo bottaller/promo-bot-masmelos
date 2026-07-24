@@ -46,13 +46,29 @@ function veredictoMP(resultado) {
     sinAparear,
     titulo: ok ? 'CONTROL OK' : 'CONTROL CON DIFERENCIAS',
     detalle: ok
-      ? 'Todas las cobranzas por QR / transferencia tienen su cobro en Mercado Pago.'
+      ? 'Todas las cobranzas tienen su cobro en la plataforma.'
       : `${sinAparear} operacion(es) sin aparear: hay que revisarlas.`,
   };
 }
 
+// Veredicto de TODO el arqueo: cierra solo si cierran todas las plataformas.
+function veredictoArqueo(resultados) {
+  const sinAparear = resultados.reduce((a, x) => a + veredictoMP(x.resultado).sinAparear, 0);
+  const conProblema = resultados.filter((x) => !veredictoMP(x.resultado).ok);
+  const ok = sinAparear === 0;
+  const plats = resultados.map((x) => x.plataforma.nombre).join(' + ');
+  return {
+    ok,
+    sinAparear,
+    titulo: ok ? 'CONTROL OK' : 'CONTROL CON DIFERENCIAS',
+    detalle: ok
+      ? `${plats}: todas las cobranzas tienen su cobro en la plataforma.`
+      : `${sinAparear} operacion(es) sin aparear en ${conProblema.length} de ${resultados.length} plataforma(s).`,
+  };
+}
+
 // Encabezado al estilo Sigma. Se dibuja en cada página (por eso recibe el nro).
-function encabezado(doc, { cuenta, fecha, sello, usuario, pagina }) {
+function encabezado(doc, { cuenta, fecha, sello, usuario, pagina, titulo = 'Control de cobros' }) {
   const x = doc.page.margins.left;
   const ancho = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   const y0 = doc.page.margins.top;
@@ -60,7 +76,7 @@ function encabezado(doc, { cuenta, fecha, sello, usuario, pagina }) {
 
   doc.font('Helvetica-Bold').fontSize(12).fillColor(TINTA).text('Masmelos', x, y0, { width: izq });
   doc.font('Helvetica').fontSize(9).fillColor(TINTA)
-    .text(`Control Mercado Pago - Cuenta ${cuenta}`, x, y0 + 16, { width: izq });
+    .text(`${titulo} - Cuenta ${cuenta}`, x, y0 + 16, { width: izq });
   doc.text(`Desde el ${fecha.desde} Hasta el ${fecha.hasta}`, x, y0 + 28, { width: izq });
 
   // Bloque derecho: página / cuándo se corrió / quién lo corrió (como Sigma).
@@ -113,16 +129,25 @@ function dibujarContrapartidas(doc, huerfana, x, ancho) {
   }
 }
 
-// construirInformePDF({fecha, cuenta, resultado, generadoEn, usuario}) -> Promise<Buffer>
+// construirInformePDF({fecha, resultados, generadoEn, usuario}) -> Promise<Buffer>
 //   fecha:      texto del día (o rango) conciliado, 'DD/MM/AAAA' o 'DD/MM/AAAA al DD/MM/AAAA'
-//   cuenta:     nombre de la cuenta (MERCADO PAGO MORENO)
-//   resultado:  lo que devuelve conciliarMP()
+//   resultados: [{ plataforma, cuenta, resultado }] — una entrada por plataforma arqueada
 //   generadoEn: 'DD/MM/AAAA HH:MM' del momento del control (default: ahora, hora Argentina)
 //   usuario:    quién corrió el control (va en el encabezado, como en Sigma)
-function construirInformePDF({ fecha, cuenta, resultado, generadoEn, usuario }) {
+// Acepta también la forma vieja ({cuenta, resultado}) para no romper llamadores de una sola
+// plataforma.
+function construirInformePDF({ fecha, resultados, cuenta, resultado, generadoEn, usuario }) {
+  const lista = resultados && resultados.length
+    ? resultados
+    : [{ plataforma: { nombre: 'Mercado Pago', codigo: 'mp' }, cuenta, resultado }];
   const sello = generadoEn || fechaHoraArg();
-  const v = veredictoMP(resultado);
-  const r = resultado.resumen;
+  const v = veredictoArqueo(lista);
+  const cuentasTxt = lista.map((x) => x.cuenta).join(' · ');
+  // Título: si el PDF es de UNA plataforma (el caso del arqueo automático, un PDF por plataforma),
+  // lleva su nombre; si mezcla varias (el /mp viejo), un rótulo genérico.
+  const titulo = lista.length === 1 && lista[0].plataforma && lista[0].plataforma.nombre
+    ? `Control ${lista[0].plataforma.nombre}`
+    : 'Control de cobros';
   // 'DD/MM/AAAA al DD/MM/AAAA' -> {desde, hasta}; un solo día -> los dos iguales.
   const partes = String(fecha).split(' al ');
   const rango = { desde: partes[0], hasta: partes[1] || partes[0] };
@@ -137,7 +162,7 @@ function construirInformePDF({ fecha, cuenta, resultado, generadoEn, usuario }) 
     let pagina = 0;
     const cab = () => {
       pagina += 1;
-      encabezado(doc, { cuenta, fecha: rango, sello, usuario, pagina });
+      encabezado(doc, { cuenta: cuentasTxt, fecha: rango, sello, usuario, pagina, titulo });
     };
     doc.on('pageAdded', cab);
     doc.addPage(); // dispara el encabezado de la página 1
@@ -156,54 +181,64 @@ function construirInformePDF({ fecha, cuenta, resultado, generadoEn, usuario }) 
     doc.fillColor(TINTA);
     doc.y = bannerY + alto + 14;
 
-    // Resumen
-    seccion(doc, 'Resumen del control', x, ancho);
-    filaLV(doc, 'Cobranzas apareadas 1 a 1', String(r.nPares), { x, ancho });
-    if (r.nAviso) filaLV(doc, 'de esas, con aviso menor (redondeo / hora)', String(r.nAviso), { x, ancho, color: GRIS, sangria: 14 });
-    filaLV(doc, 'Sin aparear', String(v.sinAparear), { x, ancho, negrita: v.sinAparear > 0, color: v.sinAparear ? ROJO : TINTA });
-    if (r.nSoloMp) filaLV(doc, 'cobró MP y no está asentado', `${r.nSoloMp} · ${fmt(r.totalSoloMp)}`, { x, ancho, color: ROJO, sangria: 14 });
-    if (r.nSoloSistema) filaLV(doc, 'asentado y MP no lo tiene', `${r.nSoloSistema} · ${fmt(r.totalSoloSistema)}`, { x, ancho, color: ROJO, sangria: 14 });
-    doc.moveDown(0.2);
-    filaLV(doc, 'Total sistema (QR / transferencia)', fmt(r.totalSistema), { x, ancho });
-    filaLV(doc, 'Total Mercado Pago', fmt(r.totalMp), { x, ancho });
-    filaLV(doc, 'Diferencia', fmtC(r.diferencia), { x, ancho, negrita: true, color: Math.abs(r.diferencia) > 0.05 ? ROJO : TINTA });
+    // Una sección por plataforma: resumen + lo que no cierra.
+    for (const item of lista) {
+      const r = item.resultado.resumen;
+      const vp = veredictoMP(item.resultado);
+      const nombre = (item.plataforma && item.plataforma.nombre) || 'Mercado Pago';
+      const corto = (item.plataforma && item.plataforma.corto) || 'MP';
+      const alcance = (item.plataforma && item.plataforma.alcanceTxt) || 'QR / transferencia';
 
-    // Detalle de lo que no cierra
-    if (!v.ok) {
-      const MAX = 22;
-      seccion(doc, 'Qué no cierra', x, ancho);
-      doc.font('Helvetica').fontSize(9.5).fillColor(TINTA);
-      let n = 0;
-      for (const o of resultado.soloMp) {
-        if (n++ >= MAX) break;
-        doc.font('Helvetica').fontSize(9.5).fillColor(TINTA)
-          .text(`Cobró MP y no está asentado · ${hora(o.hora)} · ${fmt(o.bruto)} · id ${o.source_id}`, x, doc.y, { width: ancho });
-        dibujarContrapartidas(doc, o, x, ancho);
-        doc.moveDown(0.25);
-      }
-      for (const m of resultado.soloSistema) {
-        if (n++ >= MAX) break;
-        doc.font('Helvetica').fontSize(9.5).fillColor(TINTA)
-          .text(`Asentado y MP no lo tiene · ${hora(m.ingreso)} · ${fmt(m.debe)} · ${m.comprobante || 'asiento ' + m.asiento} · ${m.cliente}`, x, doc.y, { width: ancho });
-        dibujarContrapartidas(doc, m, x, ancho);
-        doc.moveDown(0.25);
-      }
-      const restan = v.sinAparear - Math.min(v.sinAparear, MAX);
-      if (restan > 0) doc.fillColor(GRIS).text(`...y ${restan} más.`, x, doc.y);
-      if (!r.rastreo) {
+      seccion(doc, `${nombre} — ${item.cuenta}   [${vp.ok ? 'OK' : 'CON DIFERENCIAS'}]`, x, ancho);
+      filaLV(doc, 'Cobranzas apareadas 1 a 1', String(r.nPares), { x, ancho });
+      if (r.nAviso) filaLV(doc, 'de esas, con aviso menor (centavos / hora)', String(r.nAviso), { x, ancho, color: GRIS, sangria: 14 });
+      filaLV(doc, 'Sin aparear', String(vp.sinAparear), { x, ancho, negrita: vp.sinAparear > 0, color: vp.sinAparear ? ROJO : TINTA });
+      if (r.nSoloMp) filaLV(doc, `cobró ${corto} y no está asentado`, `${r.nSoloMp} · ${fmt(r.totalSoloMp)}`, { x, ancho, color: ROJO, sangria: 14 });
+      if (r.nSoloSistema) filaLV(doc, `asentado y ${corto} no lo tiene`, `${r.nSoloSistema} · ${fmt(r.totalSoloSistema)}`, { x, ancho, color: ROJO, sangria: 14 });
+      doc.moveDown(0.2);
+      filaLV(doc, `Total sistema (${alcance})`, fmt(r.totalSistema), { x, ancho });
+      filaLV(doc, `Total ${nombre}`, fmt(r.totalMp), { x, ancho });
+      filaLV(doc, 'Diferencia', fmtC(r.diferencia), { x, ancho, negrita: true, color: Math.abs(r.diferencia) > 0.05 ? ROJO : TINTA });
+
+      if (!vp.ok) {
+        const MAX = 22;
         doc.moveDown(0.3);
-        doc.font('Helvetica-Oblique').fontSize(8.5).fillColor(GRIS)
-          .text('Se concilió contra el "Mayor de cuenta" (una sola cuenta): no se pudo rastrear en qué otra '
-            + 'cuenta quedó imputado el importe. Con el "Diario de movimientos" el informe lo indica.',
-          x, doc.y, { width: ancho });
+        doc.font('Helvetica-Bold').fontSize(9.5).fillColor(TINTA).text('Qué no cierra', x, doc.y);
+        doc.moveDown(0.2);
+        let n = 0;
+        for (const o of item.resultado.soloMp) {
+          if (n++ >= MAX) break;
+          const ref = item.plataforma && item.plataforma.referencia ? item.plataforma.referencia(o) : `id ${o.source_id || ''}`;
+          doc.font('Helvetica').fontSize(9.5).fillColor(TINTA)
+            .text(`Cobró ${corto} y no está asentado · ${hora(o.hora)} · ${fmt(o.bruto)}${ref ? ' · ' + ref : ''}`, x, doc.y, { width: ancho });
+          dibujarContrapartidas(doc, o, x, ancho);
+          doc.moveDown(0.25);
+        }
+        for (const m of item.resultado.soloSistema) {
+          if (n++ >= MAX) break;
+          doc.font('Helvetica').fontSize(9.5).fillColor(TINTA)
+            .text(`Asentado y ${corto} no lo tiene · ${hora(m.ingreso)} · ${fmt(m.debe)} · ${m.comprobante || 'asiento ' + m.asiento} · ${m.cliente}`, x, doc.y, { width: ancho });
+          dibujarContrapartidas(doc, m, x, ancho);
+          doc.moveDown(0.25);
+        }
+        const restan = vp.sinAparear - Math.min(vp.sinAparear, MAX);
+        if (restan > 0) doc.fillColor(GRIS).text(`...y ${restan} más.`, x, doc.y);
+        if (!r.rastreo) {
+          doc.moveDown(0.3);
+          doc.font('Helvetica-Oblique').fontSize(8.5).fillColor(GRIS)
+            .text('Se concilió contra el "Mayor de cuenta" (una sola cuenta): no se pudo rastrear en qué otra '
+              + 'cuenta quedó imputado el importe. Con el "Diario de movimientos" el informe lo indica.',
+            x, doc.y, { width: ancho });
+        }
       }
+      doc.moveDown(0.5);
     }
 
     // Pie
     const pieY = doc.page.height - doc.page.margins.bottom - 22;
     doc.font('Helvetica').fontSize(7.5).fillColor(GRIS).text(
-      'Alcance: ventas cobradas por QR / transferencia. Point, Mercado Libre y salidas de dinero quedan fuera. '
-      + 'Generado automáticamente por el bot de Más Melos.',
+      'Alcance: los cobros que cada plataforma liquida en su cuenta. Point, Mercado Libre y salidas de '
+      + 'dinero quedan fuera. Generado automáticamente por el bot de Más Melos.',
       x, pieY, { width: ancho, align: 'center' }
     );
 
