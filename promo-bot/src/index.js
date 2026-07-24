@@ -18,6 +18,7 @@ const { iniciarAvisoLibro } = require('./aviso-libro');
 const { iniciarAvisoMpSemanal } = require('./aviso-mp-semanal');
 const { iniciarEntregaCierres } = require('./entrega-cierres');
 const { iniciarEntregaArqueo } = require('./entrega-arqueo');
+const { anunciarDeploy } = require('./aviso-deploy');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
 const areas = [calidad, compras, tesoreria, cajaCentral, carritoWeb, deposito];
@@ -153,6 +154,7 @@ bot.catch((err, ctx) => {
     await publicarComandos(bot); // publica el menú "/" de Telegram (antes de arrancar el polling)
     await bot.launch();
     console.log('Bot de Más Melos corriendo. Áreas:', areas.map((a) => a.codigo).join(', '));
+    await anunciarDeploy(bot); // avisa a los admins "Deploy terminado: commit X por Y" si es un commit nuevo
   } catch (err) {
     console.error('No se pudo iniciar el bot:');
     console.error(err);
