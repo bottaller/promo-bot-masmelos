@@ -152,9 +152,12 @@ bot.catch((err, ctx) => {
     iniciarEntregaCierres(bot); // 08:00 ART: concilia los cierres pendientes y entrega el reporte
     iniciarEntregaArqueo(bot); // 08:00 ART: arquea MP/Talo del día y manda los reportes a Tesorería + Caja Central
     await publicarComandos(bot); // publica el menú "/" de Telegram (antes de arrancar el polling)
-    await bot.launch();
-    console.log('Bot de Más Melos corriendo. Áreas:', areas.map((a) => a.codigo).join(', '));
+    // OJO: bot.launch() NO resuelve — startPolling corre el loop de polling para siempre. Por eso
+    // TODO lo que tenga que pasar al arrancar (aviso de deploy, log) va ANTES; launch() queda último
+    // y mantiene vivo el proceso. (sendMessage no necesita el polling, así que el aviso funciona acá.)
     await anunciarDeploy(bot); // avisa a los admins "Deploy terminado: commit X por Y" si es un commit nuevo
+    console.log('Bot de Más Melos corriendo. Áreas:', areas.map((a) => a.codigo).join(', '));
+    await bot.launch();
   } catch (err) {
     console.error('No se pudo iniciar el bot:');
     console.error(err);
