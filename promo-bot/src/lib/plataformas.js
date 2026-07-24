@@ -6,7 +6,23 @@
 //
 // Sumar una plataforma = agregar una entrada acá + su parser. Nada más.
 const { parsearLiquidacion, LiquidacionError } = require('./liquidacion-excel');
+const { parsearCollection, esCollection } = require('./collection-excel');
 const { parsearTalo, TaloError, ESTADO_COBRO } = require('./talo-excel');
+
+// MP puede venir en DOS formatos: el "Collection" (Cobros, disponible el MISMO día — el que se usa
+// hoy) o el "settlement_v2" (a día vencido). Se detecta por los encabezados y se rutea al parser
+// que corresponde; los dos producen EXACTAMENTE el mismo shape de operación. Si no se puede leer
+// el archivo, cae al parser de settlement, que tira el LiquidacionError con el mensaje claro.
+function parsearMp(buffer) {
+  const XLSX = require('xlsx');
+  let filas = [];
+  try {
+    const wb = XLSX.read(buffer, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (ws && ws['!ref']) filas = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
+  } catch (e) { /* noop: cae al settlement */ }
+  return esCollection(filas) ? parsearCollection(buffer) : parsearLiquidacion(buffer);
+}
 
 // --- Mercado Pago ----------------------------------------------------------
 // La cuenta 422101014 recibe EXACTAMENTE las operaciones con SUB UNIT='QR Code' (adentro
@@ -42,18 +58,20 @@ const PLATAFORMAS = [
     corto: 'MP',            // se repite en cada renglón del mensaje: conviene corto
     cuenta: 422101014,
     cuentaNombre: 'MERCADO PAGO MORENO',
-    archivoEsperado: 'settlement_v2-….xlsx (panel de Mercado Pago)',
+    archivoEsperado: 'reporte de Cobros (collection-….xlsx) del panel de Mercado Pago',
     alcanceTxt: 'ventas cobradas por QR / transferencia',
-    parsear: parsearLiquidacion,
-    Error: LiquidacionError,
+    // Acepta los dos formatos de MP (Cobros del mismo día o settlement a día vencido).
+    parsear: parsearMp,
+    Error: LiquidacionError, // CollectionError hereda de LiquidacionError: un solo instanceof atrapa ambos
     enAlcance: (o) => o.canal === CANAL_QR && o.tipo === TIPO_COBRO && o.bruto > 0,
     motivoFuera: motivoFueraMp,
     // Los asientos de MP se cargan a segundos del cobro (5-210 s el 16/07).
     deltaSospechosoSeg: 30 * 60,
     // Cómo se identifica una operación en el reporte.
     referencia: (o) => (o.source_id ? `id ${o.source_id}` : ''),
-    // Reconoce su propio archivo por los encabezados (para detectar sin preguntar).
-    reconoce: (encabezados) => encabezados.includes('source id'),
+    // Reconoce sus DOS formatos por los encabezados: settlement ('source id') o Cobros (operation_id).
+    reconoce: (encabezados) => encabezados.includes('source id')
+      || encabezados.some((h) => h.includes('operation_id') || h.includes('net_received_amount')),
   },
   {
     codigo: 'talo',
