@@ -12,14 +12,16 @@ const tesoreria = require('./areas/tesoreria');
 const cajaCentral = require('./areas/cajacentral');
 const carritoWeb = require('./areas/carritoweb');
 const deposito = require('./areas/deposito');
+const marketing = require('./areas/marketing');
 const admin = require('./admin');
 const { iniciarAvisos } = require('./avisos');
 const { iniciarAvisoLibro } = require('./aviso-libro');
 const { iniciarAvisoMpSemanal } = require('./aviso-mp-semanal');
 const { iniciarEntregaCierres } = require('./entrega-cierres');
+const { registrarAccionesCalidad } = require('./acciones-calidad');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
-const areas = [calidad, compras, tesoreria, cajaCentral, carritoWeb, deposito];
+const areas = [calidad, compras, tesoreria, cajaCentral, carritoWeb, deposito, marketing];
 
 // Variables imprescindibles para arrancar.
 const requeridas = ['BOT_TOKEN', 'DATABASE_URL'];
@@ -28,6 +30,11 @@ for (const key of requeridas) {
     console.error(`Falta la variable de entorno ${key}. Revisá el archivo .env`);
     process.exit(1);
   }
+}
+// OWNER_TELEGRAM_ID no corta el arranque (no queremos tirar abajo TODO el bot por esto), pero
+// sin él /ajuste y /promoprecios no tienen a quién avisarle: se advierte fuerte en el log.
+if (!process.env.OWNER_TELEGRAM_ID) {
+  console.error('⚠️  Falta OWNER_TELEGRAM_ID en el .env: /ajuste y /promoprecios no van a poder avisarle a nadie.');
 }
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -131,6 +138,9 @@ bot.command('menu', saludar);
 // Registrar los comandos de cada área + los de admin.
 for (const area of areas) area.registrar(bot);
 admin.registrar(bot);
+
+// Botones de /ajuste y /promoprecios (notificaciones proactivas, no comandos de un área).
+registrarAccionesCalidad(bot);
 
 // Responder callbacks sueltos (botones de flujos ya terminados) para que no queden "cargando".
 bot.on('callback_query', (ctx) => ctx.answerCbQuery().catch(() => {}));

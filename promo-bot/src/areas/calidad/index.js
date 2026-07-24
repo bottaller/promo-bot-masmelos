@@ -1,10 +1,15 @@
 // Área Calidad. Registra en promoción por vencimiento (alta), suma cantidad a una promoción ya
 // abierta (reposición), cambia el % de descuento de una promoción vigente (cambio de promoción),
-// retira de góndola (baja) y genera el control de lo que está en oferta.
+// retira de góndola (baja) y genera el control de lo que está en oferta. También sube los
+// archivos de ajustes y de promociones/precios, que le llegan al dueño del bot (ver
+// scenes/ajuste.js, scenes/promoprecios.js y acciones-calidad.js).
 const altaWizard = require('../../scenes/alta');
 const reposicionWizard = require('../../scenes/reposicion');
 const cambioPromocionWizard = require('../../scenes/cambiopromocion');
 const bajaWizard = require('../../scenes/baja');
+const ajusteWizard = require('../../scenes/ajuste');
+const promoPreciosWizard = require('../../scenes/promoprecios');
+const validarPromoPreciosWizard = require('../../scenes/validar-promoprecios');
 const { requiereArea } = require('../../middleware/authz');
 const { altasEnOferta } = require('../../db/compras');
 const { construirExcelControl } = require('../../lib/control-excel');
@@ -18,6 +23,8 @@ const comandos = [
   { comando: 'cambiopromocion', descripcion: 'Cambiar el % de descuento de una promoción vigente' },
   { comando: 'baja', descripcion: 'Registrar retiro de góndola (vendido o descartado)' },
   { comando: 'control', descripcion: 'Excel de lo que está en oferta, por vencimiento' },
+  { comando: 'ajuste', descripcion: 'Subir un archivo de ajustes para que lo revise el dueño' },
+  { comando: 'promoprecios', descripcion: 'Subir el archivo final de promociones y precios' },
 ];
 
 // /control: genera y manda un Excel con todo lo que está en oferta, ordenado por vencimiento.
@@ -39,12 +46,14 @@ function registrar(bot) {
   bot.command('cambiopromocion', requiereArea(CODIGO), (ctx) => ctx.scene.enter('cambiopromocion-wizard'));
   bot.command('baja', requiereArea(CODIGO), (ctx) => ctx.scene.enter('baja-wizard'));
   bot.command('control', requiereArea(CODIGO), control);
+  bot.command('ajuste', requiereArea(CODIGO), (ctx) => ctx.scene.enter('ajuste-wizard'));
+  bot.command('promoprecios', requiereArea(CODIGO), (ctx) => ctx.scene.enter('promoprecios-wizard'));
 }
 
 module.exports = {
   codigo: CODIGO,
   nombre: 'Calidad',
-  scenes: [altaWizard, reposicionWizard, cambioPromocionWizard, bajaWizard],
+  scenes: [altaWizard, reposicionWizard, cambioPromocionWizard, bajaWizard, ajusteWizard, promoPreciosWizard, validarPromoPreciosWizard],
   comandos,
   registrar,
 };
