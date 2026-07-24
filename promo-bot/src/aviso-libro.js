@@ -17,10 +17,13 @@ const HORA_UTC = (Number.isInteger(HORA_UTC_RAW) && HORA_UTC_RAW >= 0 && HORA_UT
 const MIN_UTC_RAW = Number(process.env.LIBRO_MIN_UTC);
 const MIN_UTC = (Number.isInteger(MIN_UTC_RAW) && MIN_UTC_RAW >= 0 && MIN_UTC_RAW <= 59) ? MIN_UTC_RAW : 30;
 
-// Guard en memoria: no repetir el aviso de la misma jornada dentro del mismo proceso.
-// Además marca que hay un aviso PENDIENTE de resolver: si después alguien carga el libro,
-// avisarLibroResuelto() lo usa para anunciarle al resto que ya está.
+// Guard en memoria: no repetir el aviso de la misma jornada dentro del mismo proceso (cubre
+// cualquier faltante: libro y/o plataformas).
 let ultimaJornadaAvisada = null;
+// Marca aparte: la jornada para la que se reclamó EL LIBRO específicamente (no una plataforma).
+// avisarLibroResuelto() usa SOLO esta, para no anunciar "ya se cargó el libro" cuando el aviso
+// había sido por una liquidación de plataforma y el libro ya estaba.
+let libroReclamadoJornada = null;
 
 function isoALinda(iso) {
   return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
@@ -69,7 +72,11 @@ async function revisarLibroDelDia(telegram, { empresa = 'HONRE' } = {}) {
     catch (e) { console.error(`Aviso de carga: no pude avisar a ${tid}:`, e.message); }
   }
   // Solo se marca si llegó a alguien; si fallaron todos, se reintenta en la próxima corrida.
-  if (avisados > 0) ultimaJornadaAvisada = hoyISO;
+  if (avisados > 0) {
+    ultimaJornadaAvisada = hoyISO;
+    // El "libro resuelto" solo aplica si el libro ESPECÍFICAMENTE faltaba (no si faltaba solo una plataforma).
+    if (!tieneLibro) libroReclamadoJornada = hoyISO;
+  }
   return { jornada: hoyISO, cargado: false, avisados, faltan };
 }
 
@@ -84,12 +91,12 @@ async function revisarLibroDelDia(telegram, { empresa = 'HONRE' } = {}) {
 // Devuelve { anuncio, avisados }.
 async function avisarLibroResuelto(telegram, { empresa = 'HONRE', subidoPorTxt = '', subidoPorTelegramId = null } = {}) {
   try {
-    const pend = ultimaJornadaAvisada;
-    if (!pend) return { anuncio: false, avisados: 0 }; // no había aviso pendiente
+    const pend = libroReclamadoJornada;
+    if (!pend) return { anuncio: false, avisados: 0 }; // no se había reclamado EL LIBRO (a lo sumo una plataforma)
     const fecha = parseVencimiento(isoALinda(pend));
     const cubierto = await cubreFecha({ fecha, empresa });
     if (!cubierto) return { anuncio: false, avisados: 0 }; // el libro que subieron no cubre el día avisado
-    ultimaJornadaAvisada = null; // consumido: ni re-anunciar ni que el aviso vuelva a reclamar
+    libroReclamadoJornada = null; // consumido: no re-anunciar
     const quien = escapeHtml(subidoPorTxt).trim();
     const msg =
       `✅ <b>Ya se cargó el libro diario del ${isoALinda(pend)}</b>` +

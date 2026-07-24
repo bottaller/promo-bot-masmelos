@@ -67,6 +67,7 @@ function lineaHuerfana(h) {
 
 const MAX_HUERFANAS_DIA = 3; // hasta 3 por plataforma-día (el detalle fino está en el arqueo de ese día)
 const NOMBRE_PLAT = { mp: 'MP', talo: 'Talo' };
+const PLAT_ESPERADAS = Object.keys(NOMBRE_PLAT); // se espera arquear estas cada día operado
 
 // Una fila (una plataforma de un día) → líneas de reporte. Suma a los contadores.
 function lineasDeFila(f, cont) {
@@ -100,7 +101,7 @@ function formatearResumenSemanal({ desde, hasta, filas }) {
 
   const titulo = `📆 <b>Resumen semanal — Control de cobros (Mercado Pago + Talo)</b>\nSemana del ${ddmm(desde)} al ${ddmm(hasta)}`;
   const lineas = [];
-  const cont = { ok: 0, conDif: 0, sinCorrer: 0 };
+  const cont = { ok: 0, conDif: 0, sinCorrer: 0, sinPlataforma: 0 };
 
   for (const iso of dias) {
     const nombre = DIA[isoADate(iso).getDay()];
@@ -108,20 +109,30 @@ function formatearResumenSemanal({ desde, hasta, filas }) {
     const rows = (porFecha.get(iso) || []).slice().sort((a, b) => String(a.plataforma).localeCompare(String(b.plataforma)));
     if (!rows.length) {
       cont.sinCorrer++;
-      lineas.push(`⚪ ${etiqueta}: <i>no se arqueó</i>`);
+      lineas.push(`⚪ ${etiqueta}: <i>no se arqueó ninguna plataforma</i>`);
       continue;
     }
     lineas.push(etiqueta);
     for (const f of rows) lineas.push(...lineasDeFila(f, cont));
+    // Un día que arqueó ALGUNA plataforma pero no todas: marcar la que falta (si no, el control
+    // de esa plataforma quedaría invisible ese día y el pie diría "completa" en falso).
+    const presentes = new Set(rows.map((f) => f.plataforma));
+    for (const cod of PLAT_ESPERADAS) {
+      if (!presentes.has(cod)) { cont.sinPlataforma++; lineas.push(`   ⚪ <b>${NOMBRE_PLAT[cod]}</b>: sin arqueo ese día`); }
+    }
   }
 
   const resumen = [];
   if (cont.ok) resumen.push(`🟢 ${cont.ok} cerraron`);
   if (cont.conDif) resumen.push(`🔴 ${cont.conDif} con diferencias`);
-  if (cont.sinCorrer) resumen.push(`⚪ ${cont.sinCorrer} día(s) sin arqueo`);
+  if (cont.sinPlataforma) resumen.push(`⚪ ${cont.sinPlataforma} plataforma-día sin arqueo`);
+  if (cont.sinCorrer) resumen.push(`⚪ ${cont.sinCorrer} día(s) sin nada`);
   lineas.push('');
   lineas.push(resumen.length ? resumen.join(' · ') : 'Sin datos de la semana.');
-  if (cont.conDif === 0 && cont.sinCorrer === 0) lineas.push('✅ La semana cerró completa y sin diferencias.');
+  // "Completa" solo si NO hubo diferencias, NINGÚN día quedó sin arqueo y NINGUNA plataforma faltó.
+  if (cont.conDif === 0 && cont.sinCorrer === 0 && cont.sinPlataforma === 0) {
+    lineas.push('✅ La semana cerró completa y sin diferencias.');
+  }
 
   return { titulo, lineas, stats: cont };
 }

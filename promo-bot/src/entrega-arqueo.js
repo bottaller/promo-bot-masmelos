@@ -71,23 +71,28 @@ async function entregarArqueosPendientes(telegram, { empresa = 'HONRE' } = {}) {
         continue;
       }
 
-      // Re-parsear las liquidaciones guardadas (crudas) con el parser de cada plataforma.
+      // Re-parsear las liquidaciones guardadas (crudas) con el parser de cada plataforma. Las que
+      // fallen (formato cambiado, código desconocido) NO se pierden: quedan pendientes y se avisa.
       const filas = await liquidacionesDeDia({ fecha: d.fecha, empresa });
       const liquidaciones = [];
+      const fallidas = [];
       for (const f of filas) {
         const plataforma = porCodigo(f.plataforma);
-        if (!plataforma) { console.error(`Arqueo: plataforma desconocida "${f.plataforma}" el ${fechaISO(d.fecha)}.`); continue; }
+        if (!plataforma) { console.error(`Arqueo: plataforma desconocida "${f.plataforma}" el ${fechaISO(d.fecha)}.`); fallidas.push(f.plataforma); continue; }
         try {
           liquidaciones.push({ plataforma, liq: plataforma.parsear(f.archivo) });
         } catch (e) {
           console.error(`Arqueo: no pude parsear la liquidación de ${f.plataforma} del ${fechaISO(d.fecha)}:`, e.message);
+          fallidas.push(f.plataforma);
         }
       }
-      if (!liquidaciones.length) {
-        await enviarTexto(telegram, admins, `⚠️ Arqueo del ${formatoVencimiento(d.fecha)}: no pude leer ninguna liquidación. Revisá los archivos.`);
-        resumen.error++;
-        continue;
+      // Lo que no se pudo leer queda PENDIENTE (no se borra) y se avisa a los admins para que lo resuban.
+      if (fallidas.length) {
+        await enviarTexto(telegram, admins,
+          `⚠️ <b>Arqueo del ${formatoVencimiento(d.fecha)}</b>: no pude leer la liquidación de <b>${fallidas.join(', ')}</b>. ` +
+          'Queda pendiente — revisá el archivo y volvé a subirla con /carga.');
       }
+      if (!liquidaciones.length) { resumen.error++; continue; } // nada arqueable; NO se borra nada
 
       const arq = await arquearDia({ libroBuffer: buf.buffer, libroMeta: lib.meta, liquidaciones, dia: fechaISO(d.fecha) });
       if (!arq.ok) {
@@ -96,10 +101,14 @@ async function entregarArqueosPendientes(telegram, { empresa = 'HONRE' } = {}) {
         continue;
       }
 
-      // Guardar el resultado SIEMPRE (lo consume el resumen semanal), aunque la entrega falle.
+      // Guardar el resultado (lo consume el resumen semanal). Trackeamos cuáles se guardaron OK:
+      // SOLO esas se borran después. Un fallo de guardado no frena la entrega, pero deja la
+      // liquidación pendiente para reintentar (si no, el día desaparecería del resumen semanal).
+      const guardadas = [];
       for (const g of arq.paraGuardar) {
         try {
           await guardarMpConciliacion({ fecha: g.fecha, plataforma: g.plataforma, resultado: g.resultado, fuente: g.fuente, usuarioId: null });
+          guardadas.push(g.plataforma);
         } catch (e) { console.error(`Arqueo: no pude guardar ${g.plataforma} del ${fechaISO(d.fecha)}:`, e.message); }
       }
 
@@ -108,12 +117,13 @@ async function entregarArqueosPendientes(telegram, { empresa = 'HONRE' } = {}) {
       const enviados = await enviarTexto(telegram, dest, `${encabezado}\n\n${arq.texto}`);
       for (const pdf of arq.pdfs) await enviarPdf(telegram, dest, pdf);
 
-      // Solo saco de la espera si el texto llegó a ALGUIEN. Si Telegram estaba caído (enviados=0),
-      // se deja pendiente: el resultado ya quedó guardado, pero la ENTREGA se reintenta.
-      if (enviados > 0) {
-        await borrarLiquidacionesDe({ fecha: d.fecha, empresa });
+      // Borro SOLO las plataformas ENTREGADAS y GUARDADAS OK. Las que fallaron el parseo (fallidas)
+      // o el guardado quedan pendientes para la próxima corrida. Si Telegram estaba caído
+      // (enviados=0), no borro nada y se reintenta entero.
+      if (enviados > 0 && guardadas.length) {
+        await borrarLiquidacionesDe({ fecha: d.fecha, empresa, plataformas: guardadas });
         resumen.entregados++;
-      } else {
+      } else if (enviados === 0) {
         console.error(`Arqueo: concilié el ${formatoVencimiento(d.fecha)} pero no llegó a nadie; queda pendiente.`);
       }
     } catch (e) {

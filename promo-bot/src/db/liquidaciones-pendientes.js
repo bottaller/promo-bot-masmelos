@@ -63,7 +63,18 @@ async function liquidacionesDeDia({ fecha, empresa = 'HONRE' }) {
 
 // Borra las liquidaciones de un día (después de conciliarlo). El resultado ya quedó en
 // bot.mp_conciliacion, así que el crudo no hace falta más.
-async function borrarLiquidacionesDe({ fecha, empresa = 'HONRE' }) {
+// Si se pasa `plataformas` (array de códigos), borra SOLO esas: así el barrido no se lleva puesta
+// una liquidación que no pudo procesar/guardar y que hay que reintentar. `plataformas` en null
+// = borrar todas las del día (compatibilidad).
+async function borrarLiquidacionesDe({ fecha, empresa = 'HONRE', plataformas = null }) {
+  if (plataformas !== null) {
+    if (!plataformas.length) return; // nada que borrar
+    await pool.query(
+      'delete from bot.liquidaciones_pendientes where fecha = $1::date and empresa = $2 and plataforma = any($3)',
+      [fechaISO(fecha), empresa, plataformas]
+    );
+    return;
+  }
   await pool.query(
     'delete from bot.liquidaciones_pendientes where fecha = $1::date and empresa = $2',
     [fechaISO(fecha), empresa]

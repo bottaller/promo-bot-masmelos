@@ -68,7 +68,7 @@ function veredictoArqueo(resultados) {
 }
 
 // Encabezado al estilo Sigma. Se dibuja en cada página (por eso recibe el nro).
-function encabezado(doc, { cuenta, fecha, sello, usuario, pagina }) {
+function encabezado(doc, { cuenta, fecha, sello, usuario, pagina, titulo = 'Control de cobros' }) {
   const x = doc.page.margins.left;
   const ancho = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   const y0 = doc.page.margins.top;
@@ -76,7 +76,7 @@ function encabezado(doc, { cuenta, fecha, sello, usuario, pagina }) {
 
   doc.font('Helvetica-Bold').fontSize(12).fillColor(TINTA).text('Masmelos', x, y0, { width: izq });
   doc.font('Helvetica').fontSize(9).fillColor(TINTA)
-    .text(`Control Mercado Pago - Cuenta ${cuenta}`, x, y0 + 16, { width: izq });
+    .text(`${titulo} - Cuenta ${cuenta}`, x, y0 + 16, { width: izq });
   doc.text(`Desde el ${fecha.desde} Hasta el ${fecha.hasta}`, x, y0 + 28, { width: izq });
 
   // Bloque derecho: página / cuándo se corrió / quién lo corrió (como Sigma).
@@ -143,6 +143,11 @@ function construirInformePDF({ fecha, resultados, cuenta, resultado, generadoEn,
   const sello = generadoEn || fechaHoraArg();
   const v = veredictoArqueo(lista);
   const cuentasTxt = lista.map((x) => x.cuenta).join(' · ');
+  // Título: si el PDF es de UNA plataforma (el caso del arqueo automático, un PDF por plataforma),
+  // lleva su nombre; si mezcla varias (el /mp viejo), un rótulo genérico.
+  const titulo = lista.length === 1 && lista[0].plataforma && lista[0].plataforma.nombre
+    ? `Control ${lista[0].plataforma.nombre}`
+    : 'Control de cobros';
   // 'DD/MM/AAAA al DD/MM/AAAA' -> {desde, hasta}; un solo día -> los dos iguales.
   const partes = String(fecha).split(' al ');
   const rango = { desde: partes[0], hasta: partes[1] || partes[0] };
@@ -157,7 +162,7 @@ function construirInformePDF({ fecha, resultados, cuenta, resultado, generadoEn,
     let pagina = 0;
     const cab = () => {
       pagina += 1;
-      encabezado(doc, { cuenta: cuentasTxt, fecha: rango, sello, usuario, pagina });
+      encabezado(doc, { cuenta: cuentasTxt, fecha: rango, sello, usuario, pagina, titulo });
     };
     doc.on('pageAdded', cab);
     doc.addPage(); // dispara el encabezado de la página 1

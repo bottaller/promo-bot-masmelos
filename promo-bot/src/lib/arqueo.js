@@ -140,8 +140,13 @@ async function arquearDia({ libroBuffer, libroMeta = null, liquidaciones, dia })
     return { ok: false, error: problemas.join('\n') || 'No pude arquear ninguna plataforma.' };
   }
 
+  // El arqueo es SIEMPRE de un día puntual (`dia`): el libro puede abarcar más, pero la fecha del
+  // reporte, del nombre del PDF y de lo que se guarda tiene que ser `dia`, NO el arranque del rango
+  // del libro. Si `mayor.desde` divergiera de `dia` (libro multi-día donde esa cuenta no tiene
+  // movimientos ese día), guardar por `mayor.desde` archivaría —y pisaría— la fila de otro día.
   const mayor0 = resultados[0].mayor;
-  const fecha = textoRango(mayor0.desde, mayor0.hasta);
+  const diaDate = dia ? isoADate(dia) : mayor0.desde;
+  const fecha = formatoVencimiento(diaDate);
   const todasLasOperaciones = liquidaciones.flatMap((x) => x.liq.operaciones);
 
   const temprano = avisoLibroTemprano(libroMeta, todasLasOperaciones);
@@ -163,9 +168,7 @@ async function arquearDia({ libroBuffer, libroMeta = null, liquidaciones, dia })
   for (const x of resultados) {
     try {
       const buffer = await construirInformePDF({ fecha, resultados: [x], usuario: 'Barrido automático 08:00' });
-      const suf = fechaISO(mayor0.desde) === fechaISO(mayor0.hasta)
-        ? fechaISO(mayor0.desde)
-        : `${fechaISO(mayor0.desde)}_${fechaISO(mayor0.hasta)}`;
+      const suf = fechaISO(diaDate);
       pdfs.push({
         plataforma: x.plataforma.codigo,
         corto: x.plataforma.corto,
@@ -179,7 +182,7 @@ async function arquearDia({ libroBuffer, libroMeta = null, liquidaciones, dia })
 
   // Lo que hay que persistir en bot.mp_conciliacion (una fila por plataforma) → resumen semanal.
   const paraGuardar = resultados.map((x) => ({
-    fecha: x.mayor.desde,
+    fecha: diaDate,
     plataforma: x.plataforma.codigo,
     resultado: x.resultado,
     fuente: x.mayor.origen,

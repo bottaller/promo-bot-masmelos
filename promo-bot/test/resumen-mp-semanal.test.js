@@ -53,12 +53,21 @@ t('un día con diferencias muestra el importe y, si hay, el rastreo', () => {
   assert.match(texto, /aparece en CAJA 4 MORENO → DESVIO DE CAJA/);
   assert.match(texto, /faltante caja 4/);
 });
-t('semana perfecta: 7 días OK -> lo dice', () => {
-  const filas = diasDelRango(semana.desde, semana.hasta).map((d) => filaOK(d));
+t('semana perfecta: MP y Talo OK los 7 días -> dice "completa"', () => {
+  const filas = diasDelRango(semana.desde, semana.hasta).flatMap((d) => [filaOK(d), filaOK(d, { plataforma: 'talo' })]);
   const { lineas, stats } = formatearResumenSemanal({ ...semana, filas });
-  assert.strictEqual(stats.ok, 7);
+  assert.strictEqual(stats.ok, 14); // 7 días × 2 plataformas
   assert.strictEqual(stats.sinCorrer, 0);
+  assert.strictEqual(stats.sinPlataforma, 0);
   assert.match(lineas.join('\n'), /cerró completa y sin diferencias/);
+});
+t('una semana con SOLO MP (Talo nunca se arqueó) NO dice "completa" y marca a Talo', () => {
+  const filas = diasDelRango(semana.desde, semana.hasta).map((d) => filaOK(d)); // solo MP, los 7 días
+  const { lineas, stats } = formatearResumenSemanal({ ...semana, filas });
+  const texto = lineas.join('\n');
+  assert.strictEqual(stats.sinPlataforma, 7); // Talo faltó cada día que sí se arqueó MP
+  assert.ok(!/cerró completa/.test(texto), 'no debe decir "completa" si a Talo no se lo arqueó nunca');
+  assert.match(texto, /Talo<\/b>: sin arqueo/);
 });
 t('el conteo del pie suma bien (ok + dif + sin correr = 7)', () => {
   const filas = [filaOK('2026-07-13'), filaDif('2026-07-14'), filaOK('2026-07-15')];

@@ -92,6 +92,96 @@ async function estadoDelDia(dia) {
   return { tieneLibro, plataformas, faltan };
 }
 
+// Serializa las tareas de un MISMO chat. Cuando el admin manda los .xlsx como álbum, Telegram los
+// entrega en el mismo batch de getUpdates y telegraf los corre con Promise.all (concurrentes),
+// compartiendo la sesión: sin serializar, el segundo documento se pisaba con el primero. Se
+// encadenan sincrónicamente (sin await antes del set del Map, así el encadenado es atómico entre
+// los handlers concurrentes). El "listo" también se encola → resume DESPUÉS de guardar todo.
+const colaPorChat = new Map();
+function encolar(ctx, tarea) {
+  const chatId = ctx.chat && ctx.chat.id;
+  const prev = colaPorChat.get(chatId) || Promise.resolve();
+  const mio = prev.then(() => tarea()).catch((e) => { console.error('Error en /carga (cola):', e.message); });
+  colaPorChat.set(chatId, mio.finally(() => { if (colaPorChat.get(chatId) === mio) colaPorChat.delete(chatId); }));
+  return mio;
+}
+
+// Procesa UN documento: lo rutea y confirma. No usa un flag de "procesando" — la cola de arriba
+// garantiza que corra de a uno. `st` es el estado del wizard (acumula los días tocados).
+async function procesarDoc(ctx, doc, st) {
+  try {
+    const buffer = await bajarDoc(ctx, doc);
+    const u = ctx.state.usuario;
+    const r = await rutearDoc({ buffer, nombreArchivo: doc.file_name || 'archivo.xlsx', usuarioId: u ? u.id : null });
+
+    if (r.tipo === 'no_reconocido' || r.tipo === 'invalido') {
+      await ctx.reply(
+        (r.tipo === 'no_reconocido'
+          ? '🤔 No reconozco ese archivo. Esperaba el libro diario de Sigma o una liquidación de ' +
+            `${PLATAFORMAS.map((p) => p.nombre).join(' / ')}.\n\n`
+          : '') + r.msg
+      );
+      return;
+    }
+    if (r.tipo === 'liquidacion') {
+      st.dias.add(r.dia);
+      await ctx.reply(
+        `✅ <b>${r.plataforma.nombre}</b>: ${r.n} operación(es) del <b>${isoALinda(r.dia)}</b>, en espera para el arqueo de las 08:00.\n\n` +
+        'Mandame otro documento o escribí <b>listo</b>.',
+        { parse_mode: 'HTML' }
+      );
+      return;
+    }
+
+    // Libro cargado (registrarLibro devolvió el resumen). Se archiva y avisa como /libro.
+    const res = r.res;
+    st.huboLibro = true;
+    if (res.jornada) st.dias.add(res.jornada instanceof Date
+      ? `${res.jornada.getFullYear()}-${String(res.jornada.getMonth() + 1).padStart(2, '0')}-${String(res.jornada.getDate()).padStart(2, '0')}`
+      : String(res.jornada).slice(0, 10));
+    const rango = formatoVencimiento(res.desde) === formatoVencimiento(res.hasta)
+      ? formatoVencimiento(res.desde)
+      : `${formatoVencimiento(res.desde)} al ${formatoVencimiento(res.hasta)}`;
+    const partes = [
+      `✅ <b>Libro</b> cargado — jornada <b>${formatoVencimiento(res.jornada)}</b> (${res.filas} mov. · ${kb(buffer.length)}).`,
+      `📅 Trae del: ${rango}`,
+    ];
+    if (res.yaHabia) partes.push(`⚠️ Reemplacé el libro que ya estaba de esa jornada (tenía ${res.previo.filas} mov.).`);
+    if (res.huecos && res.huecos.length) {
+      partes.push(`📭 Días sin libro en la semana: <b>${res.huecos.map((iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`).join(', ')}</b> <i>(ignorá los feriados)</i>`);
+    }
+    partes.push('', 'Mandame otro documento o escribí <b>listo</b>.');
+    await ctx.reply(partes.join('\n'), { parse_mode: 'HTML' });
+
+    // Como /libro: si había un aviso "falta el libro" pendiente, avisar al resto que ya está.
+    const u2 = ctx.state.usuario;
+    try {
+      await avisarLibroResuelto(ctx.telegram, {
+        subidoPorTxt: (u2 && u2.nombre) || (ctx.from && ctx.from.username ? '@' + ctx.from.username : ''),
+        subidoPorTelegramId: ctx.from && ctx.from.id,
+      });
+    } catch (e) { console.error('carga: avisarLibroResuelto falló (sigo):', e.message); }
+  } catch (e) {
+    console.error('Error en /carga (documento):', e.message);
+    await ctx.reply('Hubo un problema con ese archivo. Probá de nuevo o avisá al admin.');
+  }
+}
+
+// Cierra la carga con el resumen del día (qué falta). Corre DESPUÉS de los documentos en vuelo
+// (va por la misma cola), así el estado que reporta ya incluye lo recién guardado.
+async function finalizar(ctx, st) {
+  if (!st.dias.size && !st.huboLibro) { await ctx.reply('Todavía no me mandaste ningún documento.'); return ctx.scene.leave(); }
+  const lineas = ['✅ <b>Listo por hoy.</b>'];
+  for (const dia of [...st.dias].sort()) {
+    const e = await estadoDelDia(dia);
+    lineas.push('', `📅 <b>${isoALinda(dia)}</b>:`);
+    if (!e.faltan.length) lineas.push('   Tengo todo (libro + liquidaciones). El arqueo sale a las 08:00. ✅');
+    else lineas.push(`   Me falta: <b>${e.faltan.join(', ')}</b>. Subilo y a las 08:00 arqueo lo que tenga.`);
+  }
+  await ctx.reply(lineas.join('\n'), { parse_mode: 'HTML' });
+  return ctx.scene.leave();
+}
+
 const cargaWizard = new Scenes.WizardScene(
   'carga-wizard',
   // 0: explicar y pedir los documentos del día
@@ -111,96 +201,24 @@ const cargaWizard = new Scenes.WizardScene(
     );
     return ctx.wizard.next();
   },
-  // 1: ir recibiendo documentos, ruteando cada uno. Con "listo" cierra con el resumen del día.
+  // 1: recibir cada documento (o "listo"). El procesamiento se ENCOLA por chat (ver `encolar`):
+  // así un álbum de .xlsx —que llega concurrente en el mismo batch— se procesa de a uno sin
+  // pisarse, y el "listo" resume DESPUÉS de que todo se guardó.
   async (ctx) => {
     if (ctx.message && esCancelar(ctx.message.text)) { await ctx.reply('Carga cancelada.'); return ctx.scene.leave(); }
     if (!esAdmin(ctx.state.usuario)) { await ctx.reply('Solo un administrador puede cargar los documentos.'); return ctx.scene.leave(); }
     const st = ctx.wizard.state.data;
     const doc = ctx.message && ctx.message.document;
 
-    // Sin documento: "listo" cierra con el resumen; cualquier otra cosa recuerda qué hacer.
-    if (!doc) {
-      const txt = ((ctx.message && ctx.message.text) || '').trim().toLowerCase();
-      if (!/^(listo|dale|ya|ok|terminé|termine)$/.test(txt)) {
-        await ctx.reply('Mandame un documento .xlsx, o escribí "listo" cuando termines.');
-        return;
-      }
-      if (!st.dias.size && !st.huboLibro) { await ctx.reply('Todavía no me mandaste ningún documento.'); return ctx.scene.leave(); }
-      // Resumen: para cada día tocado, qué falta.
-      const lineas = ['✅ <b>Listo por hoy.</b>'];
-      for (const dia of [...st.dias].sort()) {
-        const e = await estadoDelDia(dia);
-        lineas.push('', `📅 <b>${isoALinda(dia)}</b>:`);
-        if (!e.faltan.length) lineas.push('   Tengo todo (libro + liquidaciones). El arqueo sale a las 08:00. ✅');
-        else lineas.push(`   Me falta: <b>${e.faltan.join(', ')}</b>. Subilo y a las 08:00 arqueo lo que tenga.`);
-      }
-      await ctx.reply(lineas.join('\n'), { parse_mode: 'HTML' });
-      return ctx.scene.leave();
-    }
+    if (doc) return encolar(ctx, () => procesarDoc(ctx, doc, st));
 
-    if (st.procesando) return; // evita el doble evento del mismo archivo
-    st.procesando = true;
-    try {
-      const buffer = await bajarDoc(ctx, doc);
-      const u = ctx.state.usuario;
-      const r = await rutearDoc({ buffer, nombreArchivo: doc.file_name || 'archivo.xlsx', usuarioId: u ? u.id : null });
-
-      if (r.tipo === 'no_reconocido' || r.tipo === 'invalido') {
-        await ctx.reply(
-          (r.tipo === 'no_reconocido'
-            ? '🤔 No reconozco ese archivo. Esperaba el libro diario de Sigma o una liquidación de ' +
-              `${PLATAFORMAS.map((p) => p.nombre).join(' / ')}.\n\n`
-            : '') + r.msg
-        );
-        return;
-      }
-
-      if (r.tipo === 'liquidacion') {
-        st.dias.add(r.dia);
-        await ctx.reply(
-          `✅ <b>${r.plataforma.nombre}</b>: ${r.n} operación(es) del <b>${isoALinda(r.dia)}</b>, en espera para el arqueo de las 08:00.\n\n` +
-          'Mandame otro documento o escribí <b>listo</b>.',
-          { parse_mode: 'HTML' }
-        );
-        return;
-      }
-
-      // Libro cargado (registrarLibro devolvió el resumen). Se archiva y avisa como /libro.
-      const res = r.res;
-      st.huboLibro = true;
-      if (res.jornada) st.dias.add(res.jornada instanceof Date
-        ? `${res.jornada.getFullYear()}-${String(res.jornada.getMonth() + 1).padStart(2, '0')}-${String(res.jornada.getDate()).padStart(2, '0')}`
-        : String(res.jornada).slice(0, 10));
-      const rango = formatoVencimiento(res.desde) === formatoVencimiento(res.hasta)
-        ? formatoVencimiento(res.desde)
-        : `${formatoVencimiento(res.desde)} al ${formatoVencimiento(res.hasta)}`;
-      const partes = [
-        `✅ <b>Libro</b> cargado — jornada <b>${formatoVencimiento(res.jornada)}</b> (${res.filas} mov. · ${kb(buffer.length)}).`,
-        `📅 Trae del: ${rango}`,
-      ];
-      if (res.yaHabia) partes.push(`⚠️ Reemplacé el libro que ya estaba de esa jornada (tenía ${res.previo.filas} mov.).`);
-      if (res.huecos && res.huecos.length) {
-        partes.push(`📭 Días sin libro en la semana: <b>${res.huecos.map((iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`).join(', ')}</b> <i>(ignorá los feriados)</i>`);
-      }
-      partes.push('', 'Mandame otro documento o escribí <b>listo</b>.');
-      await ctx.reply(partes.join('\n'), { parse_mode: 'HTML' });
-
-      // Como /libro: si había un aviso "falta el libro" pendiente, avisar al resto que ya está.
-      const u2 = ctx.state.usuario;
-      try {
-        await avisarLibroResuelto(ctx.telegram, {
-          subidoPorTxt: (u2 && u2.nombre) || (ctx.from && ctx.from.username ? '@' + ctx.from.username : ''),
-          subidoPorTelegramId: ctx.from && ctx.from.id,
-        });
-      } catch (e) { console.error('carga: avisarLibroResuelto falló (sigo):', e.message); }
+    // Sin documento: "listo" cierra (encolado, tras los docs en vuelo); otra cosa recuerda qué hacer.
+    const txt = ((ctx.message && ctx.message.text) || '').trim().toLowerCase();
+    if (!/^(listo|dale|ya|ok|terminé|termine)$/.test(txt)) {
+      await ctx.reply('Mandame un documento .xlsx, o escribí "listo" cuando termines.');
       return;
-    } catch (e) {
-      console.error('Error en /carga:', e.message);
-      await ctx.reply('Hubo un problema con ese archivo. Probá de nuevo o avisá al admin.');
-      return;
-    } finally {
-      st.procesando = false;
     }
+    return encolar(ctx, () => finalizar(ctx, st));
   }
 );
 
