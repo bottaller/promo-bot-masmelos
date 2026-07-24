@@ -4,7 +4,6 @@
 const assert = require('assert');
 const XLSX = require('xlsx');
 const cajaCentral = require('../src/areas/cajacentral');
-const mpWizard = require('../src/scenes/mp');
 const { conciliarMP, CUENTA_MP } = require('../src/lib/conciliacion-mp');
 const { parsearMayor, MayorError } = require('../src/lib/mayor-excel');
 const { parsearLiquidacion, LiquidacionError } = require('../src/lib/liquidacion-excel');
@@ -70,15 +69,40 @@ t('diferencia de centavos: aparea igual, con aviso de redondeo', () => {
   assert.deepStrictEqual(r.pares[0].avisos, ['redondeo']);
   assert.strictEqual(r.resumen.nivel, 'aviso'); // 🟡: hay que verlo, no alarma
 });
-t('diferencia MAYOR a la tolerancia: NO aparea (quedan los dos huérfanos)', () => {
+t('rescate por centavos: misma venta con dif > redondeo pero < $1 y a segundos APAREA (aviso)', () => {
+  // El caso real del 20/07 ($0,54) y 22/07 ($0,30): una venta con IVA cuyo importe difiere por
+  // centavos entre el sistema y MP. Antes salía como DOS 🔴 falsos; ahora aparea como aviso.
+  const r = conciliarMP({
+    movimientos: [M(598412.71, '2026-07-20 15:33:05')],
+    operaciones: [O(598412.17, '2026-07-20 15:32:40')], // dif 0,54 · 25 s
+  });
+  assert.strictEqual(r.pares.length, 1);
+  assert.strictEqual(r.soloSistema.length, 0);
+  assert.strictEqual(r.soloMp.length, 0);
+  assert.strictEqual(r.pares[0].nivel, 'aviso');
+  assert.deepStrictEqual(r.pares[0].avisos, ['centavos']);
+  assert.strictEqual(r.resumen.nivel, 'aviso'); // 🟡, no 🔴
+});
+t('diferencia > $1: NO aparea aunque estén juntos (quedan huérfanos)', () => {
   const r = conciliarMP({
     movimientos: [M(1000.00, '2026-07-16 10:00:10')],
-    operaciones: [O(1000.50, '2026-07-16 10:00:00')],
+    operaciones: [O(1002.00, '2026-07-16 10:00:00')], // $2 > tope de centavos
   });
   assert.strictEqual(r.pares.length, 0);
   assert.strictEqual(r.soloSistema.length, 1);
   assert.strictEqual(r.soloMp.length, 1);
   assert.strictEqual(r.resumen.nivel, 'alerta');
+});
+t('near-miss por centavos pero LEJOS en el tiempo: NO aparea (ventana corta del rescate)', () => {
+  // Dif de $0,50 (dentro del margen de centavos) pero a 40 min: son dos ventas distintas, no la
+  // misma cargada al toque. El rescate usa ventana corta justamente para no aparear esto.
+  const r = conciliarMP({
+    movimientos: [M(1000.00, '2026-07-16 10:40:00')],
+    operaciones: [O(1000.50, '2026-07-16 10:00:00')],
+  });
+  assert.strictEqual(r.pares.length, 0);
+  assert.strictEqual(r.soloSistema.length, 1);
+  assert.strictEqual(r.soloMp.length, 1);
 });
 t('cobró MP y no está asentado -> soloMp + 🔴', () => {
   const r = conciliarMP({ movimientos: [], operaciones: [O(50000, '2026-07-16 10:00:00')] });
@@ -479,7 +503,7 @@ t('el redondeo se RESUME en una línea con el total, no se lista uno por uno', (
     ],
   });
   const txt = formatearMP({ fecha: '16/07/2026', cuenta: 'MP', resultado });
-  assert.match(txt, /🟡 3 por redondeo · −\$0,04/); // 3 pares, neto -0,04 (-0,04+0,01-0,01)
+  assert.match(txt, /🟡 3 con diferencia de centavos · −\$0,04/); // 3 pares, neto -0,04 (-0,04+0,01-0,01)
   assert.ok(!/MELLADO/.test(txt), 'no debe listar el cliente de un redondeo');
   assert.ok(!/por redondeo · .*MELLADO/s.test(txt));
   assert.ok(!/14:24/.test(txt), 'no debe listar la hora de un redondeo');
@@ -503,29 +527,26 @@ t('las salidas de dinero (Mercado Libre negativo, Haber) NO van al mensaje', () 
   assert.ok(!/20\.000\.000/.test(txt));
   assert.match(txt, /revisar con MP/); // lo positivo fuera de alcance SÍ sigue
 });
-t('el reporte no arma ningún archivo: solo exporta el mensaje', () => {
-  // /mp ya no devuelve Excel. Si vuelve a exportar un builder, revisar el wizard (mp.js).
+t('el reporte solo arma mensajes: ningún generador de archivos', () => {
+  // El detalle en archivo va por el PDF (informe-mp-pdf.js). Si acá reaparece un builder de
+  // Excel, es que volvió el camino viejo: revisar el wizard (mp.js).
   const rep = require('../src/lib/reporte-mp');
-  assert.deepStrictEqual(Object.keys(rep), ['formatearMP']);
+  assert.ok(Object.keys(rep).every((k) => /^(formatear|lineas)/.test(k)), Object.keys(rep).join(','));
+  assert.ok(!Object.keys(rep).some((k) => /excel|xlsx|pdf/i.test(k)));
 });
 
-console.log('área Caja Central (el rol dueño del comando)');
-t('expone el comando y su escena', () => {
+console.log('área Caja Central (ahora solo un rol, sin comando propio)');
+t('sigue siendo el área/rol cajacentral, SIN comando (el arqueo es automático a las 08:00)', () => {
   assert.strictEqual(cajaCentral.codigo, 'cajacentral'); // == bot.areas.codigo (migración 014)
   assert.strictEqual(cajaCentral.nombre, 'Caja Central');
-  assert.deepStrictEqual(cajaCentral.comandos.map((c) => c.comando), ['mp']);
-  assert.ok(cajaCentral.scenes.some((s) => s.id === 'mp-wizard'));
+  // /mp se sacó: el arqueo dejó de ser manual. El área queda como canal de avisos.
+  assert.deepStrictEqual((cajaCentral.comandos || []).map((c) => c.comando), []);
+  assert.deepStrictEqual(cajaCentral.scenes || [], []);
 });
-t('la descripción del menú dice qué recibe y qué devuelve', () => {
-  const d = cajaCentral.comandos[0].descripcion;
-  assert.match(d, /mandás/i);      // qué le doy
-  assert.match(d, /liquidación/i); // ...y el otro archivo
-  assert.ok(d.length <= 256);      // tope de setMyCommands (index.js::publicarComandos)
-});
-t('registra el comando UNA sola vez (si no, se ejecutaría duplicado)', () => {
+t('no registra ningún comando (si no, un comando fantasma en el menú)', () => {
   const registrados = [];
   cajaCentral.registrar({ command: (n) => registrados.push(n) });
-  assert.deepStrictEqual(registrados, ['mp']);
+  assert.deepStrictEqual(registrados, []);
 });
 
 console.log('informe PDF: el veredicto (control bien/mal)');
@@ -562,44 +583,9 @@ t('fechaHoraArg: DD/MM/AAAA HH:MM, sin coma', () => {
   assert.match(fechaHoraArg(), /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/);
 });
 
-// --- el wizard: los textos que ve el usuario -------------------------------
-// "El comando debe decir qué info recibe": se testea de verdad, corriendo el paso.
-function ctxFalso() {
-  const replies = [];
-  return {
-    replies,
-    reply: async (t) => { replies.push(t); },
-    state: { usuario: { es_admin: false, areas: ['cajacentral'] } },
-    message: {},
-    wizard: { state: {}, next() {}, selectStep() {} },
-    scene: { leave: async () => {} },
-  };
-}
-
+// --- informe PDF: se genera un PDF válido (motor de arqueo, sin wizard) -----
+// El wizard /mp se sacó; el flujo de conciliación se testea vía arquearDia (test/arqueo.test.js).
 (async () => {
-  console.log('el comando dice qué info recibe');
-  const ctx = ctxFalso();
-  await mpWizard.steps[0](ctx);
-  const txt = ctx.replies[0];
-  t('el primer mensaje enumera los 2 archivos, de dónde salen y de qué día', () => {
-    assert.match(txt, /2 archivos/);
-    assert.match(txt, /MISMO día/);
-    assert.match(txt, /Diario de movimientos contables/);
-    assert.match(txt, /Mayor de cuenta/);
-    assert.match(txt, /liquidación de Mercado Pago/i);
-    assert.match(txt, new RegExp(String(CUENTA_MP)));  // la cuenta, para que sepa cuál exportar
-    assert.match(txt, /Exportá.*el día que querés conciliar/s);
-  });
-  t('el primer mensaje deja claro el alcance (QR/transferencia, Point no)', () => {
-    assert.match(txt, /QR o transferencia/);
-    assert.match(txt, /Point/);
-  });
-  t('el HTML del mensaje está balanceado (si no, Telegram lo rechaza entero)', () => {
-    assert.strictEqual((txt.match(/<b>/g) || []).length, (txt.match(/<\/b>/g) || []).length);
-    assert.strictEqual((txt.match(/<code>/g) || []).length, (txt.match(/<\/code>/g) || []).length);
-    assert.ok(!/&(?!amp;|lt;|gt;|#)/.test(txt)); // ningún & suelto
-  });
-
   console.log('informe PDF: se genera un PDF válido');
   const esPDF = (buf) => Buffer.isBuffer(buf) && buf.slice(0, 4).toString() === '%PDF' && buf.length > 800;
   const okRes = conciliarMP({ movimientos: [M(100, '2026-07-16 10:00:10')], operaciones: [O(100, '2026-07-16 10:00:00')] });
@@ -609,49 +595,6 @@ function ctxFalso() {
   t('control OK -> PDF válido', () => { assert.ok(esPDF(pdfOk), 'no es un PDF'); });
   t('control con diferencias -> PDF válido', () => { assert.ok(esPDF(pdfMal), 'no es un PDF'); });
   t('el PDF con diferencias pesa más (lista lo que no cierra)', () => { assert.ok(pdfMal.length > pdfOk.length); });
-
-  // El RE-CHEQUEO de acceso del wizard tiene que ser la MISMA área que registra el comando.
-  // Regresión: quedó pidiendo 'tesoreria' al mudar /mp a Caja Central -> un usuario CON el rol
-  // entraba pero se trababa al mandar el archivo. Se maneja el paso 1 con distintos usuarios.
-  console.log('acceso: el rol cajacentral puede usar /mp de punta a punta');
-  // El paso 1 recibe la LIQUIDACIÓN (de ahí sale el día contra el que se concilia, y recién con
-  // el día se busca el libro). Acá corre sin DATABASE_URL, así que conseguirLibro devuelve
-  // ok:false —sin tirar, que es su contrato— y el wizard pide el export de Sigma.
-  const liqBuf = aBuffer([HDR_LIQ,
-    ['168263949797', 'available_money', 'Approved payment', '127241.52', '2026-07-16T16:10:56.000-04:00',
-      '-1231.70', '2026-07-16T16:10:56.000-04:00', '125245.10', '-764.72', 'Mercado Pago', 'QR Code', '']]);
-  async function correrPaso1(usuario) {
-    const replies = []; let salio = false;
-    global.fetch = async () => ({ arrayBuffer: async () => liqBuf.buffer.slice(liqBuf.byteOffset, liqBuf.byteOffset + liqBuf.byteLength) });
-    const ctx = {
-      state: { usuario },
-      message: { document: { file_id: 'mem://liq', file_name: 'settlement.xlsx' } },
-      telegram: { getFileLink: async () => ({ href: 'mem://liq' }) },
-      reply: async (t) => { replies.push(t); },
-      scene: { leave: async () => { salio = true; } },
-      wizard: { state: { data: {} }, next() {}, selectStep() {} }, // el paso 0 crea state.data
-    };
-    await mpWizard.steps[1](ctx);
-    return { replies, salio };
-  }
-  const rolSolo = await correrPaso1({ es_admin: false, areas: ['cajacentral'] });
-  t('un usuario con SOLO el rol cajacentral NO se traba en el paso del archivo', () => {
-    assert.ok(!rolSolo.replies.some((r) => /no tenés acceso/i.test(r)), 'lo bloqueó teniendo el rol correcto');
-    assert.ok(rolSolo.replies.some((r) => /export de Sigma/i.test(r)), 'no avanzó después de la liquidación');
-    assert.strictEqual(rolSolo.salio, false);
-  });
-  t('el día a conciliar sale de la liquidación (16/07), no de un default', () => {
-    assert.ok(rolSolo.replies.some((r) => /16\/07\/2026/.test(r)), 'no nombró el día de la liquidación');
-  });
-  const otroRol = await correrPaso1({ es_admin: false, areas: ['tesoreria'] });
-  t('un usuario sin el rol cajacentral SÍ queda bloqueado (y se nombra Caja Central)', () => {
-    assert.ok(otroRol.replies.some((r) => /acceso al área Caja Central/i.test(r)));
-    assert.strictEqual(otroRol.salio, true);
-  });
-  const admin = await correrPaso1({ es_admin: true, areas: [] });
-  t('un admin pasa igual (acceso total)', () => {
-    assert.ok(admin.replies.some((r) => /export de Sigma/i.test(r)));
-  });
 
   console.log(`\n✅ ${pass} tests OK`);
 })();

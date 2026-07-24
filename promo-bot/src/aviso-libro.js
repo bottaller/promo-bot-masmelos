@@ -1,24 +1,29 @@
-// Recordatorio del LIBRO DIARIO: a las 21:00 (hora Argentina), si nadie cargó el libro de
-// la jornada, se les avisa a los admins. La carga es la que alimenta a todos los comandos
-// (cierre, semanal, mensual, flujos, mp, arqueo), así que si falta, al día siguiente no
-// hay con qué trabajar.
-const { cubreFecha, ultimoLibro } = require('./db/libro');
+// Recordatorio de la CARGA DEL DÍA: a las 21:30 (hora Argentina), si falta alguno de los
+// documentos del día —el libro diario o las liquidaciones de las plataformas (MP, Talo)—, se
+// les avisa a los admins qué falta. Esa carga es la que alimenta el arqueo de las 08:00 y todos
+// los comandos (cierre, semanal, mensual, flujos), así que si falta, al día siguiente no hay
+// con qué trabajar.
+const { cubreFecha } = require('./db/libro');
+const { plataformasPendientesDe } = require('./db/liquidaciones-pendientes');
+const { PLATAFORMAS } = require('./lib/plataformas');
 const { telegramIdsAdmins } = require('./db/usuarios');
-const { fechaHoyArgISO, formatoVencimiento, parseVencimiento } = require('./lib/fechas');
+const { fechaHoyArgISO, parseVencimiento } = require('./lib/fechas');
 
-// Hora del chequeo, en UTC. Default 00:00 UTC = 21:00 Argentina (UTC-3). Para las
-// 20:30 Arg poné LIBRO_HORA_UTC=23 y LIBRO_MIN_UTC=30 (23:30 UTC). A esa hora
+// Hora del chequeo, en UTC. Default 00:30 UTC = 21:30 Argentina (UTC-3). A esa hora
 // `fechaHoyArgISO()` todavía devuelve el día que está terminando, que es justo la
 // jornada que hay que chequear.
 const HORA_UTC_RAW = Number(process.env.LIBRO_HORA_UTC);
 const HORA_UTC = (Number.isInteger(HORA_UTC_RAW) && HORA_UTC_RAW >= 0 && HORA_UTC_RAW <= 23) ? HORA_UTC_RAW : 0;
 const MIN_UTC_RAW = Number(process.env.LIBRO_MIN_UTC);
-const MIN_UTC = (Number.isInteger(MIN_UTC_RAW) && MIN_UTC_RAW >= 0 && MIN_UTC_RAW <= 59) ? MIN_UTC_RAW : 0;
+const MIN_UTC = (Number.isInteger(MIN_UTC_RAW) && MIN_UTC_RAW >= 0 && MIN_UTC_RAW <= 59) ? MIN_UTC_RAW : 30;
 
-// Guard en memoria: no repetir el aviso de la misma jornada dentro del mismo proceso.
-// Además marca que hay un aviso PENDIENTE de resolver: si después alguien carga el libro,
-// avisarLibroResuelto() lo usa para anunciarle al resto que ya está.
+// Guard en memoria: no repetir el aviso de la misma jornada dentro del mismo proceso (cubre
+// cualquier faltante: libro y/o plataformas).
 let ultimaJornadaAvisada = null;
+// Marca aparte: la jornada para la que se reclamó EL LIBRO específicamente (no una plataforma).
+// avisarLibroResuelto() usa SOLO esta, para no anunciar "ya se cargó el libro" cuando el aviso
+// había sido por una liquidación de plataforma y el libro ya estaba.
+let libroReclamadoJornada = null;
 
 function isoALinda(iso) {
   return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
@@ -28,41 +33,51 @@ function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// Chequea la jornada de hoy y avisa si falta. Devuelve { jornada, cargado, avisados }.
+// Chequea los documentos de la jornada de hoy y avisa qué falta. Devuelve { jornada, cargado,
+// avisados, faltan }. `cargado` = está TODO (libro + todas las plataformas).
 async function revisarLibroDelDia(telegram, { empresa = 'HONRE' } = {}) {
   const hoyISO = fechaHoyArgISO();
   const fecha = parseVencimiento(isoALinda(hoyISO));
-  // cubreFecha y no hayLibro: si el export cargado abarca varios días e incluye hoy, el día
-  // está cubierto aunque su jornada registrada sea otra. Avisar ahí sería un falso positivo.
-  const cargado = await cubreFecha({ fecha, empresa });
-  if (cargado) return { jornada: hoyISO, cargado: true, avisados: 0 };
-  if (ultimaJornadaAvisada === hoyISO) return { jornada: hoyISO, cargado: false, avisados: 0 };
 
-  // Qué fue lo último que sí se cargó — así el admin sabe cuánto hace que viene faltando.
-  let cola = '';
+  // Qué falta: el libro (cubreFecha, no hayLibro: un export que abarque varios días e incluya
+  // hoy cuenta como cubierto) + cada liquidación de plataforma en espera.
+  let tieneLibro = false;
+  let pendientes = [];
   try {
-    const ult = await ultimoLibro({ empresa });
-    cola = ult
-      ? `\n\nEl último que tengo es del ${formatoVencimiento(ult.fecha)} (${ult.filas} movimientos).`
-      : '\n\nTodavía no tengo ningún libro cargado.';
+    [tieneLibro, pendientes] = await Promise.all([
+      cubreFecha({ fecha, empresa }),
+      plataformasPendientesDe({ fecha, empresa }),
+    ]);
   } catch (e) {
-    console.error('Aviso del libro: no pude leer el último cargado:', e.message);
+    console.error('Aviso de carga: no pude leer el estado del día:', e.message);
+    return { jornada: hoyISO, cargado: false, avisados: 0, faltan: [] };
   }
 
+  const faltan = [];
+  if (!tieneLibro) faltan.push('el libro');
+  for (const p of PLATAFORMAS) if (!pendientes.includes(p.codigo)) faltan.push(p.nombre);
+
+  if (!faltan.length) return { jornada: hoyISO, cargado: true, avisados: 0, faltan: [] };
+  if (ultimaJornadaAvisada === hoyISO) return { jornada: hoyISO, cargado: false, avisados: 0, faltan };
+
   const msg =
-    `📚 <b>Falta el libro diario de hoy</b> (${isoALinda(hoyISO)})\n\n` +
-    `Sin él, mañana no van a poder correr el cierre, el arqueo ni los controles.\n` +
-    `Cargalo con /libro.${cola}`;
+    `📥 <b>Faltan documentos de hoy</b> (${isoALinda(hoyISO)})\n\n` +
+    `Me falta: <b>${faltan.join(', ')}</b>.\n` +
+    'Cargalos con /carga. Mañana a las 08:00 arqueo lo que tenga y le mando los reportes a Tesorería y Caja Central.';
 
   const admins = await telegramIdsAdmins();
   let avisados = 0;
   for (const tid of admins) {
     try { await telegram.sendMessage(tid, msg, { parse_mode: 'HTML' }); avisados++; }
-    catch (e) { console.error(`Aviso del libro: no pude avisar a ${tid}:`, e.message); }
+    catch (e) { console.error(`Aviso de carga: no pude avisar a ${tid}:`, e.message); }
   }
   // Solo se marca si llegó a alguien; si fallaron todos, se reintenta en la próxima corrida.
-  if (avisados > 0) ultimaJornadaAvisada = hoyISO;
-  return { jornada: hoyISO, cargado: false, avisados };
+  if (avisados > 0) {
+    ultimaJornadaAvisada = hoyISO;
+    // El "libro resuelto" solo aplica si el libro ESPECÍFICAMENTE faltaba (no si faltaba solo una plataforma).
+    if (!tieneLibro) libroReclamadoJornada = hoyISO;
+  }
+  return { jornada: hoyISO, cargado: false, avisados, faltan };
 }
 
 // Cuando un admin carga el libro DESPUÉS de que salió el aviso "falta el libro", le avisa al RESTO
@@ -76,12 +91,12 @@ async function revisarLibroDelDia(telegram, { empresa = 'HONRE' } = {}) {
 // Devuelve { anuncio, avisados }.
 async function avisarLibroResuelto(telegram, { empresa = 'HONRE', subidoPorTxt = '', subidoPorTelegramId = null } = {}) {
   try {
-    const pend = ultimaJornadaAvisada;
-    if (!pend) return { anuncio: false, avisados: 0 }; // no había aviso pendiente
+    const pend = libroReclamadoJornada;
+    if (!pend) return { anuncio: false, avisados: 0 }; // no se había reclamado EL LIBRO (a lo sumo una plataforma)
     const fecha = parseVencimiento(isoALinda(pend));
     const cubierto = await cubreFecha({ fecha, empresa });
     if (!cubierto) return { anuncio: false, avisados: 0 }; // el libro que subieron no cubre el día avisado
-    ultimaJornadaAvisada = null; // consumido: ni re-anunciar ni que el aviso vuelva a reclamar
+    libroReclamadoJornada = null; // consumido: no re-anunciar
     const quien = escapeHtml(subidoPorTxt).trim();
     const msg =
       `✅ <b>Ya se cargó el libro diario del ${isoALinda(pend)}</b>` +
@@ -115,7 +130,7 @@ function iniciarAvisoLibro(bot) {
   const correr = async () => {
     try {
       const r = await revisarLibroDelDia(bot.telegram);
-      console.log(`Libro diario ${r.jornada}: ${r.cargado ? 'cargado' : `FALTA (avisé a ${r.avisados} admin/s)`}.`);
+      console.log(`Carga ${r.jornada}: ${r.cargado ? 'completa' : `faltan ${r.faltan.join(', ')} (avisé a ${r.avisados} admin/s)`}.`);
     } catch (e) {
       console.error('Error en el aviso del libro diario:', e);
     }

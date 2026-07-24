@@ -160,11 +160,12 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
   Si no existe o está inactivo → *"No tenés acceso, pedile el alta al admin"* y corta.
 - **Autorización por comando:** cada comando declara su área (`requiereArea('calidad')`).
   Áreas y sus comandos hoy:
-  - **Calidad:** `/alta` (poner un producto en oferta por vencimiento), `/baja` (retirarlo), `/control` (Excel de lo que está en oferta por vencimiento).
+  - **Calidad:** `/alta` (poner un producto en oferta por vencimiento), `/baja` (retirarlo), `/control` (Excel de lo que está en oferta por vencimiento), `/ajuste` y `/promoprecios` (archivos que arrancan una cadena de validaciones hacia el dueño del bot, Compras, Marketing, Ventas y Depósito — ver [areas/calidad.md](areas/calidad.md)).
   - **Compras:** `/reporte` (por proveedor, buscado por código de proveedor; histórico o por lapso de tiempo) y `/excel` (todas las promociones, abiertas y cerradas, histórico o por lapso; una sola hoja de detalle agrupada por proveedor con AutoFilter, hoja de resumen y hoja con los informes de Depósito dirigidos a Compras).
   - **Tesorería:** `/flujos` (recibe el Excel de Sigma y devuelve el HTML del flujo del dinero — corre el motor Python, ver §6 y [areas/tesoreria.md](areas/tesoreria.md)) y `/cierre` (cierre diario: carga los saldos del día; la conciliación saldos-vs-libro está en curso, ver [conciliacion.md](conciliacion.md)).
   - **Caja Central:** `/mp` (conciliación de Mercado Pago **operación por operación**: export de Sigma + liquidación de MP → aparea cada cobranza con su cobro y marca lo que no cierra, ver [areas/caja-central.md](areas/caja-central.md) y [conciliacion-mp.md](conciliacion-mp.md)).
   - **Depósito:** `/informe` (informe en texto libre sobre un proveedor o producto, dirigido a Calidad o Compras; se guarda en `bot.deposito_informes` y se avisa automáticamente a todos los que tengan ese rol, ver [areas/deposito.md](areas/deposito.md)).
+  - **Marketing:** `/imagenes` (entrega las imágenes que pide `/promoprecios` para el ciclo activo — ver [areas/calidad.md](areas/calidad.md)).
 - **Menú dinámico:** cada usuario ve **solo los comandos de sus áreas**.
 - **Comandos de admin:** `/usuarios` (dar de alta gente, asignar áreas/roles, hacer admin), `/actartic` (subir el maestro de artículos) y `/avisos` (disparar a mano el chequeo de vencimientos).
 - **Rol "Sistemas"** (migración 019): ve y usa casi **todos los comandos** — todas las áreas más
@@ -178,6 +179,13 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
   `AREAS_SIN_BYPASS_SISTEMAS` en `authz.js` es la lista de áreas excluidas del bypass — hoy solo
   Tesorería, pero está pensada para sumar otras si hace falta. Se asigna igual que cualquier otro
   rol: `/usuarios agregar <telegram_id> sistemas`.
+- **"Dueño del bot"** (`OWNER_TELEGRAM_ID` en `.env`, `src/lib/owner.js`): distinto de "admin real" —
+  es una sola persona específica, no un nivel de permiso. Hoy lo usan `/ajuste` y `/promoprecios`
+  (Calidad): son los únicos que le llegan exclusivamente a esta persona en vez de a un rol.
+- **Roles nuevos sin comandos propios de área** (migración 024): `ventas` y `compras_promo` — solo
+  reciben notificaciones (como "Sistemas" antes de tener comandos), se asignan igual que cualquier
+  rol. `compras_promo` existe **aparte** del `compras` general para que `/promoprecios` no le llegue
+  a todo el equipo de compras, solo al responsable puntual que designe el dueño.
 - **Avisos proactivos:** un scheduler diario avisa a Calidad de lo que vence mañana/hoy y al creador + admins de lo ya vencido (ver §14).
 - **Registro por carpeta:** agregar un área = agregar una carpeta en `src/areas/`, sin tocar el núcleo.
 

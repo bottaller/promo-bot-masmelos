@@ -1,7 +1,7 @@
 # Área Calidad
 
 > Un doc por área. Este cubre **Calidad**: sus comandos, el flujo de datos y los límites conocidos.
-> Última actualización: **2026-07-22**.
+> Última actualización: **2026-07-23**.
 
 ## Qué hace el rol
 
@@ -20,6 +20,8 @@ tiran, para la próxima comprar menos o pedir descuento al proveedor.
 | `/cambiopromocion` | Cambia la promoción de una camada **vigente** — % de descuento o precio promocional, y se puede pasar de una a la otra. Arranca mostrando un **menú con todas las promociones abiertas** (sin pedir código/SKU) para elegir directo sobre cuál; después pregunta qué tipo de promoción nueva aplica, su valor, y a cuántas unidades de las actuales se le aplica. Por diferencia, cierra la camada vieja marcando lo no alcanzado como vendido con la promo vieja, y abre una camada nueva con las unidades restantes con la promo nueva. |
 | `/baja` | Cierra una camada abierta: cuántas se vendieron y qué pasó con el remanente (descartado/vencido o devuelto a góndola normal). |
 | `/control` | Excel de **todo lo que está en oferta ahora**, ordenado por fecha de vencimiento (incluye columnas de % de descuento y precio promocional). Lleva la fecha de generación (ver [convenciones.md](../convenciones.md)). |
+| `/ajuste` | Sube un archivo de ajustes que le llega **solo al dueño del bot** (no a "los admins" — ver más abajo). El dueño lo revisa afuera del bot y toca "✅ Ajuste realizado" cuando lo hizo; ahí se le avisa a quien lo subió. |
+| `/promoprecios` | Sube el archivo final de promociones y precios. Arranca una cadena: dueño valida → Compras (rol `compras_promo`) y Marketing → Marketing entrega imágenes (`/imagenes`, área Marketing) → Compras valida las imágenes → dueño valida → se reenvían a Ventas y Depósito. Ver "El ciclo de `/promoprecios`" más abajo. |
 
 ## Modelo de datos
 
@@ -63,6 +65,44 @@ completo del proveedor** (histórico, el mismo texto que arma `/reporte`, ver
 con el rol `compras`** (sin importar de qué proveedor se trate — no hay mapeo por proveedor). Sale de
 `telegramIdsPorRol('compras')`, la misma tabla `bot.usuario_area` que usa todo lo demás; agregar o
 sacar gente es un `/usuarios agregar` / `/usuarios quitar`, sin tocar código ni archivos de config.
+
+## El ciclo de `/ajuste` y `/promoprecios`
+
+Estos dos comandos no tocan `bot.compras_altas`: viven en tablas propias (`bot.calidad_ajustes`,
+`bot.promoprecios`, `bot.promoprecios_imagenes`, migración 024) y arman una cadena de reenvíos por
+botón, no un wizard de punta a punta. La lógica de los botones vive en `src/acciones-calidad.js`
+(se registra una sola vez en `src/index.js`, aparte de los wizards).
+
+**El "dueño del bot"** (`OWNER_TELEGRAM_ID` en `.env`) es quien recibe ambos archivos y valida en los
+pasos clave — **no es lo mismo que "admin real"**: puede haber varios admins (hoy los hay), pero esto
+es exclusivo de una sola persona. `src/lib/owner.js` (`esDueno`) es el único chequeo que lo usa.
+
+**`/ajuste`:** José sube el archivo → le llega al dueño con un botón. El dueño lo revisa afuera del
+bot; cuando toca "✅ Ajuste realizado", se le avisa a José (por su `telegram_id`, guardado en la fila
+al subirlo — sin necesidad de join contra `bot.usuarios`).
+
+**`/promoprecios`**, en cadena:
+1. José sube el archivo → le llega al dueño con botón "✅ Validar".
+2. El dueño lo toca → el bot le pregunta cuántas imágenes tiene que hacer Marketing (wizard corto,
+   `validar-promoprecios-wizard`, entra vía `ctx.session.promoIdParaValidar` — no vía el estado de
+   la escena, para no depender de cómo Telegraf pasa el segundo argumento de `scene.enter`).
+3. Se reparte: **Compras** (rol `compras_promo`, no el `compras` general — si no, le llegaría a todo
+   el equipo de compras en vez de al responsable puntual que designe el dueño) con botón "✅ Ya hice
+   mi parte"; **Marketing** con la cantidad pedida.
+4. Marketing entrega con `/imagenes` (área Marketing): exige la cantidad exacta, de a una imagen por
+   vez; "reiniciar" borra el progreso y arranca de nuevo. Al llegar a la cantidad pedida, **se
+   dispara solo** — no hace falta que confirme nada — y avisa al dueño de que terminó.
+5. Las imágenes van a Compras (`compras_promo`) con botón "✅ Validar imágenes".
+6. Al validarlas, van al dueño con el mismo botón.
+7. Al validarlas el dueño, se reenvían automáticamente a **Ventas** y **Depósito** (roles `ventas` y
+   `deposito`, sin botón — ahí termina la cadena).
+
+Como hay como mucho un ciclo de `/promoprecios` por semana, `/imagenes` y el wizard de validar no
+necesitan elegir "cuál" — siempre operan sobre el único activo (`promoPreciosActivo()`: el más
+reciente ya validado por el dueño que todavía no se terminó de reenviar).
+
+**Roles nuevos** (migración 024): `marketing`, `ventas`, `compras_promo`. Ninguno tiene gente
+asignada por defecto — se asignan con `/usuarios agregar <telegram_id> <rol>` cuando se decida quién.
 
 ## Avisos de vencimiento
 

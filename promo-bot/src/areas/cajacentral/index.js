@@ -1,28 +1,20 @@
-// Área Caja Central — quien maneja la caja central del negocio y controla que lo que cobró
-// Mercado Pago sea exactamente lo que quedó asentado en el sistema.
-//  /mp — conciliación de Mercado Pago operación por operación (sistema vs liquidación de MP).
+// Área Caja Central — el rol operativo que controla que lo que cobraron las plataformas
+// (Mercado Pago, Talo) sea exactamente lo que quedó asentado en el sistema.
 //
-// El rol se asigna con: /usuarios agregar <telegram_id> cajacentral (migración 014).
-// /mp vivía en Tesorería hasta el 17/07/2026; se movió acá porque es Caja Central quien lo
-// corre. Un comando pertenece a UNA sola área (ver D9 de docs/arquitectura.md): registrarlo
-// desde dos lo ejecutaría dos veces. Los admins lo siguen viendo (tienen acceso total).
-const mpWizard = require('../../scenes/mp');
-const { requiereArea } = require('../../middleware/authz');
-
+// Ya NO tiene comando propio: el arqueo de cobros dejó de ser manual (/mp) y ahora es
+// AUTOMÁTICO. El admin sube las liquidaciones de noche con /carga (área Tesorería) y a las 08:00
+// el barrido (src/entrega-arqueo.js) las cruza contra el libro y manda los reportes a este grupo
+// + Tesorería. Los lunes llega además el resumen semanal (src/aviso-mp-semanal.js).
+//
+// El área sigue existiendo como ROL (bot.areas.codigo='cajacentral', migración 014): es el canal
+// al que se entregan esos avisos, vía telegramIdsPorRol('cajacentral'). El rol se asigna con:
+// /usuarios agregar <telegram_id> cajacentral.
 const CODIGO = 'cajacentral';
-
-const comandos = [
-  { comando: 'mp', descripcion: 'Conciliar Mercado Pago: mandás los movimientos del sistema + la liquidación, te marco lo que no cierra' },
-];
-
-function registrar(bot) {
-  bot.command('mp', requiereArea(CODIGO), (ctx) => ctx.scene.enter('mp-wizard'));
-}
 
 module.exports = {
   codigo: CODIGO,
   nombre: 'Caja Central',
-  scenes: [mpWizard],
-  comandos,
-  registrar,
+  scenes: [],
+  comandos: [],
+  registrar() {},
 };
