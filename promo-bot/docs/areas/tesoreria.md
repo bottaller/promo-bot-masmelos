@@ -1,7 +1,8 @@
 # Área Tesorería
 
-> Un doc por área. Este cubre **Tesorería**: los comandos `/flujos` y `/cierre`, el puente al motor
-> Python y la copia vendoreada del motor. Última actualización: **2026-07-12**.
+> Un doc por área. Este cubre **Tesorería**: los comandos `/carga`, `/flujos` y `/cierre`, el arqueo
+> automático de cobros, el puente al motor Python y la copia vendoreada del motor.
+> Última actualización: **2026-07-25**.
 
 ## Qué hace
 
@@ -14,42 +15,70 @@ Excel y devuelve un **dashboard HTML** (el "Control 2 — Seguí la plata") list
 
 | Comando | Qué hace |
 |---------|----------|
-| `/libro` | (**admin**) Carga el *"Diario de movimientos"* del día **una sola vez**, para que lo consuman todos los demás comandos. Guarda los movimientos parseados **y** el `.xlsx` crudo. Ver §Libro diario centralizado. |
+| `/carga` | (**admin**) Carga NOCTURNA de los documentos del día, **una sola vez**: el *"Diario de movimientos"* de Sigma **y** las liquidaciones de las plataformas de cobro (Mercado Pago, Talo). El bot **reconoce cada archivo solo** (no hay que decirle cuál es cuál). El libro se archiva (lo consumen los demás comandos); las liquidaciones quedan en espera para el **arqueo de las 08:00**. Reemplazó a `/libro`. Ver §Carga del día. |
 | `/flujos` | Pide el Excel del *"Diario de movimientos contables"* de Sigma (`.xlsx`), lo procesa y devuelve el HTML del flujo. Si el archivo no es un export válido, responde el mensaje de error de Sigma. |
-| `/cierre` | Cierre **diario en dos tiempos**: el tesorero manda **solo** los saldos (*"Existencias al cierre"*) y el cierre queda **pendiente**. A las **08:00** un barrido lo concilia contra el libro que el admin cargó de noche (/libro) y le entrega el reporte al tesorero **y** a los admins (con las diferencias, el acumulado y las 🔴). Ver §Cierre diferido. |
+| `/cierre` | Cierre **diario en dos tiempos**: el tesorero manda **solo** los saldos (*"Existencias al cierre"*) y el cierre queda **pendiente**. A las **08:00** un barrido lo concilia contra el libro que el admin cargó de noche (`/carga`) y le entrega el reporte al tesorero **y** a los admins (con las diferencias, el acumulado y las 🔴). Ver §Cierre diferido. |
 | `/semanal` | Control **semanal**: mandás el libro de la semana (los saldos ya están de los cierres diarios), concilia el período. **No modifica** los cierres diarios. |
 | `/mensual` | Control **mensual**: ídem, sobre el mes. |
 | `/reportecierre <fecha>` | (**admin**) Recupera un cierre guardado de esa fecha, con el acumulado a esa fecha. |
+
+> El **arqueo de cobros** (Mercado Pago + Talo, operación por operación) **ya no es un comando**: sale
+> solo a las 08:00 y le llega a Tesorería + Caja Central. Ver §Arqueo de cobros, más abajo.
 
 **Flujo de uso (`/flujos`):** `/flujos` → el bot pide el archivo → mandás el `.xlsx` como documento →
 te devuelve `flujo_<desde>_<hasta>.html` (el nombre lleva el período, según
 [convenciones.md](../convenciones.md)).
 
-## Libro diario centralizado (`/libro`)
+## Carga del día (`/carga`)
 
-Antes, **cada** comando pedía el mismo Excel de Sigma: `/cierre`, `/semanal`, `/mensual`, `/flujos` y
-`/mp`. Ahora el admin lo carga **una vez por día** con `/libro` y todos lo consumen.
+Antes, **cada** comando pedía el mismo Excel de Sigma: `/cierre`, `/semanal`, `/mensual` y `/flujos`.
+El comando `/libro` unificó esa carga; después se rebautizó **`/carga`** y se le sumaron las
+liquidaciones de las plataformas de cobro. Ahora el admin, **de noche y en una sola sesión**, manda
+(en cualquier orden):
+
+- el **libro diario** (Diario de movimientos de Sigma) → se **archiva permanente**;
+- la liquidación de **Mercado Pago** → queda **en espera** para el arqueo de las 08:00;
+- la liquidación de **Talo** → ídem.
+
+El bot **reconoce cada archivo solo** por sus encabezados (`src/lib/plataformas.js`
+`detectarPlataforma`, y `registrarLibro` para el libro): no hay que decirle cuál es cuál. Al terminar,
+`listo` cierra la sesión con un resumen de **qué falta** por cada día tocado (`src/scenes/carga.js`).
+
+### El libro (permanente)
 
 Qué guarda (migración **016**, tabla `bot.libro_diario`), y por qué las dos cosas:
 - **Los movimientos parseados** → van a `bot.tesoreria_movimientos` con la misma función que usa
   `/cierre` (borra y reinserta por día: re-subir corrige, no duplica). Es lo que consumen `/cierre`,
-  `/arqueo` y los controles de período.
+  el arqueo de cobros y los controles de período.
 - **El `.xlsx` crudo** (`bytea`, ~280 KB/día) → porque a algunos no les alcanza con los datos:
-  `/flujos` se lo pasa **por ruta** al motor Python, y `/mp` lo parsea con **otro** parser
-  (`mayor-excel`). Va en la base y no en disco porque el filesystem de Railway es efímero.
+  `/flujos` se lo pasa **por ruta** al motor Python, y el arqueo de cobros lo re-parsea con **otro**
+  parser (`mayor-excel`). Va en la base y no en disco porque el filesystem de Railway es efímero.
 
-Detalles operativos:
-- Es **admin-only**: si cada área pudiera pisarlo, dos personas podrían mirar reportes armados sobre
-  exports distintos del mismo día.
+Detalles del libro:
 - La **jornada** es el último día que trae el export (a la noche se sube el que termina hoy). El export
   puede abarcar un rango (13→17) y `libroQueCubre()` lo resuelve.
 - Re-subir la misma jornada la **pisa** y el bot avisa que reemplazó (un export incompleto no debe
   sustituir al bueno en silencio).
-- **21:00 (hora Argentina)**: si no se cargó el libro del día, el bot les avisa a los admins
-  (`src/aviso-libro.js`). Hora configurable con `LIBRO_HORA_UTC` (default `0` UTC = 21:00 ART).
-- **Para automatizar la carga** (exportar de Sigma con un robot), la lógica vive fuera del wizard:
-  `src/lib/registrar-libro.js`. Se invoca sin Telegram con
-  `node src/db/cargar-libro.js "<ruta.xlsx>" [DD/MM/AAAA]`.
+
+### Las liquidaciones (efímeras)
+
+Las liquidaciones de MP y Talo **no se concilian en el momento**: quedan en
+`bot.liquidaciones_pendientes` (migración **022**) hasta el arqueo de las 08:00, que las cruza contra
+el libro y **las borra**. Son efímeras: lo que queda archivado es el **resultado** del arqueo
+(`bot.mp_conciliacion`), no el archivo crudo. Re-subir la liquidación de una plataforma para un día la
+pisa (upsert por `fecha + empresa + plataforma`).
+
+### Detalles operativos comunes
+
+- Es **admin-only**: es data financiera y si cada área pudiera pisar el libro, dos personas podrían
+  mirar reportes armados sobre exports distintos del mismo día.
+- **21:30 (hora Argentina)**: si falta alguno de los documentos del día —el libro o alguna
+  liquidación—, el bot les reclama a los admins qué falta (`src/aviso-libro.js`). Hora configurable
+  con `LIBRO_HORA_UTC` / `LIBRO_MIN_UTC` (default `00:30` UTC = 21:30 ART).
+- **Para automatizar la carga del libro** (exportar de Sigma con un robot), la lógica vive fuera del
+  wizard: `src/lib/registrar-libro.js`. Se invoca sin Telegram con
+  `node src/db/cargar-libro.js "<ruta.xlsx>" [DD/MM/AAAA]`. Ver
+  [automatizacion-libro-diario.md](../automatizacion-libro-diario.md).
 
 ## Conciliación diaria (`/cierre`) — control, seguridad y auditoría
 
@@ -64,13 +93,13 @@ mapeo cuenta↔libro validado, modelo de datos) en [conciliacion.md](../concilia
 ### Cierre diferido (dos tiempos)
 
 El cálculo de arriba **no corre cuando el tesorero manda los saldos**, sino a la mañana siguiente. El
-motivo: el libro lo carga el admin de noche (`/libro`), así que a la tarde, cuando el tesorero cuenta,
+motivo: el libro lo carga el admin de noche (`/carga`), así que a la tarde, cuando el tesorero cuenta,
 todavía no hay con qué conciliar. En vez de hacerlo esperar (o pedirle el libro, que era lo que trababa
 el flujo), se parte en dos:
 
 1. **Tesorero — `/cierre` (tarde):** manda **solo** los saldos. Se guardan (con control de cambios) y el
    cierre se anota en `bot.cierres_pendientes`. El tesorero se va; no espera nada.
-2. **Admin — `/libro` (noche):** los movimientos entran a `bot.tesoreria_movimientos` (igual que siempre).
+2. **Admin — `/carga` (noche):** los movimientos entran a `bot.tesoreria_movimientos` (igual que siempre).
 3. **Barrido — 08:00 ART (`entrega-cierres.js`):** por cada cierre pendiente, si están los libros de los
    **dos extremos** de la ventana (día del conteo anterior + día del cierre), concilia, persiste y entrega
    el reporte al **tesorero + admins**, y lo saca de la lista. Si todavía falta un libro, no entrega y
@@ -80,12 +109,23 @@ el flujo), se parte en dos:
 El primer cierre (sin día anterior) queda como **base** y no genera reporte. Hora de entrega configurable
 con `CIERRE_HORA_UTC` (default `11` = 08:00 ART).
 
-## El nivel de abajo de Mercado Pago vive en otra área
+## Arqueo de cobros (automático, 08:00)
 
 El `/cierre` concilia **saldos** y dice *"Mercado Pago no cierra por $X"*. **Cuál** es la venta que no
-cierra lo responde **`/mp`**, que aparea los ~100 renglones diarios de la `422101014` uno a uno contra
-la liquidación de MP. Ese comando es del área **[Caja Central](caja-central.md)** (es quien lo corre),
-no de Tesorería — detalle en [conciliacion-mp.md](../conciliacion-mp.md).
+cierra lo responde el **arqueo de cobros**, que aparea los ~100 renglones diarios de cada plataforma
+(MP en la `422101014`, Talo en la `42210108`) uno a uno contra su liquidación.
+
+Ese arqueo **ya no es un comando** (era `/mp`): es **automático**. A las **08:00 ART**
+(`src/entrega-arqueo.js`) un barrido toma cada día con liquidaciones en espera (las que se cargaron de
+noche con `/carga`), las cruza contra el libro de ese día, arma **un PDF por plataforma** (MP y Talo
+separados) más un texto, y se los manda a los grupos **Tesorería + Caja Central**. Guarda el resultado
+en `bot.mp_conciliacion` (que alimenta el resumen semanal de los lunes) y **borra** las liquidaciones
+procesadas. Si falta el libro, no arquea y avisa a los admins.
+
+El motor del cruce (`src/lib/arqueo.js` `arquearDia`, puro y sin Telegram) es el mismo que corría
+`/mp`; solo cambió **cuándo** y **quién lo dispara**. El detalle (alcance validado, cómo aparea,
+tolerancias, huso horario, rastreo del contramovimiento, los dos formatos de MP) está en
+[conciliacion-mp.md](../conciliacion-mp.md); el rol que lo recibe, en [Caja Central](caja-central.md).
 
 ## Acceso
 

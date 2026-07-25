@@ -1,8 +1,9 @@
-# Conciliación de Mercado Pago — operación por operación (`/mp`)
+# Arqueo de cobros — operación por operación (MP + Talo)
 
-> El control fino de Mercado Pago: aparea **cada cobranza del sistema con su cobro en MP** y marca
-> las que no cierran. Es el comando del área **Caja Central** ([areas/caja-central.md](areas/caja-central.md)).
-> Documento vivo. Última actualización: **2026-07-17**.
+> El control fino de las plataformas de cobro: aparea **cada cobranza del sistema con su cobro en la
+> plataforma** (Mercado Pago, Talo) y marca las que no cierran. **Es automático** (barrido de las
+> 08:00), no un comando; el resultado le llega a **Tesorería + Caja Central**
+> ([areas/caja-central.md](areas/caja-central.md)). Documento vivo. Última actualización: **2026-07-25**.
 
 ## 1. Qué resuelve (y por qué no alcanza con `/cierre`)
 
@@ -10,10 +11,17 @@
 Es el control de arriba y sirve para saber **que** hay un problema, pero no **cuál**: la cuenta cierra
 o no cierra como un bloque.
 
-`/mp` es el nivel de abajo: agarra los ~100 renglones diarios de la cuenta MP y los aparea uno a uno
-contra la liquidación que emite Mercado Pago. Responde la pregunta que `/cierre` no puede:
-**qué venta puntual falta**. Los dos se complementan y son independientes: `/mp` no toca la base ni
-los cierres.
+El arqueo de cobros es el nivel de abajo: agarra los ~100 renglones diarios de la cuenta de cada
+plataforma y los aparea uno a uno contra la liquidación que ésta emite. Responde la pregunta que
+`/cierre` no puede: **qué venta puntual falta**. Los dos se complementan y son independientes: el
+arqueo no toca la base de los cierres.
+
+> **Antes era un comando (`/mp`) y ahora es automático.** Hasta el 17/07/2026 el control se corría a
+> mano con `/mp`, que pedía los dos archivos en el chat. El núcleo del cálculo se extrajo a
+> `src/lib/arqueo.js` (`arquearDia`, puro y sin Telegram) y hoy lo dispara el **barrido de las 08:00**
+> (`src/entrega-arqueo.js`) sobre las liquidaciones que el admin sube de noche con `/carga`. La
+> **lógica de apareo, alcance y rastreo de este documento sigue valiendo igual**: solo cambió cuándo y
+> quién la corre, y que ahora arquea **varias plataformas** (MP y Talo) en la misma pasada. Ver §7.
 
 Lo que caza:
 
@@ -54,13 +62,34 @@ transferencia, 1,63% débito, 7,25% crédito por QR).
 
 | | Archivo | De dónde sale |
 |---|---|---|
-| **Sistema** | *"Diario de movimientos contables"* **o** *"Mayor de cuenta"* de la `422101014` | Export de Sigma |
-| **MP** | `settlement_v2-<id>-<fecha>.xlsx` | Panel de Mercado Pago |
+| **Sistema** | *"Diario de movimientos contables"* **o** *"Mayor de cuenta"* de la cuenta de la plataforma | Export de Sigma |
+| **MP** | reporte de **Cobros** (`collection-….xlsx`) **o** `settlement_v2-….xlsx` | Panel de Mercado Pago |
+| **Talo** | `Movimientos_<desde>_<hasta>.xlsx` | Panel de Talo |
 
-Se acepta **cualquiera de los dos exports de Sigma** y se distinguen solo por su fila de encabezados
-(`Mov.` vs `Cuenta`). El **Diario es el mismo archivo que ya se sube para `/cierre`**, así que en el
-día a día no hay que exportar nada nuevo; el Mayor tiene la ventaja de traer el **comprobante
-relacionado** (`REC8 …`), que el Diario no.
+El lado **Sistema es el libro diario** que el admin ya sube de noche con `/carga`, así que en el flujo
+automático no hay que exportar nada nuevo. `mayor-excel.js` acepta tanto el Diario como el Mayor y los
+distingue por su fila de encabezados (`Mov.` vs `Cuenta`); el barrido siempre usa el **Diario** (el
+libro), que además —al traer todas las cuentas— habilita el rastreo del contramovimiento (§5).
+
+### MP: dos formatos de liquidación
+
+El parser de MP (`src/lib/plataformas.js` `parsearMp`, un dispatcher) acepta **dos formatos** y los
+distingue por sus encabezados; los dos producen **exactamente el mismo shape de operación**, así que
+el motor de conciliación no cambia:
+
+- **Cobros / "Collection"** (`src/lib/collection-excel.js`) — el que se usa hoy. Está disponible **el
+  mismo día**, así que a la noche ya está para el arqueo de las 08:00. Su fecha (`date_created`) **ya
+  viene en hora argentina** (verificado cruzando el 23/07 contra Sigma: coinciden al segundo), así que
+  **no** pasa por la conversión de huso.
+- **settlement_v2** (`src/lib/liquidacion-excel.js`) — el que se usaba antes. Se genera **a día
+  vencido**, así que no está a la noche; queda como **respaldo**. Sus fechas venían en **UTC-4** y hay
+  que sumarles 1 h (`isoAHoraArg()`, ver §4).
+
+> El mapeo del vocabulario nuevo al viejo lo hace el parser de Cobros: `sub_unit 'QR' → canal 'QR
+> Code'`, y **`status 'approved'` + un `operation_type` de cobro (`regular_payment`/`pos_payment`)
+> → tipo 'Approved payment'** — una devolución/chargeback aprobada NO es cobro y queda afuera (ver el
+> punto sobre "salidas de dinero" más abajo). Así el alcance de §2 (la cuenta `422101014` recibe solo
+> el canal QR; Point va a tarjetas) vale sin tocar nada.
 
 > ⭐ **Conviene el Diario.** Como trae **todas** las cuentas, habilita el **rastreo del
 > contramovimiento** (§5): si algo no cierra, el bot puede decir *en qué otra cuenta quedó
@@ -88,13 +117,17 @@ Clave = **importe + hora**, con un greedy sobre los pares candidatos ordenados p
 - **Ventana máxima: 12 h.** El asiento se carga **después** del pago — el 16/07, entre **5 y 210
   segundos** (mediana 16). 12 h es holgadísimo para el día de trabajo y sirve de red.
 
-### ⏰ El huso horario (la trampa)
+### ⏰ El huso horario (la trampa) — solo el settlement
 
-**La liquidación de MP viene en UTC-4 y Sigma escribe la hora local argentina (UTC-3).** Sin
-convertir, el match por hora se corre **60 minutos**. Se normaliza todo a hora de pared argentina con
+**El settlement de MP viene en UTC-4 y Sigma escribe la hora local argentina (UTC-3).** Sin convertir,
+el match por hora se corre **60 minutos**. Se normaliza todo a hora de pared argentina con
 `isoAHoraArg()` ([`fechas.js`](../src/lib/fechas.js)), que lee el offset del propio texto (no lo asume)
 y hace la aritmética sobre `Date.UTC`/`getUTC*` → independiente del TZ del proceso (Railway = UTC).
 Es la misma disciplina de "reloj de pared" del corte por hora del `/cierre`.
+
+> El reporte de **Cobros (collection)** —el que se usa hoy— **ya trae la hora argentina**, así que su
+> parser no aplica esta conversión (§3). La trampa del UTC-4 vale solo para el settlement de respaldo.
+> Talo también trae su hora local.
 
 ## 5. Rastreo del contramovimiento: *dónde* quedó la plata  [validado con un caso real]
 
@@ -134,12 +167,16 @@ rastreo, dice dónde está y el diagnóstico sale solo:
   distintivo y la pista no sirve.
 - Con el **Mayor** no hay dónde buscar → el bot sugiere mandar el Diario.
 
-## 6. La salida: un mensaje + un informe PDF
+## 6. La salida: un texto + un PDF por plataforma
 
-**No devuelve el Excel de detalle** (decisión de Caja Central, jul-2026). Devuelve dos cosas:
+**No devuelve el Excel de detalle** (decisión de Caja Central, jul-2026). El barrido de las 08:00 arma
+y manda, a Tesorería + Caja Central (`src/entrega-arqueo.js` + `src/lib/arqueo.js`):
 
-**1) Un mensaje de Telegram** — la vista rápida: primero lo que está mal, después lo sano (mismo
-criterio que `reporte-cierre.js`).
+**1) Un texto de Telegram** — la vista rápida de todas las plataformas del día: primero lo que está
+mal, después lo sano (mismo criterio que `reporte-cierre.js`; lo arma `src/lib/reporte-mp.js`
+`formatearArqueo`). Los avisos que antes salían como mensajes sueltos (export multi-día recortado,
+rangos que no se pisan del todo, libro cargado antes de terminar los cobros) se **pliegan dentro del
+texto**: en un barrido automático no hay con quién chatear.
 
 - Los 🔴 (sin aparear) se listan; las listas se cortan a **8 ítems** (el tope de Telegram son 4096
   caracteres) y se dice cuántos más hubo. El titular ya trae el total, y el dato crudo está en la
@@ -147,62 +184,83 @@ criterio que `reporte-cierre.js`).
   ve en el chat (ya no hay Excel de respaldo) — si eso pasara seguido, conviene partir el mensaje en
   varios (como `avisos.js`) o subir el corte.
 - Las **diferencias de redondeo** se resumen en una línea (total), no una por una.
-- Las **salidas de dinero** (Mercado Libre, devoluciones, Haber del sistema) **no se muestran**: no son
-  ventas por QR. Se filtran por signo (importe < 0) y por ser Haber.
-- Muestra además **qué acredita MP**: bruto − comisión − impuestos = neto (el sistema asienta el bruto,
-  MP deposita el neto; la brecha del 16/07 fue $646.151, que se registra con la factura mensual de MP).
+- Las **salidas de dinero** (Mercado Libre, devoluciones, chargebacks, Haber del sistema) **no se
+  muestran**: no son ventas por QR. En el **settlement** se filtran por **signo** (importe < 0); en el
+  reporte de **Cobros** el importe es el "Valor del producto" (positivo también en una devolución), así
+  que ahí el filtro es por **`operation_type`** (solo `regular_payment`/`pos_payment` cuentan como
+  cobro). Del lado del sistema se filtran por ser Haber.
+- Muestra además **qué acredita cada plataforma**: bruto − comisión − impuestos = neto (el sistema
+  asienta el bruto, la plataforma deposita el neto; la brecha del 16/07 en MP fue $646.151, que se
+  registra con la factura mensual).
 
-**2) Un informe PDF** (`informe_mp_<AAAA-MM-DD>.pdf`) — el **comprobante** para archivar/imprimir. Una
-hoja con el **veredicto** bien arriba, en color: **CONTROL OK** (verde) si aparea todo, o **CONTROL CON
-DIFERENCIAS** (rojo) si hay algo sin aparear. Lleva el **día conciliado** y el sello de **fecha + hora**
-en que se corrió el control, un resumen (apareadas / sin aparear / totales) y, si hay diferencias, la
-lista de lo que no cierra. Lo arma `src/lib/informe-mp-pdf.js` con **pdfkit** (fuentes estándar, sin
-emoji → el veredicto va por color). El veredicto (`veredictoMP()`) es una función pura y testeada:
-**bien = 0 sin aparear** (las diferencias de redondeo son avisos, no lo tumban). Si el PDF fallara, el
-control ya se comunicó por el mensaje y el bot avisa (no se cae).
+**2) Un PDF por plataforma** (`arqueo_<MP|Talo>_<AAAA-MM-DD>.pdf`) — el **comprobante** para
+archivar/imprimir, **MP y Talo en archivos separados**. Cada uno es una hoja con el **veredicto** bien
+arriba, en color: **CONTROL OK** (verde) si aparea todo, o **CONTROL CON DIFERENCIAS** (rojo) si hay
+algo sin aparear. Lleva el **día conciliado** y el sello de **fecha + hora**, un resumen (apareadas /
+sin aparear / totales) y, si hay diferencias, la lista de lo que no cierra. Lo arma
+`src/lib/informe-mp-pdf.js` con **pdfkit** (fuentes estándar, sin emoji → el veredicto va por color).
+El veredicto (`veredictoMP()`) es una función pura y testeada: **bien = 0 sin aparear** (las
+diferencias de redondeo son avisos, no lo tumban). Si un PDF fallara, el control ya se comunicó por el
+texto y el bot sigue (no se cae).
 
-## 7. Quién lo usa
+El resultado de cada plataforma se guarda en `bot.mp_conciliacion` (una fila por día y plataforma,
+migración **018** + **021**) → lo consume el **resumen semanal** de los lunes.
 
-Es el comando del rol **Caja Central** (`cajacentral`, migración **014**) — no de Tesorería. Se asigna
-con `/usuarios agregar <telegram_id> cajacentral`. Los **admins** lo ven igual (acceso total). Detalle
-del rol en [areas/caja-central.md](areas/caja-central.md).
+## 7. Cómo se dispara (automático) y quién lo recibe
 
-> **Un comando pertenece a UNA sola área** (D9 de [arquitectura.md](arquitectura.md)): si dos la
-> registraran, `bot.command('mp', …)` correría dos veces y el wizard se abriría duplicado. Por eso
-> `/mp` **salió** de Tesorería al mudarse acá. Hay un test que lo fija.
+**Ya no es un comando.** El flujo completo:
+
+1. **De noche — `/carga` (admin, Tesorería).** El admin sube el libro del día y las liquidaciones de
+   MP y Talo; el bot reconoce cada archivo solo. Las liquidaciones quedan en
+   `bot.liquidaciones_pendientes` (migración **022**). Ver [areas/tesoreria.md](areas/tesoreria.md).
+2. **21:30 ART (`src/aviso-libro.js`).** Si falta el libro o alguna liquidación, se reclama a los admins.
+3. **08:00 ART (`src/entrega-arqueo.js`).** El barrido cruza cada día pendiente contra su libro, arma
+   el texto + los PDFs, y los manda a **Tesorería + Caja Central** (`telegramIdsPorRol`). Guarda el
+   resultado, borra las liquidaciones procesadas, y —si falta el libro— no arquea y avisa a los admins.
+   Es idempotente: lo entregado se borra de la espera, el resultado guardado se pisa al re-correr.
+
+El rol **Caja Central** (`cajacentral`, migración **014**) es el canal de aviso, no de Tesorería. Se
+asigna con `/usuarios agregar <telegram_id> cajacentral`. Detalle del rol en
+[areas/caja-central.md](areas/caja-central.md).
 
 ## 8. Archivos
 
 ```
-src/areas/cajacentral/index.js  el área/rol: registra el comando
-db/migrations/014_caja_central.sql  siembra el rol en bot.areas
-src/scenes/mp.js             el wizard (dice qué recibe, pide los 2 archivos, chequea rangos, responde)
-src/lib/mayor-excel.js       parser del export de Sigma (Diario o Mayor), renglón por renglón
-src/lib/liquidacion-excel.js parser de la liquidación de MP (columnas por NOMBRE, importes US, UTC-4)
+src/scenes/carga.js          el wizard /carga: recibe el libro + las liquidaciones y las guarda
+src/entrega-arqueo.js        el barrido de las 08:00: cruza, entrega a los grupos, persiste, limpia
+src/lib/arqueo.js            núcleo arquearDia(): arquea un día completo — PURO (sin Telegram/DB)
+src/db/liquidaciones-pendientes.js  la lista de espera (bytea de cada liquidación)
+src/lib/plataformas.js       las plataformas (MP, Talo): cuenta, parser, alcance, detección por encabezados
+src/lib/mayor-excel.js       parser del libro de Sigma (Diario o Mayor), renglón por renglón
+src/lib/collection-excel.js  parser del reporte de Cobros (collection) de MP — hora ARG, mismo shape
+src/lib/liquidacion-excel.js parser del settlement de MP (columnas por NOMBRE, importes US, UTC-4)
+src/lib/talo-excel.js        parser de los Movimientos de Talo
 src/lib/conciliacion-mp.js   el motor: alcance + apareo + resumen  (puro, sin I/O)
-src/lib/reporte-mp.js        arma el mensaje de Telegram
-src/lib/informe-mp-pdf.js    arma el informe PDF (veredicto bien/mal + fecha/hora) con pdfkit
-src/lib/sigma-celdas.js      primitivos de parseo compartidos con libro-excel.js
-test/tesoreria-mp.test.js    63 tests (sin DB ni archivos)
+src/lib/reporte-mp.js        arma el texto del arqueo
+src/lib/informe-mp-pdf.js    arma el PDF por plataforma (veredicto + fecha/hora) con pdfkit
+db/migrations/018_mp_conciliacion.sql   resultado del arqueo (+ 021: columna plataforma)
+db/migrations/022_liquidaciones_pendientes.sql   la lista de espera
+test/arqueo.test.js          el flujo de arqueo de un día (arquearDia)
+test/collection.test.js      el parser del reporte de Cobros de MP
+test/tesoreria-mp.test.js    el motor de conciliación (alcance/apareo/rastreo)
 ```
 
 ## 9. Estado
 
-**✅ Hecho (en `dev`):** todo lo de arriba. Validado contra los archivos reales del 16/07/2026
-(108 ↔ 108, 0 huérfanas) y contra errores **inyectados** sobre esos mismos datos (venta sin asentar,
-asiento fantasma, importe tipeado mal, salida al banco): los caza a los cuatro. Los 42 tests nuevos y
-los 23 que ya existían, en verde.
+**✅ Hecho (en `dev`):** todo lo de arriba. El motor se validó contra los archivos reales del
+16/07/2026 (108 ↔ 108, 0 huérfanas) y contra errores **inyectados** sobre esos mismos datos (venta sin
+asentar, asiento fantasma, importe tipeado mal, salida al banco): los caza a los cuatro. El flujo del
+arqueo automático y el parser de Cobros se cubren en `test/arqueo.test.js` y `test/collection.test.js`.
 
-**⚠️ Para que ande hay que correr la migración 014** en Supabase (si no, el rol no existe y
-`/usuarios agregar … cajacentral` responde `area_inexistente`). El menú `/` de Telegram se publica al
-arrancar: después de asignar el rol hay que **reiniciar el bot** para que le aparezca el comando.
+**⚠️ Para que ande hay que correr las migraciones 014, 018/021 y 022** en Supabase: la **014** siembra
+el rol `cajacentral` (si no, `/usuarios agregar … cajacentral` responde `area_inexistente`), la
+**018 + 021** crean `bot.mp_conciliacion` con su columna `plataforma`, y la **022**
+`bot.liquidaciones_pendientes` (la lista de espera del arqueo).
 
 **⬜ Pendiente:**
-- **Probar el ida y vuelta real por Telegram.**
+- **Probar el ida y vuelta real por Telegram** (subir con `/carga` y esperar la corrida de las 08:00).
 - Preguntar a MP **qué es la fila sin unidad** de las 06:16 (§2).
 - **Point**: hoy se lista pero no se concilia. Se podría aparear contra las cuentas de tarjetas, pero
   eso **no está validado** (liquidan con lag y las cuentas son a cobrar) — es un trabajo aparte.
-- No persiste nada: los dos archivos son la fuente de verdad y el control se rehace entero cada vez.
-  Si se quisiera historia/auditoría (como `/cierre`), habría que sumar tabla + migración.
-- Natural: **colgarlo del `/cierre`** — ya recibe el Diario, así que podría correr esto solo y explicar
-  el residuo de MP sin pedir un archivo más (solo faltaría la liquidación).
+- Sumar más plataformas es agregar una entrada en `src/lib/plataformas.js` + su parser; el motor y el
+  barrido no cambian.
