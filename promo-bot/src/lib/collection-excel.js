@@ -21,6 +21,14 @@ const { LiquidacionError } = require('./liquidacion-excel');
 // dos formatos con un solo `instanceof`.
 class CollectionError extends LiquidacionError {}
 
+// Tipos de operación que son un COBRO (plata que ENTRA). El resto —refund, chargeback, reserve…—
+// NO son cobros aunque su status sea 'approved' y su importe positivo (en Cobros el importe es el
+// "Valor del producto", positivo también en una devolución). El settlement los excluía por
+// TRANSACTION TYPE; acá hay que replicar ese filtro con operation_type, si no una devolución
+// aprobada entraría al arqueo y falsearía la plata. Si el reporte no trae operation_type, se cae
+// al comportamiento por status (backward-safe).
+const TIPOS_COBRO = new Set(['regular_payment', 'pos_payment']);
+
 function norm(s) {
   return String(s == null ? '' : s).trim();
 }
@@ -114,6 +122,7 @@ function parsearCollection(buffer) {
       throw new CollectionError(`La operación ${opId} tiene una fecha ilegible en (date_created) (${JSON.stringify(r[ix.date_created])}). ¿Cambió el formato de MP?`);
     }
     const estado = norm(r[ix.status]).toLowerCase();
+    const opTipo = ix.operation_type >= 0 ? norm(r[ix.operation_type]).toLowerCase() : '';
     const subUnit = norm(r[ix.sub_unit]);
     const comision = ix.mercadopago_fee >= 0 ? (parseMonto(r[ix.mercadopago_fee]) || 0) : 0;
     const neto = ix.net_received_amount >= 0 ? (parseMonto(r[ix.net_received_amount])) : null;
@@ -123,7 +132,11 @@ function parsearCollection(buffer) {
       fila: i + 1,
       instrumento: ix.payment_type >= 0 ? norm(r[ix.payment_type]) : '',
       estado,                                                    // 'approved' | 'rejected' | ...
-      tipo: estado === 'approved' ? 'Approved payment' : estado, // mapea al vocabulario del settlement
+      operation_type: opTipo,                                    // 'regular_payment' | 'pos_payment' | 'refund' | …
+      // Cobro (→ 'Approved payment', el vocabulario del settlement) SOLO si el status es approved Y
+      // es un tipo de cobro. Una devolución/chargeback aprobada NO es un cobro; queda con su tipo y
+      // el alcance la excluye. Sin operation_type en el reporte, cae al comportamiento por status.
+      tipo: estado === 'approved' && (!opTipo || TIPOS_COBRO.has(opTipo)) ? 'Approved payment' : (opTipo || estado),
       canal: subUnit === 'QR' ? 'QR Code' : subUnit,             // 'QR Code' | 'Point' | …
       unidad: ix.business_unit >= 0 ? norm(r[ix.business_unit]) : '',
       hora,

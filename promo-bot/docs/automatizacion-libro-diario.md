@@ -1,7 +1,13 @@
 # Cargar el libro diario a la DB (automatización)
 
 Cómo un script que exporta el "Diario de movimientos contables" de Sigma lo deja cargado en
-la base, para que lo consuman `/cierre`, `/mp` y `/flujos` sin que nadie lo suba a mano.
+la base, para que lo consuman `/cierre`, el **arqueo de cobros** y `/flujos` sin que nadie lo suba
+a mano.
+
+> Esto automatiza **solo el libro**. Las **liquidaciones** de las plataformas (MP, Talo) se siguen
+> subiendo a mano con `/carga` en Telegram — el CLI de acá no las toca. En Telegram, `/carga` recibe
+> el libro **y** las liquidaciones en una sola sesión; este CLI es el equivalente del **libro** para
+> un robot que exporta de Sigma de noche.
 
 ## Regla de oro: NO escribas en la DB directamente
 
@@ -10,7 +16,7 @@ es más que guardar el archivo:
 
 1. Se **parsea** el Excel de Sigma (valida que tenga la forma esperada).
 2. Se guarda el **.xlsx crudo** en `bot.libro_diario` → lo usan `/flujos` (se lo pasa al motor
-   Python) y `/mp` (lo re-parsea con otro parser).
+   Python) y el **arqueo de cobros** (lo re-parsea con otro parser, `mayor-excel`).
 3. Se guardan los **movimientos parseados** en `bot.tesoreria_movimientos` → los usa `/cierre`
    para conciliar y para el acumulado.
 4. Se calcula el **rango REAL** de los datos (no el del título del export, que puede ser más
@@ -18,8 +24,8 @@ es más que guardar el archivo:
    mismo día pisa en vez de duplicar).
 
 Un `INSERT` a mano se saltea los pasos 1, 3 y 4: el `/cierre` no tendría con qué conciliar, y el
-aviso de las 21:00 mentiría sobre qué días tenés. **Usá el CLI**, que hace todo eso en un solo
-comando y es la MISMA lógica que corre el bot cuando cargás con `/libro`.
+aviso de las 21:30 mentiría sobre qué días tenés. **Usá el CLI**, que hace todo eso en un solo
+comando y es la MISMA lógica que corre el bot cuando cargás el libro con `/carga`.
 
 ## El comando
 
@@ -82,7 +88,7 @@ try {
 
 Para que corra solo todas las noches, programalo con el **Programador de tareas de Windows**
 (Task Scheduler): una tarea diaria que primero dispare la exportación de Sigma y después este
-script. Cargalo **a la misma hora o antes** del recordatorio de las 21:00, así el aviso "falta el
+script. Cargalo **a la misma hora o antes** del recordatorio de las 21:30, así el aviso "falta el
 libro" no salta cuando en realidad ya lo cargaste.
 
 ## Detalles que conviene saber
@@ -94,7 +100,7 @@ libro" no salta cuando en realidad ya lo cargaste.
 - **Idempotente.** Si el mismo día se carga dos veces, la segunda pisa a la primera (borra e
   reinserta ese día). Cargar el lunes no toca el martes. Sirve para corregir un export
   incompleto: re-exportás y volvés a correr el CLI.
-- **Una sola carga por día alcanza:** alimenta `/cierre`, `/mp` y `/flujos` de una.
+- **Una sola carga por día alcanza:** alimenta `/cierre`, el arqueo de cobros y `/flujos` de una.
 - **La jornada sale del Excel, no del día en que se sube.** Si te olvidaste y el martes cargás el
   del lunes, queda archivado como lunes (lo único que se rechaza es un export que diga ser del
   futuro).

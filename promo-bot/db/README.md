@@ -35,7 +35,17 @@ También podés correrlas desde la terminal: `node src/db/run-migration.js db/mi
 | `migrations/011_tesoreria_auditoria.sql` | `tesoreria_auditoria` — log append-only de cada acción | Auditoría |
 | `migrations/012_carrito_web.sql` | área `carritoweb` | Área Carrito Web |
 | `migrations/013_cierre_por_hora.sql` | `contado_en` / `ingreso` — el `/cierre` corta por hora, no por día | Corte por hora |
-| `migrations/014_caja_central.sql` | área `cajacentral` (el rol dueño de `/mp`) | Área Caja Central |
+| `migrations/014_caja_central.sql` | área `cajacentral` — hoy un **rol de notificación** (recibe el arqueo de cobros automático); antes era dueño de `/mp` | Área Caja Central |
+| `migrations/015_deposito.sql` | área `deposito` + `deposito_informes` (informes de texto libre a Calidad/Compras) | Área Depósito |
+| `migrations/016_libro_diario.sql` | `libro_diario` — el libro de Sigma centralizado (.xlsx crudo + rango real), cargado con `/carga` | Libro centralizado |
+| `migrations/017_cierres_pendientes.sql` | `cierres_pendientes` — la lista de espera del cierre en dos tiempos (barrido de las 08:00) | Cierre diferido |
+| `migrations/018_mp_conciliacion.sql` | `mp_conciliacion` — el resultado del arqueo de cobros por día (lo lee el resumen semanal) | Arqueo de cobros |
+| `migrations/019_rol_sistemas.sql` | rol `sistemas` — ve/usa casi todos los comandos, pero no es admin real | Rol Sistemas |
+| `migrations/020_precio_promocional.sql` | columna `precio_promocional` en `compras_altas` (promo por precio fijo) | Promo por precio |
+| `migrations/021_arqueo_plataforma.sql` | columna `plataforma` en `mp_conciliacion` — el arqueo pasa a **multi-plataforma** (MP + Talo) | Arqueo multi-plataforma |
+| `migrations/022_liquidaciones_pendientes.sql` | `liquidaciones_pendientes` — las liquidaciones de MP/Talo **en espera** (subidas con `/carga`) que el arqueo de las 08:00 cruza y borra | Arqueo automático |
+| `migrations/023_deploys.sql` | `deploys` — log de deploys anunciados, para no re-avisar el mismo commit al reiniciar | Aviso de deploy |
+| `migrations/024_ajustes_promoprecios.sql` | roles `marketing`, `ventas`, `compras_promo` (cadena de validación de `/ajuste` y `/promoprecios`) | /ajuste y /promoprecios |
 
 ## Después de correr `001`
 

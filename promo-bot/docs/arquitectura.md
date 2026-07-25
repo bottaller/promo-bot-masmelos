@@ -41,7 +41,7 @@ y Compras corre en Postgres con esos bugs corregidos. El estado actualizado est�
 | D6 | **Identidad de usuario = `telegram_id`** | Estable (el username cambia). Allowlist = fila activa en `usuarios`. |
 | D7 | **Cola de trabajos (`jobs`) sí**, pero se usa recién cuando haga falta | Serializa corridas (protege el snapshot del arqueo) y habilita el worker on-prem del futuro. |
 | D8 | **Google Sheets retirado** ✅ | Compras ya corre 100% en Postgres. Se borró `sheets.js` y la dependencia `googleapis`. Para "ver los datos" queda el editor de tablas de Supabase. |
-| D9 | **El "rol" de una persona = las áreas a las que pertenece** (N:N en `usuario_area`) | YAGNI: no hace falta una tabla de roles aparte. Hoy hay 5 áreas con comandos reales (Compras, Calidad, Tesorería, Caja Central, Depósito) y una persona puede tener varias. Los admins ven todo. **Corolario:** un comando pertenece a **una sola** área — si dos lo registraran, `bot.command()` correría dos veces. Crear un rol = migración que lo siembra en `bot.areas` + carpeta en `src/areas/` + sumarlo a la lista de `index.js`. |
+| D9 | **El "rol" de una persona = las áreas a las que pertenece** (N:N en `usuario_area`) | YAGNI: no hace falta una tabla de roles aparte. Hay áreas con comandos reales (Compras, Calidad, Tesorería, Depósito, Marketing) y áreas que son **solo un canal de notificación** (Caja Central recibe el arqueo automático; Ventas / compras_promo reciben avisos), y una persona puede tener varias. Los admins ven todo. **Corolario:** un comando pertenece a **una sola** área — si dos lo registraran, `bot.command()` correría dos veces. Crear un rol = migración que lo siembra en `bot.areas` + carpeta en `src/areas/` + sumarlo a la lista de `index.js`. |
 | D10 | **Mantenimiento técnico: Renzo** | Stack elegido a conciencia para que lo sostenga 1 persona técnica. |
 | D11 | **Maestro de artículos en la base** ✅ | `/actartic` (admin) sube el Excel de Sigma a `bot.articulos`; `/alta` lo consulta por EAN/código/nombre, para no cargar todo a mano. |
 
@@ -162,8 +162,8 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
   Áreas y sus comandos hoy:
   - **Calidad:** `/alta` (poner un producto en oferta por vencimiento), `/baja` (retirarlo), `/control` (Excel de lo que está en oferta por vencimiento), `/ajuste` y `/promoprecios` (archivos que arrancan una cadena de validaciones hacia el dueño del bot, Compras, Marketing, Ventas y Depósito — ver [areas/calidad.md](areas/calidad.md)).
   - **Compras:** `/reporte` (por proveedor, buscado por código de proveedor; histórico o por lapso de tiempo) y `/excel` (todas las promociones, abiertas y cerradas, histórico o por lapso; una sola hoja de detalle agrupada por proveedor con AutoFilter, hoja de resumen y hoja con los informes de Depósito dirigidos a Compras).
-  - **Tesorería:** `/flujos` (recibe el Excel de Sigma y devuelve el HTML del flujo del dinero — corre el motor Python, ver §6 y [areas/tesoreria.md](areas/tesoreria.md)) y `/cierre` (cierre diario: carga los saldos del día; la conciliación saldos-vs-libro está en curso, ver [conciliacion.md](conciliacion.md)).
-  - **Caja Central:** `/mp` (conciliación de Mercado Pago **operación por operación**: export de Sigma + liquidación de MP → aparea cada cobranza con su cobro y marca lo que no cierra, ver [areas/caja-central.md](areas/caja-central.md) y [conciliacion-mp.md](conciliacion-mp.md)).
+  - **Tesorería:** `/carga` (admin; carga nocturna del **libro** de Sigma + las **liquidaciones** de MP y Talo — el bot reconoce cada archivo solo; reemplazó a `/libro`), `/flujos` (recibe el Excel de Sigma y devuelve el HTML del flujo del dinero — corre el motor Python, ver §6 y [areas/tesoreria.md](areas/tesoreria.md)) y `/cierre` (cierre diario en dos tiempos: los saldos a la tarde, la conciliación contra el libro a las 08:00, ver [conciliacion.md](conciliacion.md)).
+  - **Caja Central:** **sin comando propio** — es un **rol de notificación**. Recibe el **arqueo de cobros automático** de las 08:00 (Mercado Pago + Talo operación por operación: aparea cada cobranza con su cobro y marca lo que no cierra) y el resumen semanal. El arqueo lo dispara un barrido, no una persona; ver [areas/caja-central.md](areas/caja-central.md) y [conciliacion-mp.md](conciliacion-mp.md).
   - **Depósito:** `/informe` (informe en texto libre sobre un proveedor o producto, dirigido a Calidad o Compras; se guarda en `bot.deposito_informes` y se avisa automáticamente a todos los que tengan ese rol, ver [areas/deposito.md](areas/deposito.md)).
   - **Marketing:** `/imagenes` (entrega las imágenes que pide `/promoprecios` para el ciclo activo — ver [areas/calidad.md](areas/calidad.md)).
 - **Menú dinámico:** cada usuario ve **solo los comandos de sus áreas**.
@@ -175,7 +175,7 @@ Un proceso, un `BOT_TOKEN`, ruteo interno. **Solo se chequea pertenencia a área
   dentro de `/usuarios` no puede hacer ni sacar admin a nadie (esos dos subcomandos quedan atrás de
   un chequeo de `es_admin` aparte, para que no sea una forma indirecta de autopromoverse).
   **Tesorería queda totalmente afuera** (a pedido): ni la ve en el menú ni puede correr ninguno de
-  sus comandos, ni siquiera `/libro` y `/reportecierre` (que volvieron a ser `requiereAdmin()` puro).
+  sus comandos, ni siquiera `/carga` y `/reportecierre` (que son `requiereAdmin()` puro).
   `AREAS_SIN_BYPASS_SISTEMAS` en `authz.js` es la lista de áreas excluidas del bypass — hoy solo
   Tesorería, pero está pensada para sumar otras si hace falta. Se asigna igual que cualquier otro
   rol: `/usuarios agregar <telegram_id> sistemas`.
@@ -210,6 +210,13 @@ Implementado para el `/flujos` (`src/scenes/flujos.js` + `arqueo/runner.py`):
 - **Volumen persistente** para el estado del arqueo (§6).
 - Variables sensibles (connection string de Postgres, `service_role key`, `BOT_TOKEN`) en las
   **Variables de Railway** y en `.env` local — **nunca** commiteadas (`.env` está en `.gitignore`).
+- **Aviso de deploy:** al arrancar, si el commit deployado es **nuevo**, el bot les avisa a los admins
+  *"🚀 Deploy terminado: commit X por Y"* (`src/aviso-deploy.js`). Los datos del commit salen de las
+  env vars que Railway inyecta (`RAILWAY_GIT_COMMIT_SHA` / `_AUTHOR` / `_COMMIT_MESSAGE`); en una
+  corrida local sin esas vars no anuncia. Un **reinicio del mismo commit** (crash, mantenimiento de
+  Railway) **no** re-anuncia: se compara el SHA contra `bot.deploys` (migración **023**), que de paso
+  queda como historial. Solo registra si el aviso llegó a alguien, así un Telegram caído se reintenta
+  en el próximo arranque.
 - **Futuro (solo si se activa el scraping de Sigma):** un **worker on-prem** en una PC/VM de la
   oficina que hace *polling* de la tabla `jobs` (solo conexión **saliente**, sin abrir puertos),
   corre el scraping por la LAN y sube el resultado. El bot sigue en Railway.

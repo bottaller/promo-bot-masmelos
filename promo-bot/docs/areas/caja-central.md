@@ -1,71 +1,80 @@
 # Área Caja Central
 
-> Un doc por área. Este cubre **Caja Central**: el rol y su comando `/mp`.
-> Última actualización: **2026-07-17**.
+> Un doc por área. Este cubre **Caja Central**: un **rol de notificación sin comando propio**.
+> Recibe el **arqueo automático de cobros** (Mercado Pago + Talo) de las 08:00 y el resumen semanal.
+> Última actualización: **2026-07-25**.
 
-## Qué hace
+## Qué es
 
-Caja Central es quien maneja la caja del negocio y controla que **lo que cobró Mercado Pago sea
-exactamente lo que quedó asentado en el sistema**, venta por venta. Es un control de plata que entra:
-si MP cobró algo que nadie registró, acá salta.
+Caja Central es el rol operativo que controla que **lo que cobraron las plataformas (Mercado Pago,
+Talo) sea exactamente lo que quedó asentado en el sistema**, venta por venta. Es un control de la
+plata que entra: si una plataforma cobró algo que nadie registró, acá salta.
 
-## Comando
+**Ya no tiene comando propio.** Hasta el 17/07/2026 este control se corría a mano con `/mp`. Después
+se rediseñó: el arqueo de cobros dejó de ser un comando y pasó a ser **automático**. Caja Central hoy
+es solo un **canal de aviso** (`bot.areas.codigo = 'cajacentral'`, migración **014**): el destino al
+que se entregan los reportes del arqueo, vía `telegramIdsPorRol('cajacentral')`.
 
-| Comando | Qué hace |
-|---------|----------|
-| `/mp` | Conciliación de **Mercado Pago operación por operación**. Pide **2 archivos del mismo día**: el export de Sigma con los movimientos (el *"Diario de movimientos contables"* — el mismo del `/cierre` — **o** el *"Mayor de cuenta"* de la `422101014`) y la **liquidación de MP** (`settlement_v2-….xlsx` del panel). Aparea cada cobranza con su cobro y devuelve el **reporte en el chat** + un **informe PDF** (el comprobante: control OK/con diferencias, con fecha y hora). **No toca la base.** |
+## Cómo funciona el arqueo (automático)
 
-**Flujo de uso:** `/mp` → el bot **dice qué necesita** (los 2 archivos, de dónde salen y el alcance) →
-mandás el export de Sigma → el bot te confirma **qué leyó y de qué día**, y te pide la liquidación **de
-ese mismo día** → te devuelve el **mensaje** (vista rápida) y el **informe PDF** (`informe_mp_<fecha>.pdf`,
-para archivar/imprimir: veredicto en color, día conciliado y fecha+hora del control).
+No hay nada que apretar. El flujo es:
 
-Si los dos archivos no son del mismo día, **los rechaza antes de conciliar**: si no, los días que están
-en uno y no en el otro caerían como diferencias y taparían lo real.
+1. **De noche — `/carga` (admin, área Tesorería).** El admin sube los documentos del día: el **libro
+   diario** de Sigma y las **liquidaciones** de Mercado Pago y Talo. El bot reconoce cada archivo
+   solo. Las liquidaciones quedan **en espera** (`bot.liquidaciones_pendientes`, migración **022**);
+   el libro se archiva. Ver [tesoreria.md](tesoreria.md).
+2. **21:30 ART (`src/aviso-libro.js`).** Si a esa hora falta alguno de los documentos del día (el
+   libro o alguna liquidación), el bot les reclama **a los admins** qué falta.
+3. **08:00 ART (`src/entrega-arqueo.js`).** Un barrido cruza las liquidaciones en espera contra el
+   libro del día, arma **un PDF por plataforma** (MP y Talo por separado) más un texto, y se los
+   manda a los grupos **Tesorería + Caja Central**. Guarda el resultado en `bot.mp_conciliacion` y
+   borra las liquidaciones ya procesadas. Si falta el libro, no arquea y avisa a los admins.
 
-**Qué marca:** 🔴 lo que MP cobró y no está asentado (y al revés). Las diferencias de centavos por
-**redondeo** se resumen en una línea (no una por una), y los avisos de **hora** (asiento cargado lejos
-del cobro) se listan. Point y la fila sin identificar quedan aparte como "fuera de alcance"; las
-**salidas de dinero** (Mercado Libre, devoluciones, `Haber`) no se muestran (no son ventas por QR).
+Lo que recibe Caja Central a la mañana, entonces, son **el texto del arqueo + dos PDFs** (uno de MP,
+uno de Talo), con el veredicto de cada plataforma y el detalle de lo que no cerró.
 
-**⭐ Mandá el "Diario", no el "Mayor".** Como el Diario trae todas las cuentas, cuando algo no cierra
-el bot **rastrea dónde quedó imputado** ese importe. Caso real del 11/07: MP cobró $152.577,45 que no
-se asentó, y el bot encontró que ese mismo importe figuraba como **faltante de la caja 4** contra
-*desvío de caja* — o sea, no faltaba la plata, estaba mal imputada. Con el Mayor eso no se puede
-rastrear y el bot lo avisa. Detalle en [conciliacion-mp.md](../conciliacion-mp.md) §5.
+**Qué marca cada arqueo:** 🔴 lo que la plataforma cobró y no está asentado (y al revés). Las
+diferencias de centavos por **redondeo** se resumen en una línea; los avisos de **hora** (asiento
+cargado lejos del cobro) se listan. Point y las filas sin identificar quedan aparte como "fuera de
+alcance"; las **salidas de dinero** no se muestran (no son ventas por QR). El **detalle completo**
+(alcance validado, cómo aparea, tolerancias, el huso horario, el rastreo del contramovimiento) está
+en [conciliacion-mp.md](../conciliacion-mp.md).
 
-**Detalle completo** (alcance validado, cómo aparea, tolerancias, el huso horario de MP):
-[conciliacion-mp.md](../conciliacion-mp.md).
+## Resumen semanal automático
 
-## Se guarda cada día + resumen semanal automático
-
-Cada corrida de `/mp` **guarda cómo salió el control del día** en `bot.mp_conciliacion` (migración
-**018**): veredicto, totales, diferencia y las huérfanas con su rastreo. Re-correr el día lo pisa (la
-última corrida es la verdad). El guardado es robusto: el reporte ya salió, si la base falla se loguea y
-no rompe el comando.
+Cada arqueo **guarda cómo salió el control del día** en `bot.mp_conciliacion` (migración **018**, con
+columna `plataforma` desde la **021**): veredicto, totales, diferencia y las huérfanas con su rastreo,
+una fila por plataforma. Re-arquear el día pisa esas filas (la última corrida es la verdad).
 
 **Los lunes a las 8:00 (hora Argentina)**, el bot arma un **resumen de la semana pasada** (lunes a
-domingo) y se lo manda a los **admins + al rol Caja Central** (`src/aviso-mp-semanal.js`). Día por día:
-si cerró, si tuvo diferencias (con el importe y dónde apareció) o **si no se corrió el control** — un
-día saltado es en sí un hallazgo. Hora configurable con `RESUMEN_MP_HORA_UTC` (default `11` UTC = 8:00
-ART). La parte que arma el texto (`src/lib/resumen-mp-semanal.js`) es pura y testeada
+domingo) de MP + Talo y se lo manda a los **admins + al rol Caja Central** (`src/aviso-mp-semanal.js`).
+Día por día: si cerró, si tuvo diferencias (con el importe y dónde apareció) o **si no se arqueó** —
+un día sin arqueo es en sí un hallazgo. Hora configurable con `RESUMEN_MP_HORA_UTC` (default `11` UTC
+= 8:00 ART). La parte que arma el texto (`src/lib/resumen-mp-semanal.js`) es pura y testeada
 (`test/resumen-mp-semanal.test.js`).
 
-## Acceso
+## Acceso (el rol)
 
-`/mp` está gated por `requiereArea('cajacentral')` = **admin o rol `cajacentral`** (la misma tabla
-`bot.usuarios` / `bot.usuario_area` que todo el resto). Para habilitar a alguien:
-`/usuarios agregar <telegram_id> cajacentral`. El paso donde se recibe cada documento **re-chequea** el
-rol, por si se lo quitan a mitad de camino (es data financiera).
+Caja Central es un rol como cualquier otro de `bot.usuarios` / `bot.usuario_area`. Para que alguien
+reciba los avisos del arqueo:
+
+```
+/usuarios agregar <telegram_id> cajacentral
+```
 
 El rol se siembra con la **migración 014** (`db/migrations/014_caja_central.sql`) — hay que correrla en
-Supabase antes de poder asignarlo. Como el menú `/` de Telegram se publica **al arrancar**, después de
-asignar el rol hay que **reiniciar el bot** para que el comando le aparezca en la lista.
+Supabase antes de poder asignarlo.
 
-## Por qué es un área propia y no un comando más de Tesorería
+> Como el rol ya **no tiene comando**, no hay menú `/` que actualizar ni hace falta reiniciar el bot
+> después de asignarlo: alcanza con que el `telegram_id` tenga el rol antes de la próxima corrida de
+> las 08:00. Si nadie tiene el rol Tesorería/Caja Central, el arqueo **cae a los admins** para que al
+> menos alguien lo vea (`src/entrega-arqueo.js`).
 
-`/mp` **vivía en Tesorería** hasta el 17/07/2026. Se movió porque es Caja Central quien lo corre a
-diario. **No quedó en las dos**: en este bot un comando pertenece a **una sola área** (D9 de
-[arquitectura.md](../arquitectura.md) — el "rol" de una persona *son* sus áreas), y registrarlo desde
-dos haría que `bot.command('mp', …)` se ejecute **dos veces** y el wizard se abra duplicado. Los admins
-lo siguen viendo igual, porque tienen acceso total.
+## Por qué dejó de ser un comando
+
+`/mp` obligaba a que **alguien se acordara de correrlo** todos los días con los dos archivos a mano.
+Con dos plataformas (MP y Talo) y el reporte de **Cobros (collection)** de MP disponible el mismo día,
+convenía que el arqueo saliera solo: el admin ya sube el libro de noche para `/cierre`, así que
+sumarle las liquidaciones a esa misma carga (`/carga`) y dejar que el barrido de las 08:00 haga el
+cruce elimina el paso manual. El resultado le llega igual a Caja Central, pero sin que nadie tenga que
+disparar nada.
