@@ -158,6 +158,7 @@ sobre flujos de cientos de millones por cuenta).
 | Santander | `111201014` | −3,6M (timing) |
 | Supervielle | `111201015` | −1,1M (timing) |
 | Mercado Pago | `422101014` + tarjetas `111301002` `111304001` `111305001` `111302002` `111303001` | +1,7M ✅ |
+| Talo | `42210108` (TALO HONRE S.A, sola) | plataforma nueva (23/07/2026) |
 | Caja Fuerte Moreno | `111101003` (sola) | +3,1M (timing) |
 | Caja Dólar Tesorería | `111102006` **sola** (col *Nominal*, USD) | 0 ✅ |
 | Cheques en Cartera A+B | `111401001` (grupo) | 0 ✅ |
@@ -182,8 +183,12 @@ sobre flujos de cientos de millones por cuenta).
   la 005 (**+US$51.100** en la semana real, solo Debe, nunca Haber) caía como diferencia. Sacada la 005,
   la caja física cierra en **$0 exacto todos los días** (13/07/2026). Si en el futuro se quiere controlar
   la 005, va como **cuenta de control propia**, con su propio renglón de saldo.
-- **Signo**: las 8 cuentas son **deudoras** (el Debe las sube). Mercado Pago (`422…`) **confirmado
-  deudor** por el Debe de las cobranzas.
+- **Talo** → `42210108` (TALO HONRE S.A): plataforma de cobro nueva, primer saldo cargado el
+  **23/07/2026**. Es la misma cuenta contra la que arquea `plataformas.js`. Deudora (los cobros entran
+  por el Debe, como MP) y sin salidas por ahora; sola, sin cuentas satélite. Como el día anterior no la
+  tenía, el **primer cierre con Talo sale `sin_saldo_ayer`** (informativo); concilia desde el día siguiente.
+- **Signo**: las cuentas son **deudoras** (el Debe las sube). Mercado Pago y Talo (`422…`) **confirmados
+  deudores** por el Debe de las cobranzas.
 
 ### El acumulado y el timing (el corazón del control)
 
