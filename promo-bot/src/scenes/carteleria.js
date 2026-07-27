@@ -21,7 +21,7 @@ function linkWhatsApp(texto) {
   return `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`;
 }
 
-async function avisarAMarketing(telegram, { fotoFileId, tipo }) {
+async function avisarAMarketing(telegram, { id, fotoFileId, tipo }) {
   const { label, interno } = TIPOS[tipo];
   let avisados = 0;
   for (const tid of await telegramIdsPorRol('marketing')) {
@@ -32,7 +32,12 @@ async function avisarAMarketing(telegram, { fotoFileId, tipo }) {
         const texto = `Buenos días, solicito ${label} a continuación les adjunto el diseño`;
         await telegram.sendPhoto(tid, fotoFileId, {
           caption: `🖼️ ${label} — pedido para la gráfica.`,
-          reply_markup: { inline_keyboard: [[{ text: '📲 Pedir por WhatsApp', url: linkWhatsApp(texto) }]] },
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📲 Pedir por WhatsApp', url: linkWhatsApp(texto) }],
+              [{ text: '✅ Ya pedí los carteles', callback_data: `carteleria_pedido:${id}` }],
+            ],
+          },
         });
       }
       avisados++;
@@ -76,7 +81,7 @@ const carteleriaWizard = new Scenes.WizardScene(
     if (!r || !TIPOS[r]) { await ctx.reply('Elegí una de las opciones.'); return; }
 
     const u = ctx.state.usuario;
-    await crearCarteleria({
+    const id = await crearCarteleria({
       fotoFileId: ctx.wizard.state.fotoFileId,
       tipo: r,
       usuarioId: u ? u.id : null,
@@ -84,7 +89,7 @@ const carteleriaWizard = new Scenes.WizardScene(
       usuarioTelegramId: ctx.from.id,
     });
 
-    const avisados = await avisarAMarketing(ctx.telegram, { fotoFileId: ctx.wizard.state.fotoFileId, tipo: r });
+    const avisados = await avisarAMarketing(ctx.telegram, { id, fotoFileId: ctx.wizard.state.fotoFileId, tipo: r });
     await ctx.reply(`Listo, le avisé a Marketing (${avisados} persona(s)).`);
     return ctx.scene.leave();
   }

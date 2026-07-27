@@ -42,14 +42,16 @@ Según el tipo elegido, el aviso a Marketing (`telegramIdsPorRol('marketing')`) 
 - **A4 / A4 Color** (se hacen adentro): la foto con el pie "🖨️ Imprimir A4" o "🖨️ Imprimir A4
   Color". Sin botón — no hace falta nada más.
 - **Cartel simple / Gráfica cigüeña** (van a la gráfica externa): la foto con el pie
-  correspondiente + un botón **"📲 Pedir por WhatsApp"** que abre un chat de WhatsApp con el
-  número de la gráfica (`GRAFICA_WHATSAPP_NUMBER` en `.env`) y el mensaje ya escrito ("Buenos
-  días, solicito {tipo} a continuación les adjunto el diseño"). Marketing solo tiene que adjuntar
-  la foto a mano y mandar — un link de WhatsApp no puede adjuntar archivos automáticamente, es una
-  limitación de la plataforma.
+  correspondiente + dos botones: **"📲 Pedir por WhatsApp"** (abre un chat de WhatsApp con el
+  número de la gráfica, `GRAFICA_WHATSAPP_NUMBER` en `.env`, y el mensaje ya escrito — "Buenos
+  días, solicito {tipo} a continuación les adjunto el diseño"; Marketing solo adjunta la foto a
+  mano y manda, un link de WhatsApp no puede adjuntar archivos automáticamente) y **"✅ Ya pedí los
+  carteles"** (migración 029: `marcarPedidoConfirmado`, guarda atómica). Al tocar este último se le
+  avisa a quien pidió la cartelería con `/carteleria` (por su `telegram_id`, guardado en la fila).
 
-No hay paso de confirmación de Marketing para `/carteleria` (a diferencia de `/ajuste` y
-`/promoprecios`): es avisar y listo, sin loop de vuelta.
+**A4 / A4 Color no tienen botón de confirmación** — es avisar e imprimir, sin loop de vuelta (a
+diferencia de Cartel simple / Gráfica cigüeña, que sí lo tienen porque involucran pedirle algo a
+un tercero externo).
 
 **Ojo con el número argentino:** algunos celulares de Argentina necesitan un `9` extra después del
 `54` para que el link `wa.me` abra el chat correcto. Si no abre bien, hay que ajustar

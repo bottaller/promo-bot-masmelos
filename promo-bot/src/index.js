@@ -19,6 +19,7 @@ const { iniciarAvisoLibro } = require('./aviso-libro');
 const { iniciarAvisoMpSemanal } = require('./aviso-mp-semanal');
 const { iniciarEntregaCierres } = require('./entrega-cierres');
 const { registrarAccionesCalidad } = require('./acciones-calidad');
+const { registrarAccionesDeposito } = require('./acciones-deposito');
 const { iniciarEntregaArqueo } = require('./entrega-arqueo');
 const { anunciarDeploy } = require('./aviso-deploy');
 
@@ -143,6 +144,8 @@ admin.registrar(bot);
 
 // Botones de /ajuste y /promoprecios (notificaciones proactivas, no comandos de un área).
 registrarAccionesCalidad(bot);
+// Botón de /carteleria (Marketing confirma que ya pidió los carteles a la gráfica).
+registrarAccionesDeposito(bot);
 
 // Responder callbacks sueltos (botones de flujos ya terminados) para que no queden "cargando".
 bot.on('callback_query', (ctx) => ctx.answerCbQuery().catch(() => {}));

@@ -11,4 +11,21 @@ async function crearCarteleria({ fotoFileId, tipo, usuarioId, usuarioNombre, usu
   return rows[0].id;
 }
 
-module.exports = { crearCarteleria };
+async function carteleriaPorId(id) {
+  const { rows } = await pool.query('select * from bot.carteleria where id = $1', [id]);
+  return rows[0] || null;
+}
+
+// Marketing confirma que ya pidió los carteles a la gráfica. Guarda atómica: null si ya estaba
+// confirmado (evita avisarle dos veces a quien lo pidió, por un doble-tap).
+async function marcarPedidoConfirmado(id) {
+  const { rows } = await pool.query(
+    `update bot.carteleria set pedido_confirmado_en = now()
+      where id = $1 and pedido_confirmado_en is null
+      returning *`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+module.exports = { crearCarteleria, carteleriaPorId, marcarPedidoConfirmado };
