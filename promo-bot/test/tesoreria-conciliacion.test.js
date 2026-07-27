@@ -38,6 +38,27 @@ t('MP = MP + tarjetas (menos Visa Crédito)', () => {
   const mp = byName(r, 'Mercado Pago');
   assert.strictEqual(mp.ingresos, 150); assert.strictEqual(mp.diferencia, 0);
 });
+t('Talo (cuenta 42210108) concilia como cuenta deudora, cobros por el Debe', () => {
+  // Talo entró como plataforma nueva el 23/07: el saldo sube por el Debe (cobros recibidos).
+  const r = conciliar({
+    saldosAyer: [S('Talo', 2904672)], saldosHoy: [S('Talo', 8341353)],
+    movimientos: [M(42210108, 5436681, 0)],
+  });
+  const talo = byName(r, 'Talo');
+  assert.strictEqual(talo.ingresos, 5436681);
+  assert.strictEqual(talo.egresos, 0);
+  assert.strictEqual(talo.diferencia, 0);
+  assert.strictEqual(talo.estado, 'ok');
+});
+t('Talo sin saldo de ayer (primer día que aparece) -> sin_saldo_ayer, no diferencia', () => {
+  // El 23/07 Talo aparece por primera vez: el día anterior no la tenía → no hay contra qué comparar.
+  const r = conciliar({
+    saldosAyer: [S('Mercadopago', 1000)], saldosHoy: [S('Talo', 2904672), S('Mercadopago', 1000)],
+    movimientos: [M(42210108, 2904672, 0)],
+  });
+  assert.strictEqual(byName(r, 'Talo').estado, 'sin_saldo_ayer');
+  assert.strictEqual(byName(r, 'Talo').diferencia, null);
+});
 t('USD por columnas nominal: SOLO la caja física 006 (la 005 no cuenta)', () => {
   // 2750 USD salen de la caja física del negocio (006 haber) hacia la otra caja (005 debe).
   // El control es SOLO la 006: el saldo real baja a 0, y la entrada a la 005 se ignora.

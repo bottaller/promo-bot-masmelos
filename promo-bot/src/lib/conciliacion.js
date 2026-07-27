@@ -26,6 +26,11 @@ const CUENTAS_CONTROL = [
   // Mercado Pago (Point) = MP + tarjetas que liquidan en MP. Visa Crédito (111301001) NO
   // entra: es cuenta a cobrar (Visa liquida a ~18 días), la plata todavía no está en MP.
   { nombre: 'Mercado Pago',       saldoKeys: ['mercadopago'],        libroIds: [422101014, 111301002, 111304001, 111305001, 111302002, 111303001], moneda: 'ARS', deudora: true },
+  // Talo = cuenta 42210108 "TALO HONRE S.A" (la misma contra la que arquea plataformas.js). Es
+  // una plataforma de cobro nueva (primer saldo cargado el 23/07/2026): los cobros entran por el
+  // Debe (deudora, como MP) y por ahora no tiene salidas. Su saldo es solo la cuenta 42210108,
+  // sin cuentas satélite (no hay "Point" de Talo).
+  { nombre: 'Talo',               saldoKeys: ['talo'],               libroIds: [42210108], moneda: 'ARS', deudora: true },
   // Cheques en Cartera: A y B son una división manual de la única cartera de Sigma; se
   // concilian como GRUPO (suma de los dos renglones) contra 111401001.
   { nombre: 'Cheques en Cartera', saldoKeys: ['cheques en cartera a', 'cheques en cartera b'], libroIds: [111401001], moneda: 'ARS', deudora: true },

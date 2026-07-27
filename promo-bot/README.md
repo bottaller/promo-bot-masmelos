@@ -14,14 +14,13 @@ promo-bot/
 │   ├── index.js              ← arranque: middlewares + registro de áreas
 │   ├── middleware/           ← auth (identidad por telegram_id) + authz (permisos por área)
 │   ├── db/                   ← pool (pg) + acceso a datos + scripts (migración, seed-admin)
-│   ├── areas/
-│   │   ├── compras/          ← /alta /baja /reporte /buscar
-│   │   └── tesoreria/        ← /arqueo (esqueleto)
+│   ├── areas/                ← calidad · compras · tesoreria · cajacentral · carritoweb · deposito
 │   ├── admin/                ← /usuarios, /actartic (solo admin)
-│   ├── scenes/               ← wizards de Compras (alta, baja, reporte)
-│   ├── lib/                  ← parser del Excel de artículos
-│   └── notificar.js          ← avisos a todo el equipo de Compras (rol "compras", sin config aparte)
-├── db/migrations/            ← 001 acceso · 002 artículos · 003 compras
+│   ├── scenes/               ← wizards (carga, cierre, alta, informe, …)
+│   ├── lib/                  ← lógica pura (conciliación, arqueo, parsers de Excel, reportes)
+│   ├── entrega-arqueo.js     ← barrido 08:00: arquea MP/Talo y entrega los reportes
+│   └── notificar.js          ← avisos por rol (telegramIdsPorRol)
+├── db/migrations/            ← 001…023 (acceso, artículos, tesorería, arqueo, deploys, …)
 ├── docs/                     ← documentación (empezá por arquitectura.md)
 ├── .env.example
 └── package.json
@@ -29,10 +28,16 @@ promo-bot/
 
 ## Comandos
 
-- **Compras:** `/alta` (producto en promoción por vencimiento — busca en el maestro por EAN/código/nombre),
-  `/baja` (retiro de góndola), `/reporte` (por producto o proveedor), `/buscar` (artículo por EAN).
-- **Tesorería:** `/arqueo` (próximamente).
-- **Admin:** `/usuarios` (gestionar accesos), `/actartic` (subir el maestro de artículos).
+- **Calidad:** `/alta`, `/reposicion`, `/cambiopromocion`, `/baja`, `/control` (promociones por vencimiento).
+- **Compras:** `/reporte` (por proveedor), `/excel` (todas las promociones + informes de Depósito).
+- **Tesorería:** `/carga` (documentos del día: el libro de Sigma + las liquidaciones de MP y Talo, admin),
+  `/flujos` (dashboard del flujo de dinero), `/cierre`, `/semanal`, `/mensual`, `/reportecierre`.
+- **Caja Central:** rol de notificación, **sin comando** — recibe el arqueo automático de cobros (MP + Talo)
+  de las 08:00 y el resumen semanal de los lunes.
+- **Depósito:** `/informe` (informe sobre un proveedor/producto para Calidad o Compras).
+- **Admin:** `/usuarios` (accesos), `/actartic` (maestro de artículos), `/avisos` (chequear vencimientos ahora).
+
+El detalle por área está en [`docs/`](docs/) — empezá por [`docs/arquitectura.md`](docs/arquitectura.md).
 
 ## Puesta en marcha (local)
 

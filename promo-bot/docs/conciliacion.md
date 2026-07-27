@@ -38,11 +38,16 @@ diferencia = saldo_real_hoy − saldo_teórico
 
 | Comando | Quién | Qué hace |
 |---|---|---|
-| **`/cierre`** | Tesorería | Cierre **diario en dos tiempos**. El tesorero sube **solo** los saldos (control de cambios) → el cierre queda pendiente. A las 08:00 un barrido lo concilia contra el libro que el admin cargó de noche (/libro) y entrega el reporte (diferencias + acumulado) al tesorero + admins; marca las 🔴. Ver §Cierre diferido en [tesoreria.md](areas/tesoreria.md). |
+| **`/carga`** | Admin | Carga NOCTURNA de los documentos del día: el **libro** de Sigma (permanente, lo consumen todos los controles) **y** las **liquidaciones** de MP y Talo (en espera para el arqueo de las 08:00). El bot reconoce cada archivo solo. Reemplazó a `/libro`. Ver §Carga del día en [tesoreria.md](areas/tesoreria.md). |
+| **`/cierre`** | Tesorería | Cierre **diario en dos tiempos**. El tesorero sube **solo** los saldos (control de cambios) → el cierre queda pendiente. A las 08:00 un barrido lo concilia contra el libro que el admin cargó de noche (`/carga`) y entrega el reporte (diferencias + acumulado) al tesorero + admins; marca las 🔴. Ver §Cierre diferido en [tesoreria.md](areas/tesoreria.md). |
 | **`/semanal`** | Tesorería | Cierre **semanal**. Subís el libro de la semana (los saldos ya están de los diarios) → concilia el período contra los saldos guardados. **No toca el diario.** |
 | **`/mensual`** | Tesorería | Cierre **mensual** (el exhaustivo). Igual que el semanal, sobre el mes. |
 | **`/reportecierre <fecha>`** | Admin | Recupera un cierre **pasado**: los saldos, movimientos y diferencias que quedaron registrados de esa fecha. |
-| **`/mp`** | Tesorería | El **nivel de abajo** de este control, para Mercado Pago: aparea cada cobranza de la `422101014` con su cobro en la liquidación de MP y dice **cuál** es la que no cierra (no solo que la cuenta no cierra). Independiente: no toca la base ni los cierres. Ver [conciliacion-mp.md](conciliacion-mp.md). |
+
+> El **nivel de abajo** de este control (aparear cada cobranza de MP/Talo con su cobro en la
+> plataforma para decir **cuál** venta no cierra) ya no es un comando: es el **arqueo de cobros
+> automático** de las 08:00. Independiente, no toca la base de los cierres. Ver
+> [conciliacion-mp.md](conciliacion-mp.md).
 
 ## 4. El flujo diario (`/cierre`)
 
@@ -153,6 +158,7 @@ sobre flujos de cientos de millones por cuenta).
 | Santander | `111201014` | −3,6M (timing) |
 | Supervielle | `111201015` | −1,1M (timing) |
 | Mercado Pago | `422101014` + tarjetas `111301002` `111304001` `111305001` `111302002` `111303001` | +1,7M ✅ |
+| Talo | `42210108` (TALO HONRE S.A, sola) | plataforma nueva (23/07/2026) |
 | Caja Fuerte Moreno | `111101003` (sola) | +3,1M (timing) |
 | Caja Dólar Tesorería | `111102006` **sola** (col *Nominal*, USD) | 0 ✅ |
 | Cheques en Cartera A+B | `111401001` (grupo) | 0 ✅ |
@@ -177,8 +183,12 @@ sobre flujos de cientos de millones por cuenta).
   la 005 (**+US$51.100** en la semana real, solo Debe, nunca Haber) caía como diferencia. Sacada la 005,
   la caja física cierra en **$0 exacto todos los días** (13/07/2026). Si en el futuro se quiere controlar
   la 005, va como **cuenta de control propia**, con su propio renglón de saldo.
-- **Signo**: las 8 cuentas son **deudoras** (el Debe las sube). Mercado Pago (`422…`) **confirmado
-  deudor** por el Debe de las cobranzas.
+- **Talo** → `42210108` (TALO HONRE S.A): plataforma de cobro nueva, primer saldo cargado el
+  **23/07/2026**. Es la misma cuenta contra la que arquea `plataformas.js`. Deudora (los cobros entran
+  por el Debe, como MP) y sin salidas por ahora; sola, sin cuentas satélite. Como el día anterior no la
+  tenía, el **primer cierre con Talo sale `sin_saldo_ayer`** (informativo); concilia desde el día siguiente.
+- **Signo**: las cuentas son **deudoras** (el Debe las sube). Mercado Pago y Talo (`422…`) **confirmados
+  deudores** por el Debe de las cobranzas.
 
 ### El acumulado y el timing (el corazón del control)
 

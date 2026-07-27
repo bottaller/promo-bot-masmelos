@@ -66,6 +66,19 @@ t('QR approved entra; Point y rejected quedan fuera con su motivo', () => {
   assert.match(mp.motivoFuera(operaciones[1]), /Point/);       // b: Point → tarjetas
   assert.match(mp.motivoFuera(operaciones[2]), /aprobado|rejected/i); // c: rechazada
 });
+t('una DEVOLUCIÓN aprobada por QR (importe POSITIVO) queda FUERA — se filtra por operation_type', () => {
+  // En Cobros, el importe es "Valor del producto" (positivo también en una devolución), así que el
+  // filtro NO puede ser por signo: tiene que mirar operation_type. Una refund approved NO es cobro.
+  const mp = porCodigo('mp');
+  const { operaciones } = parsearCollection(aBuffer([HDR,
+    op('r', 15000, '23/07/2026 11:00:00', { sub: 'QR', status: 'approved', tipo: 'refund' }),
+  ]));
+  const o = operaciones[0];
+  assert.strictEqual(o.bruto, 15000);                 // importe positivo
+  assert.notStrictEqual(o.tipo, 'Approved payment');  // NO se cuenta como cobro
+  assert.strictEqual(mp.enAlcance(o), false);
+  assert.match(mp.motivoFuera(o), /no un cobro aprobado/i);
+});
 
 console.log('detección y ruteo por plataformas.js');
 t('esCollection reconoce el formato; el settlement NO', () => {

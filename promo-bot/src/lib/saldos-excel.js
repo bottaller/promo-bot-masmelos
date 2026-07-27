@@ -19,6 +19,7 @@ const CUENTAS = new Map([
   ['santander',            { nombre: 'Santander',            moneda: 'ARS' }],
   ['supervielle',          { nombre: 'Supervielle',          moneda: 'ARS' }],
   ['mercadopago',          { nombre: 'Mercadopago',          moneda: 'ARS' }],
+  ['talo',                 { nombre: 'Talo',                 moneda: 'ARS' }],
   ['cheques en cartera a', { nombre: 'Cheques en Cartera A', moneda: 'ARS' }],
   ['cheques en cartera b', { nombre: 'Cheques en Cartera B', moneda: 'ARS' }],
   ['e-cheq en cartera',    { nombre: 'E-cheq en Cartera',    moneda: 'ARS' }],
