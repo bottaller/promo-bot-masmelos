@@ -10,6 +10,7 @@ const bajaWizard = require('../../scenes/baja');
 const ajusteWizard = require('../../scenes/ajuste');
 const promoPreciosWizard = require('../../scenes/promoprecios');
 const validarPromoPreciosWizard = require('../../scenes/validar-promoprecios');
+const revisarImagenWizard = require('../../scenes/revisar-imagen');
 const { requiereArea } = require('../../middleware/authz');
 const { altasEnOferta } = require('../../db/compras');
 const { construirExcelControl } = require('../../lib/control-excel');
@@ -53,7 +54,7 @@ function registrar(bot) {
 module.exports = {
   codigo: CODIGO,
   nombre: 'Calidad',
-  scenes: [altaWizard, reposicionWizard, cambioPromocionWizard, bajaWizard, ajusteWizard, promoPreciosWizard, validarPromoPreciosWizard],
+  scenes: [altaWizard, reposicionWizard, cambioPromocionWizard, bajaWizard, ajusteWizard, promoPreciosWizard, validarPromoPreciosWizard, revisarImagenWizard],
   comandos,
   registrar,
 };

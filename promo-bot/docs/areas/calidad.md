@@ -21,7 +21,7 @@ tiran, para la próxima comprar menos o pedir descuento al proveedor.
 | `/baja` | Cierra una camada abierta: cuántas se vendieron y qué pasó con el remanente (descartado/vencido o devuelto a góndola normal). |
 | `/control` | Excel de **todo lo que está en oferta ahora**, ordenado por fecha de vencimiento (incluye columnas de % de descuento y precio promocional). Lleva la fecha de generación (ver [convenciones.md](../convenciones.md)). |
 | `/ajuste` | Sube un archivo de ajustes que le llega **solo al dueño del bot** (no a "los admins" — ver más abajo). El dueño lo revisa afuera del bot y toca "✅ Ajuste realizado" cuando lo hizo; ahí se le avisa a quien lo subió. |
-| `/promoprecios` | Sube el archivo final de promociones y precios. Arranca una cadena: dueño valida → Compras (rol `compras_promo`) y Marketing → Marketing entrega imágenes (`/imagenes`, área Marketing) → Compras valida las imágenes → dueño valida → se reenvían a Ventas y Depósito. Ver "El ciclo de `/promoprecios`" más abajo. |
+| `/promoprecios` | Sube el archivo final de promociones y precios. Arranca una cadena: dueño valida → Compras (rol `compras_promo`) y Marketing → Marketing entrega imágenes (`/imagenes`, área Marketing) → **cada imagen se valida por separado** (Compras, con opción de pedir "revisar" sin frenar las demás) → dueño valida cada una → se reenvían a Ventas y Depósito. Ver "El ciclo de `/promoprecios`" más abajo. |
 
 ## Modelo de datos
 
@@ -81,25 +81,45 @@ es exclusivo de una sola persona. `src/lib/owner.js` (`esDueno`) es el único ch
 bot; cuando toca "✅ Ajuste realizado", se le avisa a José (por su `telegram_id`, guardado en la fila
 al subirlo — sin necesidad de join contra `bot.usuarios`).
 
-**`/promoprecios`**, en cadena:
+**`/promoprecios`**, arranca igual que antes pero desde la entrega de imágenes en adelante cada
+**imagen viaja sola** — ninguna espera a las demás (migración 025):
 1. José sube el archivo → le llega al dueño con botón "✅ Validar".
 2. El dueño lo toca → el bot le pregunta cuántas imágenes tiene que hacer Marketing (wizard corto,
    `validar-promoprecios-wizard`, entra vía `ctx.session.promoIdParaValidar` — no vía el estado de
    la escena, para no depender de cómo Telegraf pasa el segundo argumento de `scene.enter`).
 3. Se reparte: **Compras** (rol `compras_promo`, no el `compras` general — si no, le llegaría a todo
-   el equipo de compras en vez de al responsable puntual que designe el dueño) con botón "✅ Ya hice
-   mi parte"; **Marketing** con la cantidad pedida.
+   el equipo de compras en vez de al responsable puntual que designe el dueño) con botón "✅ LISTO"
+   en el archivo; **Marketing** con la cantidad pedida.
 4. Marketing entrega con `/imagenes` (área Marketing): exige la cantidad exacta, de a una imagen por
    vez; "reiniciar" borra el progreso y arranca de nuevo. Al llegar a la cantidad pedida, **se
-   dispara solo** — no hace falta que confirme nada — y avisa al dueño de que terminó.
-5. Las imágenes van a Compras (`compras_promo`) con botón "✅ Validar imágenes".
-6. Al validarlas, van al dueño con el mismo botón.
-7. Al validarlas el dueño, se reenvían automáticamente a **Ventas** y **Depósito** (roles `ventas` y
-   `deposito`, sin botón — ahí termina la cadena).
+   dispara solo** — no hace falta que confirme nada — avisa al dueño de que terminó, y **cada imagen
+   se manda a Compras por separado**, con sus propios botones "✅ Validar" / "🔁 Revisar".
+5. Compras revisa **de a una**: si toca "✅ Validar", ESA imagen (nada más) se te manda a vos al
+   toque, con su propio botón. Si toca "🔁 Revisar", el bot le pregunta qué hay que corregir
+   (`revisar-imagen-wizard`) y ese comentario se le manda a Marketing junto con la imagen — **las
+   demás imágenes siguen su curso, esta no frena nada.**
+6. Vos validás cada imagen que te llega, una por una → se reenvía automáticamente a **Ventas** y
+   **Depósito** (roles `ventas` y `deposito`, sin botón — ahí termina el camino de esa imagen).
+7. Cuando Marketing manda la corrección de una imagen marcada "revisar", esa imagen puntual vuelve
+   a "pendiente" y pasa por Compras de nuevo (paso 5) — no salta directo a vos.
 
-Como hay como mucho un ciclo de `/promoprecios` por semana, `/imagenes` y el wizard de validar no
-necesitan elegir "cuál" — siempre operan sobre el único activo (`promoPreciosActivo()`: el más
-reciente ya validado por el dueño que todavía no se terminó de reenviar).
+**Por qué cada imagen es una fila con su propio estado** (`bot.promoprecios_imagenes.estado`:
+`pendiente` → `revisar`\* → `compras_ok` → `enviada`): así ninguna imagen bloquea a las demás, y el
+progreso de cada una queda en la base en vez de en el estado de una escena.
+
+**Bug corregido (2026-07-27):** cuando Marketing manda varias fotos "juntas" desde la galería,
+Telegram las entrega como mensajes SEPARADOS que llegan casi en simultáneo, no como uno solo. Sin
+protección, esto rompía dos cosas: (a) el reparto a Compras se disparaba una vez por cada foto que
+llegaba tarde y veía "ya están las N" (mandaba el lote repetido N veces) y (b) el cálculo de
+`orden` de cada imagen (`max(orden)+1`) podía leer el mismo máximo dos veces y asignar el mismo
+número a fotos distintas. Se arregló usando el resultado de `marcarMarketingCompletado()` (guarda
+atómica en la base) como semáforo para el reparto, y un `SELECT ... FOR UPDATE` sobre la fila padre
+en `agregarImagenPromo()` para serializar los inserts de una misma carga — mismo patrón que ya usa
+`cambiarPromocion()` en Compras.
+
+Como hay como mucho un ciclo de `/promoprecios` por semana, `/imagenes` no necesita elegir "cuál" —
+siempre opera sobre el único activo (`promoPreciosActivo()`: el más reciente ya validado por el
+dueño que todavía no se terminó de reenviar).
 
 **Roles nuevos** (migración 024): `marketing`, `ventas`, `compras_promo`. Ninguno tiene gente
 asignada por defecto — se asignan con `/usuarios agregar <telegram_id> <rol>` cuando se decida quién.

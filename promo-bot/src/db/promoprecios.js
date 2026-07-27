@@ -51,14 +51,29 @@ async function marcarComprasArchivoOk(id) {
   return rows[0] || null;
 }
 
+// Cuando Marketing manda varias fotos "juntas", Telegram las entrega como mensajes separados que
+// pueden procesarse casi en simultáneo. Sin lock, dos inserts concurrentes pueden leer el mismo
+// max(orden) antes de que ninguno commitee, y las dos fotos quedan con el mismo número. El
+// SELECT ... FOR UPDATE sobre la fila padre serializa los inserts de la MISMA carga entre sí.
 async function agregarImagenPromo({ promoprecioId, fileId }) {
-  const { rows } = await pool.query(
-    `insert into bot.promoprecios_imagenes (promoprecio_id, file_id, orden)
-     values ($1, $2, (select coalesce(max(orden), 0) + 1 from bot.promoprecios_imagenes where promoprecio_id = $1))
-     returning *`,
-    [promoprecioId, fileId]
-  );
-  return rows[0];
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await client.query('select id from bot.promoprecios where id = $1 for update', [promoprecioId]);
+    const { rows } = await client.query(
+      `insert into bot.promoprecios_imagenes (promoprecio_id, file_id, orden)
+       values ($1, $2, (select coalesce(max(orden), 0) + 1 from bot.promoprecios_imagenes where promoprecio_id = $1))
+       returning *`,
+      [promoprecioId, fileId]
+    );
+    await client.query('commit');
+    return rows[0];
+  } catch (e) {
+    await client.query('rollback');
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 async function imagenesDePromo(promoprecioId) {
@@ -83,24 +98,68 @@ async function marcarMarketingCompletado(id) {
   return rows[0] || null;
 }
 
-async function marcarComprasImagenesOk(id) {
+// --- Validación por imagen individual (migración 025) ---
+// Cada imagen recorre su propio camino: pendiente -> (revisar -> pendiente)* -> compras_ok ->
+// enviada. Nunca espera a las demás imágenes del mismo ciclo.
+
+// Compras valida UNA imagen puntual. null si ya no estaba pendiente (evita doble-envío si el
+// botón se toca dos veces, o si llegó a validarse por otra vía mientras tanto).
+async function validarImagenCompras(imagenId) {
   const { rows } = await pool.query(
-    `update bot.promoprecios set compras_imagenes_ok = true, compras_imagenes_ok_en = now()
-      where id = $1 and compras_imagenes_ok = false
+    `update bot.promoprecios_imagenes set estado = 'compras_ok', compras_ok_en = now()
+      where id = $1 and estado = 'pendiente'
       returning *`,
-    [id]
+    [imagenId]
   );
   return rows[0] || null;
 }
 
-// Última validación: la del dueño. Marca también enviado_en, porque esta validación ES lo que
-// dispara el reenvío a Ventas y Depósito (se hace atómico con el UPDATE, no en un paso aparte).
-async function marcarAdminImagenesOk(id) {
+// Compras marca una imagen para corregir, con el comentario de qué está mal.
+async function marcarImagenRevisar(imagenId, comentario) {
   const { rows } = await pool.query(
-    `update bot.promoprecios set admin_imagenes_ok = true, admin_imagenes_ok_en = now(), enviado_en = now()
-      where id = $1 and admin_imagenes_ok = false
+    `update bot.promoprecios_imagenes
+        set estado = 'revisar', revisar_comentario = $2, revisar_en = now()
+      where id = $1 and estado = 'pendiente'
       returning *`,
-    [id]
+    [imagenId, comentario]
+  );
+  return rows[0] || null;
+}
+
+// Marketing manda la corrección: reemplaza el file_id y la vuelve a poner "pendiente" (así vuelve
+// a pasar por Compras). null si esa imagen no estaba en "revisar" (ya se resolvió, doble-envío, etc).
+async function reemplazarImagenRevisar(imagenId, nuevoFileId) {
+  const { rows } = await pool.query(
+    `update bot.promoprecios_imagenes
+        set file_id = $2, estado = 'pendiente', revisar_comentario = null, revisar_en = null
+      where id = $1 and estado = 'revisar'
+      returning *`,
+    [imagenId, nuevoFileId]
+  );
+  return rows[0] || null;
+}
+
+// La imagen "revisar" más vieja todavía sin corregir, para el ciclo activo (Marketing corrige de
+// a una por vez con /imagenes).
+async function imagenRevisarPendiente(promoprecioId) {
+  const { rows } = await pool.query(
+    `select * from bot.promoprecios_imagenes
+      where promoprecio_id = $1 and estado = 'revisar'
+      order by revisar_en asc
+      limit 1`,
+    [promoprecioId]
+  );
+  return rows[0] || null;
+}
+
+// El dueño valida UNA imagen ya aprobada por Compras. Dispara directo a "enviada": esta
+// validación ES lo que la manda a Ventas y Depósito (atómico, no en un paso aparte).
+async function validarImagenAdmin(imagenId) {
+  const { rows } = await pool.query(
+    `update bot.promoprecios_imagenes set estado = 'enviada', admin_ok_en = now(), enviada_en = now()
+      where id = $1 and estado = 'compras_ok'
+      returning *`,
+    [imagenId]
   );
   return rows[0] || null;
 }
@@ -115,6 +174,9 @@ module.exports = {
   imagenesDePromo,
   reiniciarImagenesPromo,
   marcarMarketingCompletado,
-  marcarComprasImagenesOk,
-  marcarAdminImagenesOk,
+  validarImagenCompras,
+  marcarImagenRevisar,
+  reemplazarImagenRevisar,
+  imagenRevisarPendiente,
+  validarImagenAdmin,
 };
