@@ -12,7 +12,7 @@ async function repartir(ctx, promo) {
     try {
       await ctx.telegram.sendDocument(tid, promo.archivo_file_id, {
         caption: '💲 Promociones y precios, ya validado.',
-        reply_markup: { inline_keyboard: [[{ text: '✅ Ya hice mi parte', callback_data: `promo_compras_ok:${promo.id}` }]] },
+        reply_markup: { inline_keyboard: [[{ text: '✅ LISTO', callback_data: `promo_compras_ok:${promo.id}` }]] },
       });
       avisadosCompras++;
     } catch (e) { console.error('No pude avisarle a compras_promo:', e.message); }

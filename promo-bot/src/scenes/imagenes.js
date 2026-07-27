@@ -33,7 +33,7 @@ async function entregarACompras(ctx, promo, imagenes) {
     try {
       await mandarImagenes(ctx.telegram, tid, imagenes);
       await ctx.telegram.sendMessage(tid, '💲 Imágenes de promociones y precios. Marcá cuando las revises.', {
-        reply_markup: { inline_keyboard: [[{ text: '✅ Validar imágenes', callback_data: `promo_imgs_compras_ok:${promo.id}` }]] },
+        reply_markup: { inline_keyboard: [[{ text: '✅ VALIDADO', callback_data: `promo_imgs_compras_ok:${promo.id}` }]] },
       });
       avisados++;
     } catch (e) { console.error('No pude avisarle a compras_promo:', e.message); }
