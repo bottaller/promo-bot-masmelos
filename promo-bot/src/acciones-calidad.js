@@ -6,8 +6,9 @@ const { telegramIdsPorRol } = require('./db/usuarios');
 const { marcarAjusteRealizado } = require('./db/ajustes');
 const {
   marcarComprasArchivoOk, validarImagenCompras, validarImagenAdmin,
+  todasLasImagenesEnviadas, marcarAvisoImpresionEnviado,
 } = require('./db/promoprecios');
-const { mandarleImagenAlDueno } = require('./lib/promoprecios-mensajes');
+const { mandarleImagenAlDueno, avisarImpresionAMarketing } = require('./lib/promoprecios-mensajes');
 
 async function avisarle(bot, telegramId, texto) {
   try { await bot.telegram.sendMessage(telegramId, texto); } catch (e) { console.error(`No pude avisarle a ${telegramId}:`, e.message); }
@@ -108,6 +109,16 @@ function registrarAccionesCalidad(bot) {
       }
     }
     await ctx.reply(`Validado. Imagen #${imagen.orden} reenviada a Ventas y Depósito (${enviados} persona(s)).`);
+
+    // Si esta era la última imagen que faltaba validar, avisarle a Marketing que imprima todo.
+    // Guarda atómica (marcarAvisoImpresionEnviado) para no duplicar el aviso si dos validaciones
+    // casi simultáneas ven "ya no queda nada pendiente".
+    if (await todasLasImagenesEnviadas(imagen.promoprecio_id)) {
+      if (await marcarAvisoImpresionEnviado(imagen.promoprecio_id)) {
+        const avisadosImpresion = await avisarImpresionAMarketing(bot.telegram);
+        await ctx.reply(`🖨️ Le avisé a Marketing que imprima todo (${avisadosImpresion} persona(s)).`);
+      }
+    }
   });
 }
 

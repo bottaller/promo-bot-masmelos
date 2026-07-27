@@ -164,6 +164,29 @@ async function validarImagenAdmin(imagenId) {
   return rows[0] || null;
 }
 
+// true si ya no queda ninguna imagen del ciclo sin llegar a "enviada" (o sea, el dueño terminó de
+// validarlas todas). Se usa para disparar el aviso de impresión a Marketing.
+async function todasLasImagenesEnviadas(promoprecioId) {
+  const { rows } = await pool.query(
+    `select count(*)::int as pendientes from bot.promoprecios_imagenes
+      where promoprecio_id = $1 and estado <> 'enviada'`,
+    [promoprecioId]
+  );
+  return rows[0].pendientes === 0;
+}
+
+// Guarda atómica: solo la devuelve (no null) la primera vez, para no mandar el aviso de
+// impresión dos veces si dos validaciones casi simultáneas ven "ya no queda nada pendiente".
+async function marcarAvisoImpresionEnviado(promoprecioId) {
+  const { rows } = await pool.query(
+    `update bot.promoprecios set aviso_impresion_en = now()
+      where id = $1 and aviso_impresion_en is null
+      returning *`,
+    [promoprecioId]
+  );
+  return rows[0] || null;
+}
+
 module.exports = {
   crearPromoPrecios,
   promoPreciosPorId,
@@ -179,4 +202,6 @@ module.exports = {
   reemplazarImagenRevisar,
   imagenRevisarPendiente,
   validarImagenAdmin,
+  todasLasImagenesEnviadas,
+  marcarAvisoImpresionEnviado,
 };

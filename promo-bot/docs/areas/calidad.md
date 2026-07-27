@@ -102,6 +102,10 @@ al subirlo — sin necesidad de join contra `bot.usuarios`).
    **Depósito** (roles `ventas` y `deposito`, sin botón — ahí termina el camino de esa imagen).
 7. Cuando Marketing manda la corrección de una imagen marcada "revisar", esa imagen puntual vuelve
    a "pendiente" y pasa por Compras de nuevo (paso 5) — no salta directo a vos.
+8. **Cuando validás la última imagen que faltaba** (migración 026: `todasLasImagenesEnviadas` +
+   `marcarAvisoImpresionEnviado`, guarda atómica para no avisar dos veces), se le manda un mensaje
+   aparte a **Marketing** pidiendo imprimir todas las imágenes en hoja A4 a color, al menos una
+   copia de cada una.
 
 **Por qué cada imagen es una fila con su propio estado** (`bot.promoprecios_imagenes.estado`:
 `pendiente` → `revisar`\* → `compras_ok` → `enviada`): así ninguna imagen bloquea a las demás, y el

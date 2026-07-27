@@ -32,4 +32,20 @@ async function mandarleImagenAlDueno(telegram, imagen) {
   });
 }
 
-module.exports = { entregarImagenACompras, mandarleImagenAlDueno };
+// Cuando el dueño termina de validar TODAS las imágenes de un ciclo (ver
+// db/promoprecios.js: todasLasImagenesEnviadas / marcarAvisoImpresionEnviado).
+async function avisarImpresionAMarketing(telegram) {
+  let avisados = 0;
+  for (const tid of await telegramIdsPorRol('marketing')) {
+    try {
+      await telegram.sendMessage(
+        tid,
+        '🖨️ Ya está todo validado. Imprimí todas las imágenes en hoja A4 a color — al menos una copia de cada una.'
+      );
+      avisados++;
+    } catch (e) { console.error('No pude avisarle a marketing (impresión):', e.message); }
+  }
+  return avisados;
+}
+
+module.exports = { entregarImagenACompras, mandarleImagenAlDueno, avisarImpresionAMarketing };
