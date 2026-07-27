@@ -6,7 +6,7 @@ const { telegramIdsPorRol } = require('./db/usuarios');
 const { marcarAjusteRealizado } = require('./db/ajustes');
 const {
   marcarComprasArchivoOk, validarImagenCompras, validarImagenAdmin,
-  todasLasImagenesEnviadas, marcarAvisoImpresionEnviado,
+  todasLasImagenesEnviadas, marcarAvisoImpresionEnviado, marcarImpresoEntregado,
 } = require('./db/promoprecios');
 const { mandarleImagenAlDueno, avisarImpresionAMarketing } = require('./lib/promoprecios-mensajes');
 
@@ -18,6 +18,10 @@ async function avisarle(bot, telegramId, texto) {
 // designe el dueño con /usuarios agregar).
 function esComprasPromo(usuario) {
   return !!(usuario && usuario.areas && usuario.areas.includes('compras_promo'));
+}
+
+function esMarketing(usuario) {
+  return !!(usuario && usuario.areas && usuario.areas.includes('marketing'));
 }
 
 function registrarAccionesCalidad(bot) {
@@ -115,10 +119,24 @@ function registrarAccionesCalidad(bot) {
     // casi simultáneas ven "ya no queda nada pendiente".
     if (await todasLasImagenesEnviadas(imagen.promoprecio_id)) {
       if (await marcarAvisoImpresionEnviado(imagen.promoprecio_id)) {
-        const avisadosImpresion = await avisarImpresionAMarketing(bot.telegram);
+        const avisadosImpresion = await avisarImpresionAMarketing(bot.telegram, imagen.promoprecio_id);
         await ctx.reply(`🖨️ Le avisé a Marketing que imprima todo (${avisadosImpresion} persona(s)).`);
       }
     }
+  });
+
+  // --- Marketing confirma que ya imprimió y entregó las imágenes en salón -> avisa al dueño ---
+  bot.action(/^promo_impreso:(\d+)$/, async (ctx) => {
+    if (!esMarketing(ctx.state.usuario)) {
+      await ctx.answerCbQuery('Esto es solo para Marketing.', { show_alert: true });
+      return;
+    }
+    await ctx.answerCbQuery();
+    const promo = await marcarImpresoEntregado(Number(ctx.match[1]));
+    if (!promo) { await ctx.reply('Ya estaba confirmado.'); return; }
+    try { await ctx.editMessageReplyMarkup(); } catch (e) { /* mensaje viejo */ }
+    await ctx.reply('Marcado. Gracias.');
+    await avisarle(bot, process.env.OWNER_TELEGRAM_ID, '🖨️ Marketing ya imprimió y entregó las imágenes de promociones y precios en salón.');
   });
 }
 

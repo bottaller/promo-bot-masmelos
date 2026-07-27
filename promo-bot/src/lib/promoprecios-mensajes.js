@@ -33,14 +33,16 @@ async function mandarleImagenAlDueno(telegram, imagen) {
 }
 
 // Cuando el dueño termina de validar TODAS las imágenes de un ciclo (ver
-// db/promoprecios.js: todasLasImagenesEnviadas / marcarAvisoImpresionEnviado).
-async function avisarImpresionAMarketing(telegram) {
+// db/promoprecios.js: todasLasImagenesEnviadas / marcarAvisoImpresionEnviado). Lleva un botón
+// para que Marketing confirme cuando ya imprimió y entregó en salón (marcarImpresoEntregado).
+async function avisarImpresionAMarketing(telegram, promoId) {
   let avisados = 0;
   for (const tid of await telegramIdsPorRol('marketing')) {
     try {
       await telegram.sendMessage(
         tid,
-        '🖨️ Ya está todo validado. Imprimí todas las imágenes en hoja A4 a color — al menos una copia de cada una.'
+        '🖨️ Ya está todo validado. Imprimí todas las imágenes en hoja A4 a color — al menos una copia de cada una.',
+        { reply_markup: { inline_keyboard: [[{ text: '✅ Ya imprimí y entregué en salón', callback_data: `promo_impreso:${promoId}` }]] } }
       );
       avisados++;
     } catch (e) { console.error('No pude avisarle a marketing (impresión):', e.message); }

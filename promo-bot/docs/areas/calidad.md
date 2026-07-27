@@ -105,7 +105,9 @@ al subirlo — sin necesidad de join contra `bot.usuarios`).
 8. **Cuando validás la última imagen que faltaba** (migración 026: `todasLasImagenesEnviadas` +
    `marcarAvisoImpresionEnviado`, guarda atómica para no avisar dos veces), se le manda un mensaje
    aparte a **Marketing** pidiendo imprimir todas las imágenes en hoja A4 a color, al menos una
-   copia de cada una.
+   copia de cada una, con botón "✅ Ya imprimí y entregué en salón".
+9. Cuando Marketing lo toca (migración 027: `marcarImpresoEntregado`), se te avisa a vos que ya
+   está impreso y entregado — ahí termina el ciclo completo.
 
 **Por qué cada imagen es una fila con su propio estado** (`bot.promoprecios_imagenes.estado`:
 `pendiente` → `revisar`\* → `compras_ok` → `enviada`): así ninguna imagen bloquea a las demás, y el

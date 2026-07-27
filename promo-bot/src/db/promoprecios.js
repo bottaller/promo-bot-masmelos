@@ -187,6 +187,18 @@ async function marcarAvisoImpresionEnviado(promoprecioId) {
   return rows[0] || null;
 }
 
+// Marketing confirma que ya imprimió y entregó las imágenes en salón. Guarda atómica: null si ya
+// estaba confirmado (evita avisarle dos veces al dueño por un doble-tap).
+async function marcarImpresoEntregado(promoprecioId) {
+  const { rows } = await pool.query(
+    `update bot.promoprecios set impreso_entregado_en = now()
+      where id = $1 and impreso_entregado_en is null
+      returning *`,
+    [promoprecioId]
+  );
+  return rows[0] || null;
+}
+
 module.exports = {
   crearPromoPrecios,
   promoPreciosPorId,
@@ -204,4 +216,5 @@ module.exports = {
   validarImagenAdmin,
   todasLasImagenesEnviadas,
   marcarAvisoImpresionEnviado,
+  marcarImpresoEntregado,
 };

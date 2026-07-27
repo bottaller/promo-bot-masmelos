@@ -24,7 +24,7 @@ const comandos = [
   { comando: 'cambiopromocion', descripcion: 'Cambiar el % de descuento de una promoción vigente' },
   { comando: 'baja', descripcion: 'Registrar retiro de góndola (vendido o descartado)' },
   { comando: 'control', descripcion: 'Excel de lo que está en oferta, por vencimiento' },
-  { comando: 'ajuste', descripcion: 'Subir un archivo de ajustes para que lo revise el dueño' },
+  { comando: 'ajuste', descripcion: 'Subir el archivo de ajuste para que sea revisado' },
   { comando: 'promoprecios', descripcion: 'Subir el archivo final de promociones y precios' },
 ];
 
