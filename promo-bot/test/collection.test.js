@@ -26,6 +26,18 @@ const HDR = [
 const op = (id, monto, fecha, { status = 'approved', sub = 'QR', fee = -100, neto = null, tipo = 'regular_payment', pt = 'account_money' } = {}) =>
   [id, status, tipo, String(monto), String(fee), String(neto == null ? monto + fee : neto), fecha, sub, 'Mercado Pago', pt];
 
+// Formato NUEVO de MP (jul-2026): SIN (status)/(sub_unit)/(date_created); con (status_detail),
+// (operation_type) y (date_created_short). El parser deriva estado, canal y fecha.
+const HDR_NUEVO = [
+  'Fecha de creación del pago (date_created_short)', 'Número de operación (operation_id)',
+  'Detalle del estado de la operación (status_detail)', 'Tipo de operación (operation_type)',
+  'Valor del producto (transaction_amount)', 'Tarifa de Mercado Pago (mercadopago_fee)',
+  'Monto recibido (net_received_amount)', 'Canal de venta (business_unit)', 'Medio de pago (payment_type)',
+];
+// opN(id, monto, fechaISO, {det, tipo, fee, neto}) — el orden matchea HDR_NUEVO.
+const opN = (id, monto, fecha, { det = 'accredited', tipo = 'regular_payment', fee = -100, neto = null, pt = 'account_money' } = {}) =>
+  [fecha, id, det, tipo, String(monto), String(fee), String(neto == null ? monto + fee : neto), 'Mercado Pago', pt];
+
 console.log('parsearCollection(): lee el reporte de Cobros');
 t('mapea al vocabulario del settlement: QR→"QR Code", approved→"Approved payment"', () => {
   const { operaciones } = parsearCollection(aBuffer([HDR, op('170222644764', 21364.67, '23/07/2026 17:08:42')]));
@@ -78,6 +90,38 @@ t('una DEVOLUCIÓN aprobada por QR (importe POSITIVO) queda FUERA — se filtra 
   assert.notStrictEqual(o.tipo, 'Approved payment');  // NO se cuenta como cobro
   assert.strictEqual(mp.enAlcance(o), false);
   assert.match(mp.motivoFuera(o), /no un cobro aprobado/i);
+});
+
+console.log('formato NUEVO de MP (jul-2026): status_detail / operation_type / date_created_short');
+t('deriva estado (accredited→approved), canal (regular→QR, pos→Point) y fecha sin hora', () => {
+  const { operaciones } = parsearCollection(aBuffer([HDR_NUEVO,
+    opN('n1', 10000, '2026-07-27', { det: 'accredited', tipo: 'regular_payment' }),
+    opN('n2', 20000, '2026-07-27', { det: 'accredited', tipo: 'pos_payment' }),
+  ]));
+  assert.strictEqual(operaciones.length, 2);
+  const [a, b] = operaciones;
+  assert.strictEqual(a.estado, 'approved');            // derivado de status_detail 'accredited'
+  assert.strictEqual(a.canal, 'QR Code');              // derivado de operation_type 'regular_payment'
+  assert.strictEqual(a.tipo, 'Approved payment');
+  assert.strictEqual(a.hora, '2026-07-27 00:00:00');   // date_created_short: sin hora
+  assert.strictEqual(b.canal, 'Point');                // operation_type 'pos_payment' → Point
+});
+t('el alcance de MP anda igual con el formato nuevo (QR approved entra, Point y rechazada fuera)', () => {
+  const mp = porCodigo('mp');
+  const { operaciones } = parsearCollection(aBuffer([HDR_NUEVO,
+    opN('a', 1000, '2026-07-27', { det: 'accredited', tipo: 'regular_payment' }),
+    opN('b', 2000, '2026-07-27', { det: 'accredited', tipo: 'pos_payment' }),
+    opN('c', 3000, '2026-07-27', { det: 'cc_rejected_high_risk', tipo: 'regular_payment' }),
+  ]));
+  const dentro = operaciones.filter(mp.enAlcance);
+  assert.strictEqual(dentro.length, 1);
+  assert.strictEqual(dentro[0].source_id, 'a');
+});
+t('sin status NI status_detail, error claro (status o status_detail)', () => {
+  const hdr = ['Op (operation_id)', 'Tipo (operation_type)', 'Valor (transaction_amount)',
+    'Fecha (date_created_short)', 'Canal (business_unit)'];
+  assert.throws(() => parsearCollection(aBuffer([hdr, ['x', 'regular_payment', '100', '2026-07-27', 'MP']])),
+    (e) => e instanceof CollectionError && /status/.test(e.message));
 });
 
 console.log('detección y ruteo por plataformas.js');
