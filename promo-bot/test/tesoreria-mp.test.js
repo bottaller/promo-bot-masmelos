@@ -305,6 +305,44 @@ t('también rastrea al revés: asentado que MP no tiene', () => {
   });
   assert.strictEqual(r.soloSistema[0].contrapartidas.length, 1);
 });
+
+console.log('conciliarMP(): transferencias internas a la cuenta (no son cobros)');
+t('un "Trf Talo → MP" (contra TALO, no una venta) queda FUERA: no es diferencia', () => {
+  // Caso real 27/07: entra $20M a la cuenta MP como debe, pero su asiento NO salda una venta
+  // (contrapartida TALO HONRE S.A, no DEUDORES POR VENTA). Es una transferencia de tesorería, no un
+  // cobro por QR → fuera del arqueo, en vez de figurar como falso "asentado sin MP" por $20M.
+  const transfer = [
+    { asiento: 8307530, cuenta_id: 42210108, cuenta: 'TALO HONRE S.A', concepto: 'Trf Talo - MP 27/7/2026',
+      comprobante: '', cliente: '', usuario: 'PABLO G', ingreso: '2026-07-27 13:02:00', debe: 0, haber: 20000000 },
+  ];
+  const r = conciliarMP({
+    movimientos: [M(20000000, '2026-07-27 13:02:00', { asiento: 8307530 })],
+    operaciones: [], otrasCuentas: transfer,
+  });
+  assert.strictEqual(r.soloSistema.length, 0, 'no es huérfana del sistema');
+  assert.strictEqual(r.resumen.totalSistema, 0, 'no suma al total sistema (no es cobro)');
+  assert.strictEqual(r.resumen.diferencia, 0);
+  assert.strictEqual(r.fuera.sistema.length, 1);
+  assert.match(r.fuera.sistema[0].motivo, /Transferencia interna → TALO HONRE S\.A/);
+});
+t('un cobro real (asiento que SÍ toca DEUDORES POR VENTA) sigue contando como cobranza', () => {
+  const ventaAsiento = [
+    { asiento: 8307442, cuenta_id: 112011001, cuenta: 'DEUDORES POR VENTA', concepto: 'Ventas a clientes',
+      comprobante: '', cliente: '', usuario: 'XIMENA', ingreso: '2026-07-27 11:59:00', debe: 0, haber: 217847 },
+  ];
+  const r = conciliarMP({
+    movimientos: [M(217847, '2026-07-27 11:59:00', { asiento: 8307442 })],
+    operaciones: [], otrasCuentas: ventaAsiento,
+  });
+  assert.strictEqual(r.soloSistema.length, 1, 'es un cobro real: cuenta como asentado sin MP');
+  assert.strictEqual(r.resumen.totalSistema, 217847);
+});
+t('sin el Diario (solo el Mayor), un debe sigue siendo cobro aunque no se vea la contrapartida', () => {
+  // Sin otrasCuentas no hay cómo distinguir transferencia de cobro: se cae al criterio de siempre.
+  const r = conciliarMP({ movimientos: [M(20000000, '2026-07-27 13:02:00', { asiento: 8307530 })], operaciones: [] });
+  assert.strictEqual(r.soloSistema.length, 1);
+  assert.strictEqual(r.resumen.totalSistema, 20000000);
+});
 t('el mensaje muestra dónde apareció el importe', () => {
   const r = conciliarMP({
     movimientos: [], operaciones: [O(152577.45, '2026-07-11 14:15:12', { instrumento: 'Bank transfer' })],

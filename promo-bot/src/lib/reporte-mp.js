@@ -218,6 +218,16 @@ function lineasPlataforma({ fecha, cuenta, resultado, origen = 'mayor', platafor
     for (const g of grupos) L.push(`• ${escapeHtml(g.motivo)}: ${g.n} · ${fmt(g.total)}`);
   }
 
+  // Transferencias que ENTRARON a la cuenta pero no son cobros (ej. "Trf Talo → MP"): se muestran
+  // aparte, con su contrapartida, para dejar claro que NO cuentan como diferencia — si no, un
+  // movimiento de tesorería grande parece un descuadre enorme.
+  const transf = agruparPorMotivo(fuera.sistema.filter((m) => m.debe > 0), (m) => m.debe);
+  if (transf.length) {
+    L.push('');
+    L.push('<b>Entró a la cuenta pero no es cobro</b> <i>(no cuenta como diferencia)</i>');
+    for (const g of transf) L.push(`• ${escapeHtml(g.motivo)}: ${g.n} · ${fmt(g.total)}`);
+  }
+
   return L;
 }
 

@@ -27,6 +27,12 @@ const CUENTA_MP = 422101014;
 const CANAL_QR = 'QR Code';
 const TIPO_COBRO = 'Approved payment';
 
+// Un cobro por QR salda la deuda del cliente: su asiento SIEMPRE toca DEUDORES POR VENTA. Un debe
+// en la cuenta de la plataforma cuyo asiento NO toca una venta es otra cosa —una transferencia
+// entre cuentas de tesorería— y no es un cobro. Sirve para dejar esas transferencias fuera del
+// arqueo cuando se manda el Diario entero (ver conciliarMP).
+const CUENTA_VENTA = /DEUDORES POR VENTA/i;
+
 // Tolerancia de importe para dar dos renglones por apareados. Sigma redondea distinto que MP
 // en algunos asientos: el 16/07 pasó en 3 de 108, siempre por ≤ 4 centavos. Por encima de
 // esto NO es redondeo y no se aparean en la primera pasada.
@@ -202,7 +208,21 @@ const REGLAS_MP = {
 function conciliarMP({ movimientos = [], operaciones = [], otrasCuentas = [], plataforma = null }) {
   const P = plataforma || REGLAS_MP;
   const deltaSospechoso = P.deltaSospechosoSeg || DELTA_SOSPECHOSO_SEG;
-  const sistema = repartir(movimientos, (m) => m.debe > 0, motivoFueraSistema);
+  // Una transferencia INTERNA (plata que entra a la cuenta de la plataforma pero NO por una venta:
+  // ej. el "Trf Talo → MP" del 27/07 por $20M) no es un cobro. Si se manda el Diario entero se la
+  // reconoce —su asiento está en el resto del libro y NO toca DEUDORES POR VENTA— y se deja FUERA
+  // del arqueo; si no, saldría como falso "asentado sin MP" e inflaría la diferencia con plata que
+  // ni siquiera entró como cobro. Con el Mayor de una sola cuenta no hay cómo saberlo → se deja como
+  // cobro (comportamiento de siempre: sin otrasCuentas, asientosEnDiario está vacío).
+  const asientosEnDiario = new Set(otrasCuentas.map((r) => r.asiento));
+  const asientosDeVenta = new Set(otrasCuentas.filter((r) => CUENTA_VENTA.test(String(r.cuenta || ''))).map((r) => r.asiento));
+  const esTransferencia = (m) => m.debe > 0 && asientosEnDiario.has(m.asiento) && !asientosDeVenta.has(m.asiento);
+  const motivoSistema = (m) => {
+    if (!esTransferencia(m)) return motivoFueraSistema(m);
+    const contra = [...new Set(otrasCuentas.filter((r) => r.asiento === m.asiento).map((r) => r.cuenta).filter(Boolean))];
+    return `Transferencia interna${contra.length ? ` → ${contra.join(', ')}` : ''}`;
+  };
+  const sistema = repartir(movimientos, (m) => m.debe > 0 && !esTransferencia(m), motivoSistema);
   const mp = repartir(operaciones, P.enAlcance, P.motivoFuera);
 
   // Liquidaciones SIN HORA. El reporte "collection" de MP (jul-2026) solo trae la FECHA, así que

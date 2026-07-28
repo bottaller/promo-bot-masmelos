@@ -200,6 +200,26 @@ function construirInformePDF({ fecha, resultados, cuenta, resultado, generadoEn,
       filaLV(doc, `Total ${nombre}`, fmt(r.totalMp), { x, ancho });
       filaLV(doc, 'Diferencia', fmtC(r.diferencia), { x, ancho, negrita: true, color: Math.abs(r.diferencia) > 0.05 ? ROJO : TINTA });
 
+      // Transferencias que ENTRARON a la cuenta pero no son cobros (ej. "Trf Talo → MP"): se muestran
+      // con su contrapartida para que quede claro que NO están en la diferencia — si no, un movimiento
+      // de tesorería grande parece un descuadre que se esfumó del control.
+      const transf = item.resultado.fuera.sistema.filter((m) => m.debe > 0);
+      if (transf.length) {
+        const totalT = transf.reduce((a, m) => a + m.debe, 0);
+        doc.moveDown(0.3);
+        doc.font('Helvetica-Bold').fontSize(9.5).fillColor(TINTA)
+          .text(`Entró a la cuenta pero no es cobro — ${transf.length} · ${fmt(totalT)} `
+            + '(transferencias, no cuentan como diferencia)', x, doc.y, { width: ancho });
+        doc.moveDown(0.2);
+        for (const m of transf) {
+          // Helvetica (WinAnsi) no tiene glifo para "→": se cambia por "->", como el rastreo.
+          const motivo = (m.motivo || 'transferencia').replace(/→/g, '->');
+          doc.font('Helvetica').fontSize(9.5).fillColor(TINTA)
+            .text(`${hora(m.ingreso)} · ${fmt(m.debe)} · ${motivo}${m.usuario ? ' · ' + m.usuario : ''}`, x, doc.y, { width: ancho });
+          doc.moveDown(0.2);
+        }
+      }
+
       if (!vp.ok) {
         const MAX = 22;
         doc.moveDown(0.3);
