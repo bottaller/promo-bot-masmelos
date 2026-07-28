@@ -205,15 +205,27 @@ function conciliarMP({ movimientos = [], operaciones = [], otrasCuentas = [], pl
   const sistema = repartir(movimientos, (m) => m.debe > 0, motivoFueraSistema);
   const mp = repartir(operaciones, P.enAlcance, P.motivoFuera);
 
+  // Liquidaciones SIN HORA. El reporte "collection" de MP (jul-2026) solo trae la FECHA, así que
+  // todas las operaciones quedan a las 00:00:00. Con la hora en cero, aparear por cercanía horaria
+  // es un sinsentido: la ventana de 12 h rechaza cualquier venta de después del mediodía y estalla
+  // en falsos "sin aparear". Datos reales del 27/07: 15 de 45 apareadas con la ventana, 44 de 45
+  // apareando solo por importe. Cuando TODAS las operaciones en alcance están a medianoche, se
+  // aparea SOLO por importe (ventana infinita en las dos pasadas) y NO se avisa por hora (no hay
+  // hora que mirar). Con el settlement (que sí trae hora) y con Talo esto no se activa.
+  const sinHora = mp.dentro.length > 0 && mp.dentro.every((o) => String(o.hora || '').slice(11, 19) === '00:00:00');
+  const ventanaRedondeo = sinHora ? Infinity : DELTA_MAXIMO_SEG;
+  const ventanaCentavos = sinHora ? Infinity : DELTA_CENTAVOS_SEG;
+  const sospechoso = sinHora ? Infinity : deltaSospechoso;
+
   // El apareo va en DOS pasadas, y el EXACTO cierra primero para que nada se robe un match
   // seguro. La 2ª rescata la misma venta con centavos distintos que si no quedaba como 🔴 falso.
   const usadosS = new Set();
   const usadosM = new Set();
   const pares = [];
-  emparejar({ sistema: sistema.dentro, mp: mp.dentro, usadosS, usadosM, pares, deltaSospechoso,
-    tolImporte: TOLERANCIA_REDONDEO, deltaMax: DELTA_MAXIMO_SEG, avisoImporte: 'redondeo' });
-  emparejar({ sistema: sistema.dentro, mp: mp.dentro, usadosS, usadosM, pares, deltaSospechoso,
-    tolImporte: TOLERANCIA_CENTAVOS, deltaMax: DELTA_CENTAVOS_SEG, avisoImporte: 'centavos' });
+  emparejar({ sistema: sistema.dentro, mp: mp.dentro, usadosS, usadosM, pares, deltaSospechoso: sospechoso,
+    tolImporte: TOLERANCIA_REDONDEO, deltaMax: ventanaRedondeo, avisoImporte: 'redondeo' });
+  emparejar({ sistema: sistema.dentro, mp: mp.dentro, usadosS, usadosM, pares, deltaSospechoso: sospechoso,
+    tolImporte: TOLERANCIA_CENTAVOS, deltaMax: ventanaCentavos, avisoImporte: 'centavos' });
   pares.sort((a, b) => (a.op.hora < b.op.hora ? -1 : a.op.hora > b.op.hora ? 1 : 0));
 
   // Las huérfanas se enriquecen con el rastreo: dónde más aparece ese importe en el libro.

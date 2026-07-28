@@ -144,6 +144,31 @@ t('fuera de la ventana de 12 h: no aparea (no cruza días)', () => {
   assert.strictEqual(r.soloSistema.length, 1);
   assert.strictEqual(r.soloMp.length, 1);
 });
+t('liquidación SIN HORA (collection, todo a las 00:00): aparea por importe, no por ventana horaria', () => {
+  // El reporte "collection" de MP (jul-2026) no trae hora: todas las operaciones quedan a las
+  // 00:00:00. Las ventas de la tarde están a >12 h de medianoche; con la ventana horaria de siempre
+  // saldrían como falsos "sin aparear" (el kilombo real del 27/07: 15 de 45 apareadas). Al detectar
+  // que TODO está a medianoche, se aparea solo por importe. Casos reales del 27/07.
+  const r = conciliarMP({
+    movimientos: [M(81668.76, '2026-07-27 16:30:00'), M(398063.78, '2026-07-27 16:02:00')],
+    operaciones: [O(81668.76, '2026-07-27 00:00:00'), O(398063.78, '2026-07-27 00:00:00')],
+  });
+  assert.strictEqual(r.pares.length, 2);
+  assert.strictEqual(r.soloSistema.length, 0);
+  assert.strictEqual(r.soloMp.length, 0);
+  assert.ok(r.pares.every((p) => !p.avisos.includes('hora')), 'sin hora no se avisa por hora');
+  assert.strictEqual(r.resumen.nivel, 'ok');
+});
+t('SIN HORA no afloja el importe: una diferencia > $1 sigue quedando huérfana', () => {
+  // Ignorar la hora NO es aparear cualquier cosa: el importe manda igual, con las mismas tolerancias.
+  const r = conciliarMP({
+    movimientos: [M(1000.00, '2026-07-27 16:00:00')],
+    operaciones: [O(1050.00, '2026-07-27 00:00:00')], // $50 > tope de centavos
+  });
+  assert.strictEqual(r.pares.length, 0);
+  assert.strictEqual(r.soloSistema.length, 1);
+  assert.strictEqual(r.soloMp.length, 1);
+});
 t('apareada pero con la hora muy corrida -> aviso', () => {
   const r = conciliarMP({
     movimientos: [M(5000, '2026-07-16 12:00:00')],
