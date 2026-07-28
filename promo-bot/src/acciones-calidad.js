@@ -92,7 +92,7 @@ function registrarAccionesCalidad(bot) {
     await ctx.scene.enter('revisar-imagen-wizard');
   });
 
-  // --- /promoprecios: el dueño valida UNA imagen -> se reenvía a Ventas y Depósito ---
+  // --- /promoprecios: el dueño valida UNA imagen -> se reenvía a Ventas, Depósito y Calidad ---
   bot.action(/^promo_img_admin_ok:(\d+)$/, async (ctx) => {
     if (!esDueno(ctx.from.id)) {
       await ctx.answerCbQuery('Esto es solo para el dueño del bot.', { show_alert: true });
@@ -104,7 +104,7 @@ function registrarAccionesCalidad(bot) {
     try { await ctx.editMessageReplyMarkup(); } catch (e) { /* mensaje viejo */ }
 
     let enviados = 0;
-    for (const rol of ['ventas', 'deposito']) {
+    for (const rol of ['ventas', 'deposito', 'calidad']) {
       for (const tid of await telegramIdsPorRol(rol)) {
         try {
           await bot.telegram.sendPhoto(tid, imagen.file_id);
@@ -112,7 +112,7 @@ function registrarAccionesCalidad(bot) {
         } catch (e) { console.error(`No pude mandarle la imagen a ${tid}:`, e.message); }
       }
     }
-    await ctx.reply(`Validado. Imagen #${imagen.orden} reenviada a Ventas y Depósito (${enviados} persona(s)).`);
+    await ctx.reply(`Validado. Imagen #${imagen.orden} reenviada a Ventas, Depósito y Calidad (${enviados} persona(s)).`);
 
     // Si esta era la última imagen que faltaba validar, avisarle a Marketing que imprima todo.
     // Guarda atómica (marcarAvisoImpresionEnviado) para no duplicar el aviso si dos validaciones

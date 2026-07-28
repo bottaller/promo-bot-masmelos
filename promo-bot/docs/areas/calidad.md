@@ -21,7 +21,7 @@ tiran, para la próxima comprar menos o pedir descuento al proveedor.
 | `/baja` | Cierra una camada abierta: cuántas se vendieron y qué pasó con el remanente (descartado/vencido o devuelto a góndola normal). |
 | `/control` | Excel de **todo lo que está en oferta ahora**, ordenado por fecha de vencimiento (incluye columnas de % de descuento y precio promocional). Lleva la fecha de generación (ver [convenciones.md](../convenciones.md)). |
 | `/ajuste` | Sube un archivo de ajustes que le llega **solo al dueño del bot** (no a "los admins" — ver más abajo). El dueño lo revisa afuera del bot y toca "✅ Ajuste realizado" cuando lo hizo; ahí se le avisa a quien lo subió. |
-| `/promoprecios` | Sube el archivo final de promociones y precios. Arranca una cadena: dueño valida → Compras (rol `compras_promo`) y Marketing → Marketing entrega imágenes (`/imagenes`, área Marketing) → **cada imagen se valida por separado** (Compras, con opción de pedir "revisar" sin frenar las demás) → dueño valida cada una → se reenvían a Ventas y Depósito. Ver "El ciclo de `/promoprecios`" más abajo. |
+| `/promoprecios` | Sube el archivo final de promociones y precios. Arranca una cadena: dueño valida → Compras (rol `compras_promo`) y Marketing → Marketing entrega imágenes (`/imagenes`, área Marketing) → **cada imagen se valida por separado** (Compras, con opción de pedir "revisar" sin frenar las demás) → dueño valida cada una → se reenvían a Ventas, Depósito y Calidad. Ver "El ciclo de `/promoprecios`" más abajo. |
 
 ## Modelo de datos
 
@@ -98,8 +98,9 @@ al subirlo — sin necesidad de join contra `bot.usuarios`).
    toque, con su propio botón. Si toca "🔁 Revisar", el bot le pregunta qué hay que corregir
    (`revisar-imagen-wizard`) y ese comentario se le manda a Marketing junto con la imagen — **las
    demás imágenes siguen su curso, esta no frena nada.**
-6. Vos validás cada imagen que te llega, una por una → se reenvía automáticamente a **Ventas** y
-   **Depósito** (roles `ventas` y `deposito`, sin botón — ahí termina el camino de esa imagen).
+6. Vos validás cada imagen que te llega, una por una → se reenvía automáticamente a **Ventas**,
+   **Depósito** y **Calidad** (roles `ventas`, `deposito` y `calidad` — este último para que José
+   se entere, sin botón — ahí termina el camino de esa imagen).
 7. Cuando Marketing manda la corrección de una imagen marcada "revisar", esa imagen puntual vuelve
    a "pendiente" y pasa por Compras de nuevo (paso 5) — no salta directo a vos.
 8. **Cuando validás la última imagen que faltaba** (migración 026: `todasLasImagenesEnviadas` +
