@@ -57,7 +57,12 @@ function interpretarFecha(v) {
     if (!d) return null;
     return `${d.y}-${_p2(d.m)}-${_p2(d.d)} ${_p2(d.H || 0)}:${_p2(d.M || 0)}:${_p2(Math.round(d.S || 0))}`;
   }
-  const m = norm(v).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  const s = norm(v);
+  // ISO 'AAAA-MM-DD' (con hora opcional) — el date_created_short del formato nuevo. Sin hora
+  // queda a las 00:00:00 (el "short" no la trae).
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]} ${_p2(iso[4] || 0)}:${_p2(iso[5] || '00')}:${_p2(iso[6] || '00')}`;
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   if (!m) return null;
   return `${m[3]}-${_p2(m[2])}-${_p2(m[1])} ${_p2(m[4])}:${_p2(m[5])}:${_p2(m[6] || '00')}`;
 }
@@ -96,12 +101,22 @@ function parsearCollection(buffer) {
   }
   const H = filas[hi];
   const ix = {};
-  for (const k of ['operation_id', 'status', 'operation_type', 'transaction_amount', 'mercadopago_fee',
-    'net_received_amount', 'date_created', 'sub_unit', 'business_unit', 'payment_type']) {
+  for (const k of ['operation_id', 'status', 'status_detail', 'operation_type', 'transaction_amount',
+    'mercadopago_fee', 'net_received_amount', 'date_created', 'date_created_short', 'sub_unit',
+    'business_unit', 'payment_type']) {
     ix[k] = colClave(H, k);
   }
-  const req = ['operation_id', 'status', 'transaction_amount', 'date_created', 'sub_unit'];
-  const faltan = req.filter((k) => ix[k] < 0);
+  // Requeridas, con las ALTERNATIVAS del formato nuevo de MP (jul-2026: sacó status, sub_unit y
+  // date_created, dejando los equivalentes). Verificado contra exports con ambas columnas:
+  //   status       ← status_detail       ('accredited' = acreditado/approved)
+  //   date_created ← date_created_short   (fecha sin hora)
+  //   sub_unit     ← operation_type       (regular_payment=QR, pos_payment=Point; cruce 100%)
+  const faltan = [];
+  if (ix.operation_id < 0) faltan.push('operation_id');
+  if (ix.transaction_amount < 0) faltan.push('transaction_amount');
+  if (ix.status < 0 && ix.status_detail < 0) faltan.push('status (o status_detail)');
+  if (ix.date_created < 0 && ix.date_created_short < 0) faltan.push('date_created (o date_created_short)');
+  if (ix.sub_unit < 0 && ix.operation_type < 0) faltan.push('sub_unit (o operation_type)');
   if (faltan.length) {
     throw new CollectionError(`Al reporte de cobros le faltan columnas que necesito (${faltan.join(', ')}). ¿Cambió el formato de MP?`);
   }
@@ -117,13 +132,30 @@ function parsearCollection(buffer) {
     if (bruto === null) {
       throw new CollectionError(`La operación ${opId} tiene un importe ilegible en (transaction_amount) (${JSON.stringify(r[ix.transaction_amount])}). ¿Cambió el formato de MP?`);
     }
-    const hora = interpretarFecha(r[ix.date_created]);
+    // Fecha: date_created (con hora) o, en el formato nuevo, date_created_short (solo fecha).
+    const fechaRaw = ix.date_created >= 0 ? r[ix.date_created] : r[ix.date_created_short];
+    const hora = interpretarFecha(fechaRaw);
     if (!hora) {
-      throw new CollectionError(`La operación ${opId} tiene una fecha ilegible en (date_created) (${JSON.stringify(r[ix.date_created])}). ¿Cambió el formato de MP?`);
+      throw new CollectionError(`La operación ${opId} tiene una fecha ilegible (${JSON.stringify(fechaRaw)}). ¿Cambió el formato de MP?`);
     }
-    const estado = norm(r[ix.status]).toLowerCase();
     const opTipo = ix.operation_type >= 0 ? norm(r[ix.operation_type]).toLowerCase() : '';
-    const subUnit = norm(r[ix.sub_unit]);
+    // Estado: la columna status, o derivado del status_detail nuevo ('accredited' = acreditado).
+    let estado;
+    if (ix.status >= 0) {
+      estado = norm(r[ix.status]).toLowerCase();
+    } else {
+      const det = norm(r[ix.status_detail]).toLowerCase();
+      estado = det === 'accredited' ? 'approved' : (det || 'rejected');
+    }
+    // Canal: sub_unit, o derivado del operation_type. Verificado 100% contra exports con ambas:
+    // regular_payment ⟺ QR (cuenta MP), pos_payment ⟺ Point (tarjetas).
+    let canal;
+    if (ix.sub_unit >= 0) {
+      const subUnit = norm(r[ix.sub_unit]);
+      canal = subUnit === 'QR' ? 'QR Code' : subUnit;
+    } else {
+      canal = opTipo === 'pos_payment' ? 'Point' : 'QR Code';
+    }
     const comision = ix.mercadopago_fee >= 0 ? (parseMonto(r[ix.mercadopago_fee]) || 0) : 0;
     const neto = ix.net_received_amount >= 0 ? (parseMonto(r[ix.net_received_amount])) : null;
 
@@ -137,7 +169,7 @@ function parsearCollection(buffer) {
       // es un tipo de cobro. Una devolución/chargeback aprobada NO es un cobro; queda con su tipo y
       // el alcance la excluye. Sin operation_type en el reporte, cae al comportamiento por status.
       tipo: estado === 'approved' && (!opTipo || TIPOS_COBRO.has(opTipo)) ? 'Approved payment' : (opTipo || estado),
-      canal: subUnit === 'QR' ? 'QR Code' : subUnit,             // 'QR Code' | 'Point' | …
+      canal,                                                     // 'QR Code' | 'Point' | …
       unidad: ix.business_unit >= 0 ? norm(r[ix.business_unit]) : '',
       hora,
       bruto,
