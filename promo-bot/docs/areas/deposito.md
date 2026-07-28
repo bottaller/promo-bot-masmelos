@@ -18,7 +18,7 @@ falta), que se le avisa a Marketing.
 | Comando | Qué hace |
 |---------|----------|
 | `/informe` | Pregunta el destino (Calidad o Compras), el proveedor o producto (texto libre, **no** se valida contra el maestro de artículos) y el contenido del informe. Guarda todo en `bot.deposito_informes` y avisa por Telegram a todos los que tengan el rol elegido. |
-| `/carteleria` | Pide una foto (producto + precio juntos) y el tipo de gráfica: **A4**, **A4 Color**, **Cartel simple** o **Gráfica cigüeña**. Guarda el pedido y avisa a Marketing — ver detalle abajo. |
+| `/carteleria` | Pide una foto (producto + precio juntos) y el tipo de gráfica: **A4**, **A4 Color**, **Cartel simple** o **Gráfica cigüeña**. Para A4 / A4 Color pregunta además la cantidad de copias. Guarda el pedido y avisa a Marketing — ver detalle abajo. |
 
 ## Modelo de datos
 
@@ -29,18 +29,21 @@ falta), que se le avisa a Marketing.
 - `mensaje` — el contenido del informe.
 - `usuario_id` / `usuario_nombre` — quién lo cargó.
 
-`bot.carteleria` (migración 028):
+`bot.carteleria` (migración 028; `cantidad_copias` sumada en la migración 030):
 
 - `foto_file_id` — la foto del producto con el precio (se reenvía por `file_id`, no se descarga).
 - `tipo` — `'a4'` | `'a4_color'` | `'cartel_simple'` | `'ciguena'`.
+- `cantidad_copias` — solo para A4 / A4 Color; cuántas copias hay que imprimir. `null` para Cartel
+  simple / Gráfica cigüeña (esos no se imprimen acá).
 - `usuario_id` / `usuario_nombre` / `usuario_telegram_id` — quién lo pidió.
 
 ## `/carteleria`: qué le llega a Marketing
 
 Según el tipo elegido, el aviso a Marketing (`telegramIdsPorRol('marketing')`) es distinto:
 
-- **A4 / A4 Color** (se hacen adentro): la foto con el pie "🖨️ Imprimir A4" o "🖨️ Imprimir A4
-  Color". Sin botón — no hace falta nada más.
+- **A4 / A4 Color** (se hacen adentro): antes de guardar el pedido se le pregunta a Depósito la
+  cantidad de copias. El aviso a Marketing es la foto con el pie "🖨️ Imprimir A4 — 3 copias." (o
+  "A4 Color"). Sin botón — no hace falta nada más.
 - **Cartel simple / Gráfica cigüeña** (van a la gráfica externa): la foto con el pie
   correspondiente + dos botones: **"📲 Pedir por WhatsApp"** (abre un chat de WhatsApp con el
   número de la gráfica, `GRAFICA_WHATSAPP_NUMBER` en `.env`, y el mensaje ya escrito — "Buenos

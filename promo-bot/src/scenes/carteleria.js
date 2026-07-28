@@ -21,13 +21,14 @@ function linkWhatsApp(texto) {
   return `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`;
 }
 
-async function avisarAMarketing(telegram, { id, fotoFileId, tipo }) {
+async function avisarAMarketing(telegram, { id, fotoFileId, tipo, cantidadCopias }) {
   const { label, interno } = TIPOS[tipo];
   let avisados = 0;
   for (const tid of await telegramIdsPorRol('marketing')) {
     try {
       if (interno) {
-        await telegram.sendPhoto(tid, fotoFileId, { caption: `🖨️ Imprimir ${label}.` });
+        const copias = cantidadCopias === 1 ? '1 copia' : `${cantidadCopias} copias`;
+        await telegram.sendPhoto(tid, fotoFileId, { caption: `🖨️ Imprimir ${label} — ${copias}.` });
       } else {
         const texto = `Buenos días, solicito ${label} a continuación les adjunto el diseño`;
         await telegram.sendPhoto(tid, fotoFileId, {
@@ -74,25 +75,47 @@ const carteleriaWizard = new Scenes.WizardScene(
     );
     return ctx.wizard.next();
   },
-  // 2: procesar el tipo -> guardar y avisar a Marketing
+  // 2: procesar el tipo -> si es interno (A4/A4 Color) preguntar cantidad de copias, si no guardar directo
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
     if (!r || !TIPOS[r]) { await ctx.reply('Elegí una de las opciones.'); return; }
 
-    const u = ctx.state.usuario;
-    const id = await crearCarteleria({
-      fotoFileId: ctx.wizard.state.fotoFileId,
-      tipo: r,
-      usuarioId: u ? u.id : null,
-      usuarioNombre: u ? u.nombre : (ctx.from.username || ctx.from.first_name || null),
-      usuarioTelegramId: ctx.from.id,
-    });
+    ctx.wizard.state.tipo = r;
+    if (TIPOS[r].interno) {
+      await ctx.reply('¿Cuántas copias necesitás?');
+      return ctx.wizard.next();
+    }
 
-    const avisados = await avisarAMarketing(ctx.telegram, { id, fotoFileId: ctx.wizard.state.fotoFileId, tipo: r });
-    await ctx.reply(`Listo, le avisé a Marketing (${avisados} persona(s)).`);
-    return ctx.scene.leave();
+    return guardarYAvisar(ctx, r);
+  },
+  // 3: (solo A4/A4 Color) recibir la cantidad de copias -> guardar y avisar a Marketing
+  async (ctx) => {
+    const texto = ctx.message && ctx.message.text;
+    if (esCancelar(texto)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
+    const cantidad = Number(texto);
+    if (!texto || !Number.isInteger(cantidad) || cantidad < 1) {
+      await ctx.reply('Mandame un número entero mayor a 0 (o "cancelar").');
+      return;
+    }
+    return guardarYAvisar(ctx, ctx.wizard.state.tipo, cantidad);
   }
 );
+
+async function guardarYAvisar(ctx, tipo, cantidadCopias) {
+  const u = ctx.state.usuario;
+  const id = await crearCarteleria({
+    fotoFileId: ctx.wizard.state.fotoFileId,
+    tipo,
+    cantidadCopias,
+    usuarioId: u ? u.id : null,
+    usuarioNombre: u ? u.nombre : (ctx.from.username || ctx.from.first_name || null),
+    usuarioTelegramId: ctx.from.id,
+  });
+
+  const avisados = await avisarAMarketing(ctx.telegram, { id, fotoFileId: ctx.wizard.state.fotoFileId, tipo, cantidadCopias });
+  await ctx.reply(`Listo, le avisé a Marketing (${avisados} persona(s)).`);
+  return ctx.scene.leave();
+}
 
 module.exports = carteleriaWizard;
