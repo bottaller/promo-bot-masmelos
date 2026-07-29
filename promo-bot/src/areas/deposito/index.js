@@ -2,6 +2,7 @@
 // (pedido de cartel a Marketing, ver scenes/carteleria.js).
 const informeWizard = require('../../scenes/informe');
 const carteleriaWizard = require('../../scenes/carteleria');
+const corregirCarteleriaWizard = require('../../scenes/corregir-carteleria');
 const { requiereArea } = require('../../middleware/authz');
 
 const CODIGO = 'deposito';
@@ -19,7 +20,7 @@ function registrar(bot) {
 module.exports = {
   codigo: CODIGO,
   nombre: 'Depósito',
-  scenes: [informeWizard, carteleriaWizard],
+  scenes: [informeWizard, carteleriaWizard, corregirCarteleriaWizard],
   comandos,
   registrar,
 };

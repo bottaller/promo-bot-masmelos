@@ -1,50 +1,32 @@
-// Wizard /carteleria (área Depósito): pide una foto del producto con el precio y el tipo de
-// gráfica, y arma el aviso para Marketing.
-//   - A4 / A4 Color: se hacen adentro -> solo un aviso con la foto ("Imprimir A4[/ Color]").
-//   - Cartel simple / Gráfica cigüeña: van a la gráfica externa -> la foto + un botón que abre
-//     WhatsApp con el número de la gráfica y el pedido ya escrito (Marketing solo adjunta la foto
-//     y manda — WhatsApp no permite adjuntar archivos automáticamente desde un link).
+// Wizard /carteleria (área Depósito): pide una foto del producto con el precio, el tipo de
+// gráfica y el tipo de precio, y arma el diseño final automáticamente:
+//   1. Lee producto y precio de la foto con IA (visión, solo lectura — nunca dibuja nada).
+//   2. Compone el cartel por código (sharp) sobre la plantilla que corresponda.
+//   3. Le manda a MARKETING la foto original + el diseño generado, para que lo verifique
+//      contra la foto antes de imprimir o pedirlo a la gráfica (ver acciones-deposito.js).
+// Si la IA falla o no está configurada, cae al flujo viejo: foto cruda directo a Marketing,
+// sin diseño ni verificación (degradación explícita, nunca deja el wizard colgado).
 const { Scenes } = require('telegraf');
-const { crearCarteleria } = require('../db/carteleria');
-const { telegramIdsPorRol } = require('../db/usuarios');
-const { esCancelar, opciones, preguntar, respuesta } = require('../lib/wizard');
+const { crearCarteleria, carteleriaPorId, guardarDiseno } = require('../db/carteleria');
+const { esCancelar, opciones, preguntar, respuesta, texto } = require('../lib/wizard');
+const { TIPOS, avisarAMarketingFinal, avisarVerificacionMarketing } = require('../lib/carteleria-mensajes');
+const { tiposPrecioValidos, LABELS_TIPO_PRECIO } = require('../lib/carteleria-plantillas');
+const { extraerProductoPrecio, descargarImagenTelegram } = require('../lib/carteleria-vision');
+const { generarCartel } = require('../lib/carteleria-render');
 
-const TIPOS = {
-  a4: { label: 'A4', interno: true },
-  a4_color: { label: 'A4 Color', interno: true },
-  cartel_simple: { label: 'Cartel simple', interno: false },
-  ciguena: { label: 'Gráfica cigüeña', interno: false },
-};
-
-function linkWhatsApp(texto) {
-  const numero = (process.env.GRAFICA_WHATSAPP_NUMBER || '').replace(/\D/g, '');
-  return `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`;
-}
-
-async function avisarAMarketing(telegram, { id, fotoFileId, tipo, cantidadCopias }) {
-  const { label, interno } = TIPOS[tipo];
-  let avisados = 0;
-  for (const tid of await telegramIdsPorRol('marketing')) {
-    try {
-      if (interno) {
-        const copias = cantidadCopias === 1 ? '1 copia' : `${cantidadCopias} copias`;
-        await telegram.sendPhoto(tid, fotoFileId, { caption: `🖨️ Imprimir ${label} — ${copias}.` });
-      } else {
-        const texto = `Buenos días, solicito ${label} a continuación les adjunto el diseño`;
-        await telegram.sendPhoto(tid, fotoFileId, {
-          caption: `🖼️ ${label} — pedido para la gráfica.`,
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '📲 Pedir por WhatsApp', url: linkWhatsApp(texto) }],
-              [{ text: '✅ Ya pedí los carteles', callback_data: `carteleria_pedido:${id}` }],
-            ],
-          },
-        });
-      }
-      avisados++;
-    } catch (e) { console.error('No pude avisarle a marketing (cartelería):', e.message); }
-  }
-  return avisados;
+// "7/8/26", "07-08-2026", etc. -> 'YYYY-MM-DD' (o null si no es una fecha válida).
+function parseFecha(valor) {
+  const m = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2}|\d{4})$/.exec((valor || '').trim());
+  if (!m) return null;
+  let d = Number(m[1]);
+  let mo = Number(m[2]);
+  let y = Number(m[3]);
+  if (y < 100) y += 2000;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const fecha = new Date(Date.UTC(y, mo - 1, d));
+  if (fecha.getUTCFullYear() !== y || fecha.getUTCMonth() !== mo - 1 || fecha.getUTCDate() !== d) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${y}-${pad(mo)}-${pad(d)}`;
 }
 
 const carteleriaWizard = new Scenes.WizardScene(
@@ -75,47 +57,106 @@ const carteleriaWizard = new Scenes.WizardScene(
     );
     return ctx.wizard.next();
   },
-  // 2: procesar el tipo -> si es interno (A4/A4 Color) preguntar cantidad de copias, si no guardar directo
+  // 2: recibir el tipo de gráfica -> preguntar el tipo de precio (según corresponda)
   async (ctx) => {
     const r = await respuesta(ctx);
     if (esCancelar(r)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
     if (!r || !TIPOS[r]) { await ctx.reply('Elegí una de las opciones.'); return; }
 
     ctx.wizard.state.tipo = r;
-    if (TIPOS[r].interno) {
-      await ctx.reply('¿Cuántas copias necesitás?');
+    const opcionesPrecio = tiposPrecioValidos(r).map((t) => [LABELS_TIPO_PRECIO[t], t]);
+    await preguntar(ctx, '¿Qué tipo de precio es?', opciones(opcionesPrecio));
+    return ctx.wizard.next();
+  },
+  // 3: recibir el tipo de precio -> vencimiento (si aplica), cantidad de copias (si es interno), o terminar
+  async (ctx) => {
+    const r = await respuesta(ctx);
+    if (esCancelar(r)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
+    const tipo = ctx.wizard.state.tipo;
+    if (!r || !tiposPrecioValidos(tipo).includes(r)) { await ctx.reply('Elegí una de las opciones.'); return; }
+
+    ctx.wizard.state.tipoPrecio = r;
+    if (r === 'corto_vencimiento') {
+      await ctx.reply('¿Cuál es la fecha de vencimiento? (formato D/M/AAAA, ej: 7/8/2026)');
       return ctx.wizard.next();
     }
-
-    return guardarYAvisar(ctx, r);
+    if (TIPOS[tipo].interno) {
+      await ctx.reply('¿Cuántas copias necesitás?');
+      ctx.wizard.selectStep(5);
+      return;
+    }
+    return procesarYFinalizar(ctx);
   },
-  // 3: (solo A4/A4 Color) recibir la cantidad de copias -> guardar y avisar a Marketing
+  // 4: (solo corto vencimiento) recibir la fecha -> siempre es A4/A4 Color, así que pide copias
   async (ctx) => {
-    const texto = ctx.message && ctx.message.text;
-    if (esCancelar(texto)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
-    const cantidad = Number(texto);
-    if (!texto || !Number.isInteger(cantidad) || cantidad < 1) {
+    const t = texto(ctx);
+    if (esCancelar(t)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
+    const fecha = parseFecha(t);
+    if (!fecha) { await ctx.reply('Mandame la fecha en formato D/M/AAAA (ej: 7/8/2026), o "cancelar".'); return; }
+    ctx.wizard.state.vencimiento = fecha;
+    await ctx.reply('¿Cuántas copias necesitás?');
+    return ctx.wizard.next();
+  },
+  // 5: recibir la cantidad de copias -> generar el diseño y avisar a Marketing
+  async (ctx) => {
+    const t = texto(ctx);
+    if (esCancelar(t)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
+    const cantidad = Number(t);
+    if (!t || !Number.isInteger(cantidad) || cantidad < 1) {
       await ctx.reply('Mandame un número entero mayor a 0 (o "cancelar").');
       return;
     }
-    return guardarYAvisar(ctx, ctx.wizard.state.tipo, cantidad);
+    ctx.wizard.state.cantidadCopias = cantidad;
+    return procesarYFinalizar(ctx);
   }
 );
 
-async function guardarYAvisar(ctx, tipo, cantidadCopias) {
+async function procesarYFinalizar(ctx) {
   const u = ctx.state.usuario;
+  const { fotoFileId, tipo, tipoPrecio, cantidadCopias, vencimiento } = ctx.wizard.state;
+
   const id = await crearCarteleria({
-    fotoFileId: ctx.wizard.state.fotoFileId,
-    tipo,
-    cantidadCopias,
+    fotoFileId, tipo, tipoPrecio, cantidadCopias, vencimiento,
     usuarioId: u ? u.id : null,
     usuarioNombre: u ? u.nombre : (ctx.from.username || ctx.from.first_name || null),
     usuarioTelegramId: ctx.from.id,
   });
 
-  const avisados = await avisarAMarketing(ctx.telegram, { id, fotoFileId: ctx.wizard.state.fotoFileId, tipo, cantidadCopias });
-  await ctx.reply(`Listo, le avisé a Marketing (${avisados} persona(s)).`);
+  await ctx.reply('Dame un momento, estoy generando el diseño...');
+
+  const disenoOk = await intentarGenerarDiseno(ctx, { id, fotoFileId, tipo, tipoPrecio, cantidadCopias, vencimiento });
+  if (!disenoOk) {
+    const avisados = await avisarAMarketingFinal(ctx.telegram, { id, fileIdParaEnviar: fotoFileId, tipo, cantidadCopias });
+    await ctx.reply(`No pude generar el diseño automático, le mandé la foto directamente a Marketing (${avisados} persona(s)).`);
+    return ctx.scene.leave();
+  }
+
+  await ctx.reply('Listo, le mandé el diseño a Marketing para que lo verifique.');
   return ctx.scene.leave();
+}
+
+// Devuelve true si pudo generar el diseño y avisarle a Marketing con la verificación;
+// false si hay que caer al flujo viejo (cualquier falla se atrapa acá, nunca se propaga).
+async function intentarGenerarDiseno(ctx, { id, fotoFileId, tipo, tipoPrecio, cantidadCopias, vencimiento }) {
+  try {
+    const imagenBuffer = await descargarImagenTelegram(ctx.telegram, fotoFileId);
+    const datos = await extraerProductoPrecio(imagenBuffer);
+    if (!datos) return false;
+
+    const disenoBuffer = await generarCartel({
+      tipoGrafica: tipo, tipoPrecio, producto: datos.producto, precio: datos.precio, vencimiento,
+      imagenProductoBuffer: null, // catálogo de imágenes de producto: mejora futura
+    });
+
+    await guardarDiseno(id, { producto: datos.producto, precio: datos.precio, disenoFileId: null });
+    const carteleria = await carteleriaPorId(id);
+    const { avisados, disenoFileId } = await avisarVerificacionMarketing(ctx.telegram, { carteleria, disenoBuffer });
+    if (disenoFileId) await guardarDiseno(id, { producto: datos.producto, precio: datos.precio, disenoFileId });
+    return avisados > 0;
+  } catch (e) {
+    console.error('No pude generar el diseño de cartelería:', e.message);
+    return false;
+  }
 }
 
 module.exports = carteleriaWizard;
