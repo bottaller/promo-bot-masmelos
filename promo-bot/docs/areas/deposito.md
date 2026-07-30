@@ -76,7 +76,12 @@ pedirlo a la gráfica.
      `a4_corto_vencimiento.jpg` (línea-puntero a la fecha de vencimiento + hueco para foto de
      producto), `a4_nuevo_ingreso.jpg` (banner "¡Nuevo ingreso!" fijo, **sin campo de precio** — el
      hueco de foto se llena con la propia foto que subió Depósito, no con un catálogo aparte).
-     Nombre del producto en caja oscura → texto blanco.
+     Nombre del producto en caja oscura → texto blanco. Para `nuevo_ingreso`, antes de componer la
+     foto se le saca el fondo (`src/lib/carteleria-fondo.js`, `@imgly/background-removal-node` —
+     corre local con un modelo ONNX, sin API externa ni Python) para que en el cartel se vea solo
+     el producto sobre el fondo de la plantilla. Es *best-effort*: si tarda más de 30s o falla, usa
+     la foto tal cual (con fondo) en vez de romper el flujo. Se repite en cada corrección de
+     Marketing (vuelve a descargar la foto original y le saca el fondo de nuevo).
    - Plantillas Cartel simple / Gráfica cigüeña (comparten archivo): `cartel_precio_piso.jpg`,
      `cartel_politica.jpg`. Nombre del producto en barra blanca → texto oscuro. La **cigüeña se
      renderiza al doble del tamaño de canvas** de la misma plantilla (no es un archivo aparte).
@@ -133,3 +138,8 @@ mensaje. No hay mapeo por proveedor ni por persona — es puramente por rol.
   texto real así que nunca se desborda. La calidad de la lectura de producto/precio depende de que
   la foto sea legible — por eso Marketing siempre la verifica contra la foto original antes de
   aprobar.
+- `@imgly/background-removal-node` (recorte de fondo) es una dependencia pesada (modelo ONNX,
+  ~130MB) y el recorte tarda unos segundos (~10s la primera vez, incluye bajar el modelo) — por eso
+  el wizard avisa "dame un momento" antes de generar el diseño de `nuevo_ingreso`. El resultado no
+  es 100% perfecto (puede quedar algún resto tenue del fondo real, semi-transparente); es aceptable
+  para el uso actual, pero si hace falta más precisión habría que ajustar el umbral de la máscara.

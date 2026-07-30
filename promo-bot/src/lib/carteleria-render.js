@@ -143,13 +143,14 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
 
   if (plantilla.campos.imagenProducto && imagenProductoBuffer) {
     const rect = campoRect(plantilla.campos.imagenProducto, anchoFinal, altoFinal);
-    // La foto de producto siempre viene de Telegram (JPEG) — tanto la del catálogo
-    // futuro como, para "nuevo_ingreso", la misma foto que subió Depósito.
+    // Puede venir tal cual de Telegram (JPEG) o ya sin fondo (PNG con transparencia,
+    // ver carteleria-fondo.js) — detectamos por los primeros bytes, no asumimos.
+    const mime = imagenProductoBuffer[0] === 0x89 ? 'image/png' : 'image/jpeg';
     const productoBase64 = imagenProductoBuffer.toString('base64');
     hijos.push({
       type: 'img',
       props: {
-        src: `data:image/jpeg;base64,${productoBase64}`,
+        src: `data:${mime};base64,${productoBase64}`,
         style: { position: 'absolute', ...rect, objectFit: 'contain' },
       },
     });

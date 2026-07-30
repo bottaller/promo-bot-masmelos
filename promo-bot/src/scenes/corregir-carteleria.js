@@ -8,6 +8,7 @@ const { esCancelar, parsePrecio, texto } = require('../lib/wizard');
 const { avisarVerificacionMarketing } = require('../lib/carteleria-mensajes');
 const { generarCartel } = require('../lib/carteleria-render');
 const { descargarImagenTelegram } = require('../lib/carteleria-vision');
+const { quitarFondo } = require('../lib/carteleria-fondo');
 
 function esIgual(valor) {
   return typeof valor === 'string' && /^igual$/i.test(valor.trim());
@@ -59,10 +60,13 @@ async function regenerarYReenviar(ctx, precio) {
   const { carteleria, producto } = ctx.wizard.state;
   try {
     // "nuevo_ingreso": la imagen del cartel es la propia foto que subió Depósito —
-    // hay que volver a descargarla (no la guardamos en memoria entre wizards).
-    const imagenProductoBuffer = carteleria.tipo_precio === 'nuevo_ingreso'
-      ? await descargarImagenTelegram(ctx.telegram, carteleria.foto_file_id)
-      : null;
+    // hay que volver a descargarla (no la guardamos en memoria entre wizards) y
+    // sacarle el fondo de nuevo.
+    let imagenProductoBuffer = null;
+    if (carteleria.tipo_precio === 'nuevo_ingreso') {
+      const original = await descargarImagenTelegram(ctx.telegram, carteleria.foto_file_id);
+      imagenProductoBuffer = await quitarFondo(original);
+    }
 
     const disenoBuffer = await generarCartel({
       tipoGrafica: carteleria.tipo,

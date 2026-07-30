@@ -16,6 +16,7 @@ const { esCancelar, opciones, preguntar, respuesta, texto } = require('../lib/wi
 const { TIPOS, avisarAMarketingFinal, avisarVerificacionMarketing } = require('../lib/carteleria-mensajes');
 const { tiposPrecioValidos, LABELS_TIPO_PRECIO } = require('../lib/carteleria-plantillas');
 const { extraerProductoPrecio, descargarImagenTelegram } = require('../lib/carteleria-vision');
+const { quitarFondo } = require('../lib/carteleria-fondo');
 const { generarCartel } = require('../lib/carteleria-render');
 
 // "7/8/26", "07-08-2026", etc. -> 'YYYY-MM-DD' (o null si no es una fecha válida).
@@ -150,11 +151,14 @@ async function intentarGenerarDiseno(ctx, { id, fotoFileId, tipo, tipoPrecio, ca
     // de verdad (si la IA no lo pudo leer, mejor caer al flujo viejo que mostrar $0).
     if (tipoPrecio !== 'nuevo_ingreso' && typeof datos.precio !== 'number') return false;
 
+    // "nuevo_ingreso": la foto que subió Depósito ES la imagen del cartel — le
+    // sacamos el fondo para que se vea solo el producto sobre la plantilla.
+    // Para el resto todavía no hay catálogo de imágenes de producto (mejora futura).
+    const imagenProductoBuffer = tipoPrecio === 'nuevo_ingreso' ? await quitarFondo(imagenBuffer) : null;
+
     const disenoBuffer = await generarCartel({
       tipoGrafica: tipo, tipoPrecio, producto: datos.producto, precio: datos.precio, vencimiento,
-      // "nuevo_ingreso": la foto que subió Depósito ES la imagen del cartel.
-      // Para el resto todavía no hay catálogo de imágenes de producto (mejora futura).
-      imagenProductoBuffer: tipoPrecio === 'nuevo_ingreso' ? imagenBuffer : null,
+      imagenProductoBuffer,
     });
 
     await guardarDiseno(id, { producto: datos.producto, precio: datos.precio, disenoFileId: null });
