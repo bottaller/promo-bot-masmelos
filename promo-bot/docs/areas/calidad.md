@@ -1,7 +1,7 @@
 # Área Calidad
 
 > Un doc por área. Este cubre **Calidad**: sus comandos, el flujo de datos y los límites conocidos.
-> Última actualización: **2026-07-23**.
+> Última actualización: **2026-07-30**.
 
 ## Qué hace el rol
 
@@ -20,7 +20,7 @@ tiran, para la próxima comprar menos o pedir descuento al proveedor.
 | `/cambiopromocion` | Cambia la promoción de una camada **vigente** — % de descuento o precio promocional, y se puede pasar de una a la otra. Arranca mostrando un **menú con todas las promociones abiertas** (sin pedir código/SKU) para elegir directo sobre cuál; después pregunta qué tipo de promoción nueva aplica, su valor, y a cuántas unidades de las actuales se le aplica. Por diferencia, cierra la camada vieja marcando lo no alcanzado como vendido con la promo vieja, y abre una camada nueva con las unidades restantes con la promo nueva. |
 | `/baja` | Cierra una camada abierta: cuántas se vendieron y qué pasó con el remanente (descartado/vencido o devuelto a góndola normal). |
 | `/control` | Excel de **todo lo que está en oferta ahora**, ordenado por fecha de vencimiento (incluye columnas de % de descuento y precio promocional). Lleva la fecha de generación (ver [convenciones.md](../convenciones.md)). |
-| `/ajuste` | Sube un archivo de ajustes que le llega **solo al dueño del bot** (no a "los admins" — ver más abajo). El dueño lo revisa afuera del bot y toca "✅ Ajuste realizado" cuando lo hizo; ahí se le avisa a quien lo subió. |
+| `/ajuste` | Sube un archivo de ajustes que le llega **solo al dueño del bot** (no a "los admins" — ver más abajo). El dueño lo revisa afuera del bot y toca "✅ Verificado, mandar al ejecutor": ahí se reenvía a quien tenga el rol **`ajuste_ejecutor`** (hoy Renzo), que lo hace y confirma con "✅ Ajuste realizado" — recién ahí se avisa a quien lo subió y al dueño. Si el ejecutor no confirma en 36hs, se le avisa al dueño para que reclame (ver más abajo). |
 | `/promoprecios` | Sube el archivo final de promociones y precios. Arranca una cadena: dueño valida → Compras (rol `compras_promo`) y Marketing → Marketing entrega imágenes (`/imagenes`, área Marketing) → **cada imagen se valida por separado** (Compras, con opción de pedir "revisar" sin frenar las demás) → dueño valida cada una → se reenvían a Ventas, Depósito y Calidad. Ver "El ciclo de `/promoprecios`" más abajo. |
 
 ## Modelo de datos
@@ -77,9 +77,21 @@ botón, no un wizard de punta a punta. La lógica de los botones vive en `src/ac
 pasos clave — **no es lo mismo que "admin real"**: puede haber varios admins (hoy los hay), pero esto
 es exclusivo de una sola persona. `src/lib/owner.js` (`esDueno`) es el único chequeo que lo usa.
 
-**`/ajuste`:** José sube el archivo → le llega al dueño con un botón. El dueño lo revisa afuera del
-bot; cuando toca "✅ Ajuste realizado", se le avisa a José (por su `telegram_id`, guardado en la fila
-al subirlo — sin necesidad de join contra `bot.usuarios`).
+**`/ajuste`** (migración 033 — antes el dueño lo marcaba como hecho él mismo; ahora lo verifica y lo
+delega):
+1. José sube el archivo → le llega al dueño con botón "✅ Verificado, mandar al ejecutor".
+2. El dueño lo revisa afuera del bot y toca el botón (`estado`: `pendiente` → `verificado`,
+   `verificado_en = now()`) → el archivo se reenvía a **todos** los que tengan el rol
+   **`ajuste_ejecutor`** (rol aparte de `calidad`, igual que `compras_promo` en el ciclo de
+   `/promoprecios` — así le llega solo al responsable puntual que el dueño designe con
+   `/usuarios agregar <telegram_id> ajuste_ejecutor`, hoy Renzo), con botón "✅ Ajuste realizado".
+3. Cualquiera con ese rol que lo toque marca `estado = 'realizado'` (`realizado_en = now()`) y se
+   avisa **a José** (por su `telegram_id`, guardado en la fila al subirlo — sin join contra
+   `bot.usuarios`) **y al dueño**, para que quede constancia de que se controló.
+4. **Aviso de demora** (`src/ajustes-demora.js`, corre cada 1h, no a una hora fija como los demás
+   avisos): si un ajuste queda en `verificado` más de **36hs** sin pasar a `realizado`, se le avisa
+   al dueño para que le reclame al ejecutor. `demora_avisada` evita repetir el aviso en cada
+   corrida; solo se marca si el envío salió bien (si falla, se reintenta la próxima hora).
 
 **`/promoprecios`**, arranca igual que antes pero desde la entrega de imágenes en adelante cada
 **imagen viaja sola** — ninguna espera a las demás (migración 025):
@@ -130,6 +142,9 @@ dueño que todavía no se terminó de reenviar).
 
 **Roles nuevos** (migración 024): `marketing`, `ventas`, `compras_promo`. Ninguno tiene gente
 asignada por defecto — se asignan con `/usuarios agregar <telegram_id> <rol>` cuando se decida quién.
+
+**Rol nuevo** (migración 033): `ajuste_ejecutor` (mismo patrón: sin gente asignada por defecto,
+se asigna con `/usuarios agregar <telegram_id> ajuste_ejecutor`).
 
 ## Avisos de vencimiento
 

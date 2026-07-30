@@ -1,6 +1,7 @@
 // Wizard /ajuste (Calidad): sube un archivo de ajustes que le llega al DUEÑO del bot para que lo
-// revise. Cuando lo marca como "realizado" (botón, ver src/acciones-calidad.js), se le avisa a
-// quien lo subió.
+// revise/verifique. Cuando lo toca (botón, ver src/acciones-calidad.js), se reenvía a quien tenga
+// el rol "ajuste_ejecutor" (hoy Renzo) para que lo haga; cuando esa persona confirma, se avisa a
+// quien lo subió Y al dueño.
 const { Scenes } = require('telegraf');
 const { crearAjuste } = require('../db/ajustes');
 const { esCancelar } = require('../lib/wizard');
@@ -8,7 +9,7 @@ const { esCancelar } = require('../lib/wizard');
 async function notificarDueno(ctx, ajusteId, doc, nombreQuienSube) {
   await ctx.telegram.sendDocument(process.env.OWNER_TELEGRAM_ID, doc.file_id, {
     caption: `📎 Ajuste — subido por ${nombreQuienSube}`,
-    reply_markup: { inline_keyboard: [[{ text: '✅ Ajuste realizado', callback_data: `ajuste_ok:${ajusteId}` }]] },
+    reply_markup: { inline_keyboard: [[{ text: '✅ Verificado, mandar al ejecutor', callback_data: `ajuste_verificado:${ajusteId}` }]] },
   });
 }
 
