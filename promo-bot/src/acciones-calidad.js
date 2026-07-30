@@ -3,7 +3,7 @@
 // Se registran una sola vez en src/index.js, ANTES del catch-all de callbacks sueltos.
 const { esDueno } = require('./lib/owner');
 const { telegramIdsPorRol } = require('./db/usuarios');
-const { marcarAjusteRealizado } = require('./db/ajustes');
+const { marcarAjusteVerificado, marcarAjusteRealizado } = require('./db/ajustes');
 const {
   marcarComprasArchivoOk, validarImagenCompras, validarImagenAdmin,
   todasLasImagenesEnviadas, marcarAvisoImpresionEnviado, marcarImpresoEntregado,
@@ -24,11 +24,46 @@ function esMarketing(usuario) {
   return !!(usuario && usuario.areas && usuario.areas.includes('marketing'));
 }
 
+// Rol aparte del "calidad" general: solo el responsable puntual que el dueño designe con
+// /usuarios agregar recibe los archivos para ejecutar (hoy Renzo).
+function esAjusteEjecutor(usuario) {
+  return !!(usuario && usuario.areas && usuario.areas.includes('ajuste_ejecutor'));
+}
+
 function registrarAccionesCalidad(bot) {
-  // --- /ajuste: "Ajuste realizado" -> avisa a quien lo subió ---
-  bot.action(/^ajuste_ok:(\d+)$/, async (ctx) => {
+  // --- /ajuste, paso 1: el dueño lo revisó -> se reenvía al rol "ajuste_ejecutor" ---
+  bot.action(/^ajuste_verificado:(\d+)$/, async (ctx) => {
     if (!esDueno(ctx.from.id)) {
       await ctx.answerCbQuery('Esto es solo para el dueño del bot.', { show_alert: true });
+      return;
+    }
+    await ctx.answerCbQuery();
+    const ajuste = await marcarAjusteVerificado(Number(ctx.match[1]));
+    if (!ajuste) { await ctx.reply('Ese ajuste ya estaba verificado.'); return; }
+    try { await ctx.editMessageReplyMarkup(); } catch (e) { /* mensaje viejo */ }
+
+    const ejecutores = await telegramIdsPorRol('ajuste_ejecutor');
+    if (ejecutores.length === 0) {
+      await ctx.reply('⚠️ Lo marqué como verificado, pero no hay nadie con el rol "ajuste_ejecutor" (asignalo con /usuarios agregar <telegram_id> ajuste_ejecutor).');
+      return;
+    }
+    let enviados = 0;
+    for (const tid of ejecutores) {
+      try {
+        await bot.telegram.sendDocument(tid, ajuste.archivo_file_id, {
+          caption: `📎 Ajuste verificado — subido por ${ajuste.usuario_nombre || ajuste.usuario_telegram_id}`,
+          reply_markup: { inline_keyboard: [[{ text: '✅ Ajuste realizado', callback_data: `ajuste_ok:${ajuste.id}` }]] },
+        });
+        enviados++;
+      } catch (e) { console.error(`No pude mandarle el ajuste a ${tid}:`, e.message); }
+    }
+    await ctx.reply(`Verificado. Se lo mandé al ejecutor (${enviados} persona(s)).`);
+  });
+
+  // --- /ajuste, paso 2: el ejecutor confirma -> avisa a quien lo subió y al dueño ---
+  bot.action(/^ajuste_ok:(\d+)$/, async (ctx) => {
+    if (!esAjusteEjecutor(ctx.state.usuario)) {
+      await ctx.answerCbQuery('Esto es solo para quien tenga el rol "ajuste_ejecutor".', { show_alert: true });
       return;
     }
     await ctx.answerCbQuery();
@@ -37,6 +72,7 @@ function registrarAccionesCalidad(bot) {
     try { await ctx.editMessageReplyMarkup(); } catch (e) { /* mensaje viejo */ }
     await ctx.reply('Marcado como realizado.');
     await avisarle(bot, ajuste.usuario_telegram_id, '✅ Tu ajuste ya fue realizado.');
+    await avisarle(bot, process.env.OWNER_TELEGRAM_ID, `✅ El ajuste subido por ${ajuste.usuario_nombre || ajuste.usuario_telegram_id} ya fue realizado.`);
   });
 
   // --- /promoprecios: "Validar" -> pregunta la cantidad de imágenes (validar-promoprecios-wizard) ---
