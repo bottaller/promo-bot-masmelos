@@ -72,6 +72,14 @@ pedirlo a la gráfica.
    si no entra — nunca se desborda de la plantilla, sea cual sea el largo); `sharp` solo rasteriza
    el SVG final a JPEG. **El precio nunca lo dibuja un modelo generativo** — lo compone código a
    partir del número que devolvió la IA, así el valor impreso siempre es exacto.
+   - **Nombre del producto**: si entra en 1 sola línea o necesita 2, el reparto es *balanceado*
+     (prueba cada punto de corte posible y elige el que minimiza el ancho de la línea más larga,
+     en vez de amontonar todo en la línea 1) y el bloque completo (1 o 2 líneas) se centra
+     verticalmente con flexbox dentro de todo el hueco de nombre de la plantilla — así un nombre
+     corto de 1 línea no queda pegado arriba con un hueco vacío debajo.
+   - **Color del precio**: cada plantilla define `colorPrecio` en `carteleria-plantillas.js` para
+     que el precio que dibuja el código calce con el color real del "$"/"FINAL" ya impresos en esa
+     plantilla (blanco en las A4, negro en las de Cartel/Cigüeña) — no es un color único global.
    - Plantillas A4 / A4 Color (comparten archivo): `a4_precio_piso.jpg`, `a4_politica.jpg`,
      `a4_corto_vencimiento.jpg` (línea-puntero a la fecha de vencimiento + hueco para foto de
      producto), `a4_nuevo_ingreso.jpg` (banner "¡Nuevo ingreso!" fijo, **sin campo de precio**).

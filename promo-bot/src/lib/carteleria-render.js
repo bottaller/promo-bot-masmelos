@@ -34,34 +34,41 @@ function fuenteParseada() {
   return fuenteParseadaCache;
 }
 
-// Corta `texto` en como máximo 2 líneas que entren en `anchoMax` a `tamanioFuente`,
-// midiendo el ancho real de cada palabra (no una heurística) — si no entra en 2
-// líneas, la 2da se recorta con "…". Nunca se desborda de la plantilla.
+// Reparte `texto` en 2 líneas BALANCEADAS (no amontona todo en la línea 1 dejando
+// la línea 2 vacía y el bloque apretado) — probamos cada punto de corte posible y
+// nos quedamos con el que minimiza el ancho de la línea más ancha de las dos,
+// midiendo con el ancho real de cada palabra (no una heurística). Si ni el mejor
+// balance entra en `anchoMax`, se recorta con "…" — nunca se desborda la plantilla.
 function partirEnLineas(texto, tamanioFuente, anchoMax) {
   const font = fuenteParseada();
   const anchoDe = (t) => font.getAdvanceWidth(t, tamanioFuente);
   const palabras = String(texto).toUpperCase().trim().split(/\s+/).filter(Boolean);
+  if (!palabras.length) return [];
+  if (palabras.length === 1) return [palabras[0]];
 
-  const lineas = [];
-  let actual = '';
-  for (const palabra of palabras) {
-    const candidata = actual ? `${actual} ${palabra}` : palabra;
-    if (!actual || anchoDe(candidata) <= anchoMax) {
-      actual = candidata;
-    } else {
-      lineas.push(actual);
-      actual = palabra;
-    }
+  let mejorCorte = 1;
+  let mejorAncho = Infinity;
+  for (let i = 1; i < palabras.length; i++) {
+    const anchoMaximo = Math.max(
+      anchoDe(palabras.slice(0, i).join(' ')),
+      anchoDe(palabras.slice(i).join(' '))
+    );
+    if (anchoMaximo < mejorAncho) { mejorAncho = anchoMaximo; mejorCorte = i; }
   }
-  if (actual) lineas.push(actual);
 
-  if (lineas.length <= 2) return lineas;
+  let linea1 = palabras.slice(0, mejorCorte).join(' ');
+  let linea2 = palabras.slice(mejorCorte).join(' ');
 
-  let recortada = lineas[1];
-  while (recortada.length > 1 && anchoDe(`${recortada}…`) > anchoMax) {
-    recortada = recortada.slice(0, -1).trimEnd();
+  if (anchoDe(linea2) > anchoMax) {
+    while (linea2.length > 1 && anchoDe(`${linea2}…`) > anchoMax) linea2 = linea2.slice(0, -1).trimEnd();
+    linea2 = `${linea2}…`;
   }
-  return [lineas[0], `${recortada}…`];
+  if (anchoDe(linea1) > anchoMax) {
+    while (linea1.length > 1 && anchoDe(`${linea1}…`) > anchoMax) linea1 = linea1.slice(0, -1).trimEnd();
+    linea1 = `${linea1}…`;
+  }
+
+  return [linea1, linea2];
 }
 
 // $1.999 -> { entero: "1.999", decimales: "99" }. `precio` siempre viene con 2
@@ -100,20 +107,6 @@ function campoRect(campo, ancho, alto) {
 
 function justify(align) {
   return align === 'center' ? 'center' : 'flex-start';
-}
-
-// Una línea de texto centrada/alineada dentro de su caja.
-function cajaLinea({ rect, texto, align, tamanioFuente, color }) {
-  return {
-    type: 'div',
-    props: {
-      style: {
-        position: 'absolute', left: rect.left, top: rect.top, width: rect.width, height: rect.height,
-        display: 'flex', alignItems: 'center', justifyContent: justify(align), overflow: 'hidden',
-      },
-      children: { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioFuente, color, lineHeight: 1 }, children: texto } },
-    },
-  };
 }
 
 /**
@@ -160,6 +153,9 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
   if (plantilla.campos.precio) {
     const { entero, decimales } = formatearPrecio(precio);
     const rectPrecio = campoRect(plantilla.campos.precio, anchoFinal, altoFinal);
+    // Mismo color que el "$"/"FINAL" ya impresos en la plantilla (blanco en las A4,
+    // negro en las de cartel) — así el precio que agregamos calza con el diseño.
+    const colorPrecio = plantilla.campos.colorPrecio || '#1a1a1a';
     // Precio en una sola línea: satori no lo achica solo si es más largo (p.ej. "1.899"
     // vs "999"), así que ajustamos el tamaño según la cantidad de dígitos + el "." de
     // miles, y dejamos overflow:hidden como red de seguridad para que nunca tape el
@@ -174,8 +170,8 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
           overflow: 'hidden',
         },
         children: [
-          { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: '#1a1a1a', lineHeight: 1 }, children: entero } },
-          { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio * 0.38, color: '#1a1a1a', lineHeight: 1, marginLeft: tamanioPrecio * 0.06 }, children: decimales } },
+          { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: colorPrecio, lineHeight: 1 }, children: entero } },
+          { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio * 0.38, color: colorPrecio, lineHeight: 1, marginLeft: tamanioPrecio * 0.06 }, children: decimales } },
         ],
       },
     });
@@ -185,11 +181,39 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
   const rectLinea1 = campoRect(plantilla.campos.nombreLinea1, anchoFinal, altoFinal);
   const tamanioNombre = rectLinea1.height * 0.72;
   const [nombreLinea1, nombreLinea2] = partirEnLineas(producto, tamanioNombre, rectLinea1.width);
-  hijos.push(cajaLinea({ rect: rectLinea1, texto: nombreLinea1, align: plantilla.campos.nombreLinea1.align, tamanioFuente: tamanioNombre, color: colorNombre }));
-  if (nombreLinea2 && plantilla.campos.nombreLinea2) {
+
+  // Los nombres de 1 sola línea NO deben quedar pegados arriba del hueco pensado
+  // para 2 líneas (se veía desalineado/con un hueco vacío abajo) — unimos las 2
+  // franjas de la plantilla en una sola caja y centramos el bloque (1 o 2 líneas)
+  // con flexbox, en vez de posicionar cada línea en una coordenada fija.
+  // Usamos el área completa (línea 1 + línea 2) para centrar aunque el nombre
+  // entre en 1 sola línea — si solo centráramos dentro del rect angosto de la
+  // línea 1, un nombre corto seguiría pegado arriba del hueco de 2 líneas.
+  let rectNombre = rectLinea1;
+  if (plantilla.campos.nombreLinea2) {
     const rectLinea2 = campoRect(plantilla.campos.nombreLinea2, anchoFinal, altoFinal);
-    hijos.push(cajaLinea({ rect: rectLinea2, texto: nombreLinea2, align: plantilla.campos.nombreLinea2.align, tamanioFuente: tamanioNombre, color: colorNombre }));
+    rectNombre = {
+      left: rectLinea1.left,
+      top: rectLinea1.top,
+      width: Math.max(rectLinea1.width, rectLinea2.width),
+      height: (rectLinea2.top + rectLinea2.height) - rectLinea1.top,
+    };
   }
+  hijos.push({
+    type: 'div',
+    props: {
+      style: {
+        position: 'absolute', left: rectNombre.left, top: rectNombre.top, width: rectNombre.width, height: rectNombre.height,
+        display: 'flex', flexDirection: 'column', justifyContent: 'center',
+        alignItems: plantilla.campos.nombreLinea1.align === 'center' ? 'center' : 'flex-start',
+        overflow: 'hidden',
+      },
+      children: [nombreLinea1, nombreLinea2].filter(Boolean).map((linea) => ({
+        type: 'div',
+        props: { style: { fontFamily: 'Anton', fontSize: tamanioNombre, color: colorNombre, lineHeight: 1.25 }, children: linea },
+      })),
+    },
+  });
 
   if (vencimiento && plantilla.campos.vencimiento) {
     const rectVto = campoRect(plantilla.campos.vencimiento, anchoFinal, altoFinal);

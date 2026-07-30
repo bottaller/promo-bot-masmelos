@@ -42,6 +42,7 @@ const CAMPOS_A4_PRECIO = {
   nombreLinea1: { x: 0.145, y: 0.775, ancho: 0.665, alto: 0.045, align: 'center' },
   nombreLinea2: { x: 0.145, y: 0.825, ancho: 0.665, alto: 0.045, align: 'center' },
   colorNombre: '#ffffff', // caja oscura de fondo
+  colorPrecio: '#ffffff', // "$" y "FINAL" de la pastilla roja son blancos
 };
 
 // A4 corto vencimiento: plantilla vertical más grande (~1131x1600), banner
@@ -55,6 +56,7 @@ const CAMPOS_A4_CORTO_VENCIMIENTO = {
   nombreLinea1: { x: 0.20, y: 0.73, ancho: 0.62, alto: 0.035, align: 'center' },
   nombreLinea2: { x: 0.20, y: 0.77, ancho: 0.62, alto: 0.032, align: 'center' },
   colorNombre: '#ffffff', // caja oscura de fondo
+  colorPrecio: '#ffffff', // "$" y "FINAL" de la pastilla roja son blancos
 };
 
 // A4 nuevo ingreso: plantilla vertical (~1135x1600), banner "¡NUEVO INGRESO!" +
@@ -76,6 +78,7 @@ const CAMPOS_CARTEL_PRECIO = {
   nombreLinea1: { x: 0.03, y: 0.755, ancho: 0.94, alto: 0.06, align: 'center' },
   nombreLinea2: { x: 0.03, y: 0.825, ancho: 0.94, alto: 0.06, align: 'center' },
   colorNombre: '#1a1a1a', // barra blanca de fondo (no hay caja oscura)
+  colorPrecio: '#1a1a1a', // "$" y "FINAL" son negros sobre el fondo amarillo
 };
 
 const PLANTILLAS = {
