@@ -74,19 +74,20 @@ pedirlo a la gráfica.
    partir del número que devolvió la IA, así el valor impreso siempre es exacto.
    - Plantillas A4 / A4 Color (comparten archivo): `a4_precio_piso.jpg`, `a4_politica.jpg`,
      `a4_corto_vencimiento.jpg` (línea-puntero a la fecha de vencimiento + hueco para foto de
-     producto), `a4_nuevo_ingreso.jpg` (banner "¡Nuevo ingreso!" fijo, **sin campo de precio** — el
-     hueco de foto se llena con la propia foto que subió Depósito, no con un catálogo aparte).
-     Nombre del producto en caja oscura → texto blanco. Para `nuevo_ingreso`, antes de componer la
-     foto se le saca el fondo (`src/lib/carteleria-fondo.js`, `@imgly/background-removal-node` —
-     corre local con un modelo ONNX, sin API externa ni Python) para que en el cartel se vea solo
-     el producto sobre el fondo de la plantilla. Es *best-effort*: si tarda más de 30s o falla, usa
-     la foto tal cual (con fondo) en vez de romper el flujo. Se repite en cada corrección de
-     Marketing (vuelve a descargar la foto original y le saca el fondo de nuevo).
+     producto), `a4_nuevo_ingreso.jpg` (banner "¡Nuevo ingreso!" fijo, **sin campo de precio**).
+     Nombre del producto en caja oscura → texto blanco.
    - Plantillas Cartel simple / Gráfica cigüeña (comparten archivo): `cartel_precio_piso.jpg`,
      `cartel_politica.jpg`. Nombre del producto en barra blanca → texto oscuro. La **cigüeña se
      renderiza al doble del tamaño de canvas** de la misma plantilla (no es un archivo aparte).
-   - Para `corto_vencimiento` (a diferencia de `nuevo_ingreso`) todavía no hay catálogo de imágenes
-     de producto: el hueco de foto queda vacío por ahora (mejora futura).
+   - **La foto que sube Depósito NUNCA se compone en el cartel** — solo sirve para que la IA
+     identifique el producto (paso 2). Las plantillas con hueco de imagen (`nuevo_ingreso`,
+     `corto_vencimiento`) usan la foto **ya limpia** del catálogo (`assets/productos/`,
+     `src/lib/carteleria-catalogo.js`), matcheada por el nombre que leyó la IA (por palabras en
+     común entre ese nombre y el nombre del archivo — no hace falta que sea exacto). Si ningún
+     archivo del catálogo matchea, el cartel queda **sin foto** (nunca se usa la foto cruda de
+     Depósito como respaldo — se probó recortarle el fondo automáticamente y el resultado no
+     convenció, quedaban restos semi-transparentes del fondo real; ese código sigue en
+     `src/lib/carteleria-fondo.js` pero no está conectado al flujo).
 4. **Verificación de Marketing** — a cada persona con rol `marketing` le llegan dos mensajes: la
    foto original de Depósito, y el diseño generado con el producto/precio detectados en el pie y
    dos botones:
@@ -96,9 +97,9 @@ pedirlo a la gráfica.
    - **"✏️ Corregir"** (`carteleria_corregir:<id>`) — abre un wizard (`corregir-carteleria-wizard`)
      donde Marketing tipea el producto y/o el precio correctos (o "igual" para no tocar ese campo);
      para `nuevo_ingreso` no pregunta precio (no existe ese campo). El bot **regenera el cartel**
-     con los datos corregidos — para `nuevo_ingreso` vuelve a descargar la foto original y la usa
-     de nuevo como imagen del cartel — y se lo vuelve a mandar con los mismos dos botones — se
-     puede corregir las veces que haga falta antes de aprobar.
+     con los datos corregidos — si cambió el nombre del producto, vuelve a buscar en el catálogo con
+     el nombre nuevo — y se lo vuelve a mandar con los mismos dos botones — se puede corregir las
+     veces que haga falta antes de aprobar.
 5. **Aviso final a Marketing** (`avisarAMarketingFinal`, mismo helper para el flujo nuevo y el
    viejo) — usa el diseño ya aprobado (o la foto cruda, en el flujo viejo):
    - **A4 / A4 Color**: el cartel con el pie "🖨️ Imprimir A4 — 3 copias." Sin botón — es avisar e
@@ -130,16 +131,21 @@ mensaje. No hay mapeo por proveedor ni por persona — es puramente por rol.
   haber variaciones de escritura entre informes del mismo proveedor.
 - Todavía no hay un comando para **listar** informes ya cargados (quedan en la base, pero se
   consultan solo por Telegram en el momento en que se mandan).
-- `/carteleria` no tiene todavía un catálogo de imágenes de producto para `corto_vencimiento`: ese
-  hueco de foto queda vacío (a diferencia de `nuevo_ingreso`, que usa la propia foto que sube
-  Depósito). El precio y el nombre nunca dependen de esto — solo la ambientación visual del cartel.
+- El catálogo de fotos (`assets/productos/`) todavía está vacío — hasta que se suban archivos ahí
+  (ver `assets/productos/README.md`), **ningún** cartel con hueco de imagen (`nuevo_ingreso`,
+  `corto_vencimiento`) va a tener foto, sea cual sea el producto. El precio y el nombre nunca
+  dependen de esto — solo la ambientación visual del cartel.
+- El matcheo del catálogo es por palabras en común entre el nombre del producto y el nombre del
+  archivo (`carteleria-catalogo.js`) — no es IA, es determinístico. Con un catálogo grande y nombres
+  parecidos entre sí (p.ej. "Coca Cola 500ml" vs "Coca Cola Zero 500ml") puede matchear el que no es;
+  por eso Marketing siempre verifica el diseño contra la foto original antes de aprobar.
 - La tipografía del diseño generado es **Anton** (`@fontsource/anton`, subset `latin` — cubre
   acentos/ñ), no la fuente exacta de la marca pero del mismo estilo condensado/bold; satori mide el
   texto real así que nunca se desborda. La calidad de la lectura de producto/precio depende de que
   la foto sea legible — por eso Marketing siempre la verifica contra la foto original antes de
   aprobar.
-- `@imgly/background-removal-node` (recorte de fondo) es una dependencia pesada (modelo ONNX,
-  ~130MB) y el recorte tarda unos segundos (~10s la primera vez, incluye bajar el modelo) — por eso
-  el wizard avisa "dame un momento" antes de generar el diseño de `nuevo_ingreso`. El resultado no
-  es 100% perfecto (puede quedar algún resto tenue del fondo real, semi-transparente); es aceptable
-  para el uso actual, pero si hace falta más precisión habría que ajustar el umbral de la máscara.
+- `src/lib/carteleria-fondo.js` (recorte automático de fondo con `@imgly/background-removal-node`)
+  quedó en el repo pero **sin usarse** — se probó como alternativa al catálogo y el resultado no
+  convenció (quedaban restos semi-transparentes del fondo real de la foto). Si se retoma más
+  adelante, recordar que es una dependencia pesada (~130MB, modelo ONNX) y tarda varios segundos
+  por foto.

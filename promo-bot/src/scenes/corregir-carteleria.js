@@ -1,14 +1,14 @@
 // Wizard de corrección de /carteleria (Marketing): le pregunta producto (y precio,
-// salvo para "nuevo_ingreso", que no lleva), regenera el diseño y se lo vuelve a
-// mandar con los mismos botones de verificación — puede corregirse las veces que
-// haga falta.
+// salvo para "nuevo_ingreso", que no lleva), regenera el diseño — buscando de nuevo
+// en el catálogo (carteleria-catalogo.js) la foto que corresponda al nombre
+// corregido — y se lo vuelve a mandar con los mismos botones de verificación; puede
+// corregirse las veces que haga falta.
 const { Scenes } = require('telegraf');
 const { carteleriaPorId, guardarDiseno } = require('../db/carteleria');
 const { esCancelar, parsePrecio, texto } = require('../lib/wizard');
 const { avisarVerificacionMarketing } = require('../lib/carteleria-mensajes');
 const { generarCartel } = require('../lib/carteleria-render');
-const { descargarImagenTelegram } = require('../lib/carteleria-vision');
-const { quitarFondo } = require('../lib/carteleria-fondo');
+const { buscarImagenProducto } = require('../lib/carteleria-catalogo');
 
 function esIgual(valor) {
   return typeof valor === 'string' && /^igual$/i.test(valor.trim());
@@ -59,14 +59,9 @@ const corregirCarteleriaWizard = new Scenes.WizardScene(
 async function regenerarYReenviar(ctx, precio) {
   const { carteleria, producto } = ctx.wizard.state;
   try {
-    // "nuevo_ingreso": la imagen del cartel es la propia foto que subió Depósito —
-    // hay que volver a descargarla (no la guardamos en memoria entre wizards) y
-    // sacarle el fondo de nuevo.
-    let imagenProductoBuffer = null;
-    if (carteleria.tipo_precio === 'nuevo_ingreso') {
-      const original = await descargarImagenTelegram(ctx.telegram, carteleria.foto_file_id);
-      imagenProductoBuffer = await quitarFondo(original);
-    }
+    // La imagen del cartel sale del catálogo, matcheada por el nombre corregido
+    // (si Marketing cambió el producto, buscamos de nuevo con el nombre nuevo).
+    const imagenProductoBuffer = await buscarImagenProducto(producto);
 
     const disenoBuffer = await generarCartel({
       tipoGrafica: carteleria.tipo,

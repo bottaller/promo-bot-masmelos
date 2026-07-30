@@ -4,6 +4,12 @@
 //
 // Es best-effort: si falla o tarda demasiado, se usa la foto tal cual la mandó
 // Depósito (con fondo) en vez de romper el flujo — nunca debe colgar el wizard.
+//
+// NO está conectado al flujo activo de /carteleria: se reemplazó por el catálogo
+// de fotos ya limpias (carteleria-catalogo.js) — el resultado de recortarle el
+// fondo a la foto de Depósito no convenció (quedaban restos semi-transparentes del
+// fondo real). Se deja el módulo por si sirve para otra cosa más adelante (p.ej.
+// limpiar automáticamente las fotos que se vayan sumando al catálogo).
 const { removeBackground } = require('@imgly/background-removal-node');
 
 const TIMEOUT_MS = 30_000;

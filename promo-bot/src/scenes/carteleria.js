@@ -2,10 +2,13 @@
 // "nuevo ingreso"), el tipo de gráfica y el tipo de precio, y arma el diseño final
 // automáticamente:
 //   1. Lee producto (y precio, si corresponde) de la foto con IA (visión, solo lectura —
-//      nunca dibuja nada).
+//      nunca dibuja nada). Esta foto NO se compone en el cartel — solo sirve para
+//      identificar el producto.
 //   2. Compone el cartel por código (satori + sharp) sobre la plantilla que corresponda.
-//      "nuevo_ingreso" (solo A4/A4 Color) no lleva precio: la propia foto que sube
-//      Depósito se compone en el hueco de imagen del cartel.
+//      Si la plantilla tiene hueco de foto (nuevo_ingreso, corto_vencimiento), se busca
+//      la imagen YA LIMPIA que corresponda en el catálogo (assets/productos/,
+//      carteleria-catalogo.js) por el nombre que leyó la IA — si no hay ninguna que
+//      matchee, el cartel queda sin foto.
 //   3. Le manda a MARKETING la foto original + el diseño generado, para que lo verifique
 //      contra la foto antes de imprimir o pedirlo a la gráfica (ver acciones-deposito.js).
 // Si la IA falla o no está configurada, cae al flujo viejo: foto cruda directo a Marketing,
@@ -16,7 +19,7 @@ const { esCancelar, opciones, preguntar, respuesta, texto } = require('../lib/wi
 const { TIPOS, avisarAMarketingFinal, avisarVerificacionMarketing } = require('../lib/carteleria-mensajes');
 const { tiposPrecioValidos, LABELS_TIPO_PRECIO } = require('../lib/carteleria-plantillas');
 const { extraerProductoPrecio, descargarImagenTelegram } = require('../lib/carteleria-vision');
-const { quitarFondo } = require('../lib/carteleria-fondo');
+const { buscarImagenProducto } = require('../lib/carteleria-catalogo');
 const { generarCartel } = require('../lib/carteleria-render');
 
 // "7/8/26", "07-08-2026", etc. -> 'YYYY-MM-DD' (o null si no es una fecha válida).
@@ -151,10 +154,11 @@ async function intentarGenerarDiseno(ctx, { id, fotoFileId, tipo, tipoPrecio, ca
     // de verdad (si la IA no lo pudo leer, mejor caer al flujo viejo que mostrar $0).
     if (tipoPrecio !== 'nuevo_ingreso' && typeof datos.precio !== 'number') return false;
 
-    // "nuevo_ingreso": la foto que subió Depósito ES la imagen del cartel — le
-    // sacamos el fondo para que se vea solo el producto sobre la plantilla.
-    // Para el resto todavía no hay catálogo de imágenes de producto (mejora futura).
-    const imagenProductoBuffer = tipoPrecio === 'nuevo_ingreso' ? await quitarFondo(imagenBuffer) : null;
+    // La foto que subió Depósito NO se compone en el cartel — solo sirvió para que
+    // la IA identifique el producto. La imagen del cartel sale del catálogo
+    // (assets/productos/), matcheada por ese nombre. Sin match -> sin foto (las
+    // plantillas sin hueco de imagen ignoran este valor igual).
+    const imagenProductoBuffer = await buscarImagenProducto(datos.producto);
 
     const disenoBuffer = await generarCartel({
       tipoGrafica: tipo, tipoPrecio, producto: datos.producto, precio: datos.precio, vencimiento,
