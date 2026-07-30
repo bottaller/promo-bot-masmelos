@@ -20,6 +20,7 @@ pedirlo a la gráfica.
 |---------|----------|
 | `/informe` | Pregunta el destino (Calidad o Compras), el proveedor o producto (texto libre, **no** se valida contra el maestro de artículos) y el contenido del informe. Guarda todo en `bot.deposito_informes` y avisa por Telegram a todos los que tengan el rol elegido. |
 | `/carteleria` | Pide una foto (producto + precio juntos, salvo "nuevo ingreso" — ver abajo), el tipo de gráfica (**A4**, **A4 Color**, **Cartel simple**, **Gráfica cigüeña**) y el tipo de precio (**corto vencimiento**, **política**, **precio al piso**, **nuevo ingreso** — las opciones dependen del tipo de gráfica). Para A4 / A4 Color pregunta la cantidad de copias; para corto vencimiento pregunta también la fecha de vencimiento. Genera el diseño automáticamente y se lo manda a Marketing para que lo verifique — ver detalle abajo. |
+| `/carteleria_prueba` | El mismo wizard que `/carteleria`, pero **solo para el dueño del bot** (`OWNER_TELEGRAM_ID`, ver `middleware/authz.js` → `requiereDueno`) y sin tocar a Marketing: el diseño generado, los botones "✅ Está bien" / "✏️ Corregir" y el aviso final vuelven todos a quien lo probó (`bot.carteleria.es_prueba = true`, ver `carteleria-mensajes.js`). Pensado para probar cambios de diseño sin mandarle nada a Marketing real. No aparece en `/menu` — se tipea directo. |
 
 ## Modelo de datos
 

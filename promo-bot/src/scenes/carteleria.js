@@ -37,11 +37,20 @@ function parseFecha(valor) {
   return `${y}-${pad(mo)}-${pad(d)}`;
 }
 
-const carteleriaWizard = new Scenes.WizardScene(
-  'carteleria-wizard',
+// Fábrica en vez de una sola escena: /carteleria_prueba (solo el dueño del bot, ver
+// middleware/authz.js requiereDueno) usa exactamente el mismo wizard, pero con esPrueba=true
+// -> el pedido se guarda marcado (bot.carteleria.es_prueba) y TODO vuelve a quien lo probó en
+// vez de salir para Marketing real (ver carteleria-mensajes.js).
+function crearCarteleriaWizard({ id, esPrueba }) {
+  return new Scenes.WizardScene(
+  id,
   // 0: pedir la foto
   async (ctx) => {
-    await ctx.reply('Mandame la foto del producto con el precio (o "cancelar").');
+    await ctx.reply(
+      esPrueba
+        ? '🧪 Modo prueba: mandame la foto del producto con el precio (o "cancelar"). Esto no le llega a Marketing, te llega el diseño a vos.'
+        : 'Mandame la foto del producto con el precio (o "cancelar").'
+    );
     return ctx.wizard.next();
   },
   // 1: recibir la foto -> preguntar el tipo de gráfica
@@ -93,7 +102,7 @@ const carteleriaWizard = new Scenes.WizardScene(
       ctx.wizard.selectStep(5);
       return;
     }
-    return procesarYFinalizar(ctx);
+    return procesarYFinalizar(ctx, esPrueba);
   },
   // 4: (solo corto vencimiento) recibir la fecha -> siempre es A4/A4 Color, así que pide copias
   async (ctx) => {
@@ -115,11 +124,12 @@ const carteleriaWizard = new Scenes.WizardScene(
       return;
     }
     ctx.wizard.state.cantidadCopias = cantidad;
-    return procesarYFinalizar(ctx);
+    return procesarYFinalizar(ctx, esPrueba);
   }
-);
+  );
+}
 
-async function procesarYFinalizar(ctx) {
+async function procesarYFinalizar(ctx, esPrueba) {
   const u = ctx.state.usuario;
   const { fotoFileId, tipo, tipoPrecio, cantidadCopias, vencimiento } = ctx.wizard.state;
 
@@ -128,18 +138,28 @@ async function procesarYFinalizar(ctx) {
     usuarioId: u ? u.id : null,
     usuarioNombre: u ? u.nombre : (ctx.from.username || ctx.from.first_name || null),
     usuarioTelegramId: ctx.from.id,
+    esPrueba,
   });
 
   await ctx.reply('Dame un momento, estoy generando el diseño...');
 
   const disenoOk = await intentarGenerarDiseno(ctx, { id, fotoFileId, tipo, tipoPrecio, cantidadCopias, vencimiento });
   if (!disenoOk) {
-    const avisados = await avisarAMarketingFinal(ctx.telegram, { id, fileIdParaEnviar: fotoFileId, tipo, cantidadCopias });
-    await ctx.reply(`No pude generar el diseño automático, le mandé la foto directamente a Marketing (${avisados} persona(s)).`);
+    // Sin diseño automático no hay fila con es_prueba ya cargada a mano acá (viene del wizard,
+    // no de la DB) -> el override de destinatarios se arma directo con esPrueba.
+    const avisados = await avisarAMarketingFinal(ctx.telegram, {
+      id, fileIdParaEnviar: fotoFileId, tipo, cantidadCopias, esPrueba,
+      destinatarios: esPrueba ? [ctx.from.id] : undefined,
+    });
+    await ctx.reply(
+      esPrueba
+        ? 'No pude generar el diseño automático, te mando la foto tal cual la subiste (no salió para Marketing).'
+        : `No pude generar el diseño automático, le mandé la foto directamente a Marketing (${avisados} persona(s)).`
+    );
     return ctx.scene.leave();
   }
 
-  await ctx.reply('Listo, le mandé el diseño a Marketing para que lo verifique.');
+  await ctx.reply(esPrueba ? 'Listo, te mandé el diseño (no salió para Marketing).' : 'Listo, le mandé el diseño a Marketing para que lo verifique.');
   return ctx.scene.leave();
 }
 
@@ -176,4 +196,7 @@ async function intentarGenerarDiseno(ctx, { id, fotoFileId, tipo, tipoPrecio, ca
   }
 }
 
-module.exports = carteleriaWizard;
+const carteleriaWizard = crearCarteleriaWizard({ id: 'carteleria-wizard', esPrueba: false });
+const carteleriaPruebaWizard = crearCarteleriaWizard({ id: 'carteleria-prueba-wizard', esPrueba: true });
+
+module.exports = { carteleriaWizard, carteleriaPruebaWizard };

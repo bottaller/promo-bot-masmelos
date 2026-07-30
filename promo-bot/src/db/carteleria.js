@@ -3,14 +3,14 @@ const { pool } = require('./pool');
 
 async function crearCarteleria({
   fotoFileId, tipo, tipoPrecio, cantidadCopias, vencimiento,
-  usuarioId, usuarioNombre, usuarioTelegramId,
+  usuarioId, usuarioNombre, usuarioTelegramId, esPrueba,
 }) {
   const { rows } = await pool.query(
     `insert into bot.carteleria
-       (foto_file_id, tipo, tipo_precio, cantidad_copias, vencimiento, usuario_id, usuario_nombre, usuario_telegram_id)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)
+       (foto_file_id, tipo, tipo_precio, cantidad_copias, vencimiento, usuario_id, usuario_nombre, usuario_telegram_id, es_prueba)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      returning id`,
-    [fotoFileId, tipo, tipoPrecio, cantidadCopias ?? null, vencimiento ?? null, usuarioId ?? null, usuarioNombre ?? null, usuarioTelegramId]
+    [fotoFileId, tipo, tipoPrecio, cantidadCopias ?? null, vencimiento ?? null, usuarioId ?? null, usuarioNombre ?? null, usuarioTelegramId, !!esPrueba]
   );
   return rows[0].id;
 }

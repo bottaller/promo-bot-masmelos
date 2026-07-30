@@ -1,5 +1,6 @@
 // Autorización por área / por rol de admin. Se usa envolviendo cada comando.
 // Asume que el middleware de auth ya dejó el usuario en ctx.state.usuario.
+const { esDueno } = require('../lib/owner');
 
 // Admin real, o el rol "sistemas" (ve y usa casi TODO — todas las áreas salvo las excluidas
 // explícitamente, ver TESORERIA_EXCLUYE_SISTEMAS más abajo, y los comandos admin-only que están
@@ -51,4 +52,14 @@ function requiereAdminOSistemas() {
   };
 }
 
-module.exports = { requiereArea, requiereAdmin, requiereAdminOSistemas, tieneAccesoTotal, AREAS_SIN_BYPASS_SISTEMAS };
+// Deja pasar solo al "dueño" del bot (OWNER_TELEGRAM_ID, ver lib/owner.js) — independiente de
+// áreas/admin. Para comandos personales de prueba que no deben quedar visibles ni usables por
+// nadie más (ej. /carteleria_prueba).
+function requiereDueno() {
+  return async (ctx, next) => {
+    if (esDueno(ctx.from.id)) return next();
+    await ctx.reply('Este comando es solo para el dueño del bot.');
+  };
+}
+
+module.exports = { requiereArea, requiereAdmin, requiereAdminOSistemas, requiereDueno, tieneAccesoTotal, AREAS_SIN_BYPASS_SISTEMAS };

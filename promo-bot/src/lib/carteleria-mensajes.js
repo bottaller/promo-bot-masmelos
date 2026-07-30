@@ -18,18 +18,22 @@ function linkWhatsApp(texto) {
 
 // Aviso final a Marketing (imprimir A4, o pedir a la gráfica) — con el file_id que
 // corresponda: el diseño aprobado, o la foto cruda si la IA no pudo generarlo.
-async function avisarAMarketingFinal(telegram, { id, fileIdParaEnviar, tipo, cantidadCopias }) {
+// `destinatarios` es un override explícito de a quién avisar — lo usa /carteleria_prueba
+// para que un pedido de prueba NUNCA le llegue a Marketing real (ver scenes/carteleria.js
+// y acciones-deposito.js). Si no se pasa, va a Marketing como siempre.
+async function avisarAMarketingFinal(telegram, { id, fileIdParaEnviar, tipo, cantidadCopias, destinatarios, esPrueba }) {
   const { label, interno } = TIPOS[tipo];
+  const prefijo = esPrueba ? '🧪 PRUEBA (esto no salió para Marketing) — ' : '';
   let avisados = 0;
-  for (const tid of await telegramIdsPorRol('marketing')) {
+  for (const tid of destinatarios || (await telegramIdsPorRol('marketing'))) {
     try {
       if (interno) {
         const copias = cantidadCopias === 1 ? '1 copia' : `${cantidadCopias} copias`;
-        await telegram.sendPhoto(tid, fileIdParaEnviar, { caption: `🖨️ Imprimir ${label} — ${copias}.` });
+        await telegram.sendPhoto(tid, fileIdParaEnviar, { caption: `${prefijo}🖨️ Imprimir ${label} — ${copias}.` });
       } else {
         const texto = `Buenos días, solicito ${label} a continuación les adjunto el diseño`;
         await telegram.sendPhoto(tid, fileIdParaEnviar, {
-          caption: `🖼️ ${label} — pedido para la gráfica.`,
+          caption: `${prefijo}🖼️ ${label} — pedido para la gráfica.`,
           reply_markup: {
             inline_keyboard: [
               [{ text: '📲 Pedir por WhatsApp', url: linkWhatsApp(texto) }],
@@ -46,14 +50,20 @@ async function avisarAMarketingFinal(telegram, { id, fileIdParaEnviar, tipo, can
 
 // Foto original + diseño generado, con los botones de verificación. Sube el
 // diseño (Buffer) una sola vez y reutiliza el file_id que devuelve Telegram
-// para el resto de los destinatarios.
+// para el resto de los destinatarios. Si `carteleria.es_prueba` es true (viene de
+// /carteleria_prueba), esto NUNCA sale para Marketing real — vuelve solo a quien
+// lo probó (usuario_telegram_id), botones incluidos.
 async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer }) {
-  const { id, foto_file_id: fotoFileId, tipo, tipo_precio: tipoPrecio, cantidad_copias: cantidadCopias, producto, precio } = carteleria;
+  const {
+    id, foto_file_id: fotoFileId, tipo, tipo_precio: tipoPrecio, cantidad_copias: cantidadCopias,
+    producto, precio, es_prueba: esPrueba, usuario_telegram_id: usuarioTelegramId,
+  } = carteleria;
   const { label } = TIPOS[tipo];
   const copiasTexto = cantidadCopias ? `, ${cantidadCopias === 1 ? '1 copia' : `${cantidadCopias} copias`}` : '';
   // "nuevo_ingreso" no lleva precio — precio viene null en ese caso.
   const precioTexto = precio === null || precio === undefined ? '' : ` — $${Number(precio).toFixed(2)}`;
-  const captionDiseno = `🖼️ Diseño generado: ${producto}${precioTexto} (${label}, ${LABELS_TIPO_PRECIO[tipoPrecio]}${copiasTexto}). Verificalo contra la foto original.`;
+  const prefijo = esPrueba ? '🧪 PRUEBA (solo vos ves esto) — ' : '';
+  const captionDiseno = `${prefijo}🖼️ Diseño generado: ${producto}${precioTexto} (${label}, ${LABELS_TIPO_PRECIO[tipoPrecio]}${copiasTexto}). Verificalo contra la foto original.`;
   const botones = {
     reply_markup: {
       inline_keyboard: [
@@ -65,7 +75,7 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer 
 
   let avisados = 0;
   let disenoFileId = null;
-  for (const tid of await telegramIdsPorRol('marketing')) {
+  for (const tid of esPrueba ? [usuarioTelegramId] : await telegramIdsPorRol('marketing')) {
     try {
       await telegram.sendPhoto(tid, fotoFileId, { caption: `📷 Foto original de Depósito — pedido #${id}` });
       const enviado = await telegram.sendPhoto(tid, disenoFileId || { source: disenoBuffer }, { caption: captionDiseno, ...botones });
