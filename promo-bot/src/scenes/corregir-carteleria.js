@@ -1,11 +1,13 @@
-// Wizard de corrección de /carteleria (Marketing): le pregunta producto y precio
-// correctos, regenera el diseño y se lo vuelve a mandar con los mismos botones
-// de verificación — puede corregirse las veces que haga falta.
+// Wizard de corrección de /carteleria (Marketing): le pregunta producto (y precio,
+// salvo para "nuevo_ingreso", que no lleva), regenera el diseño y se lo vuelve a
+// mandar con los mismos botones de verificación — puede corregirse las veces que
+// haga falta.
 const { Scenes } = require('telegraf');
 const { carteleriaPorId, guardarDiseno } = require('../db/carteleria');
 const { esCancelar, parsePrecio, texto } = require('../lib/wizard');
 const { avisarVerificacionMarketing } = require('../lib/carteleria-mensajes');
 const { generarCartel } = require('../lib/carteleria-render');
+const { descargarImagenTelegram } = require('../lib/carteleria-vision');
 
 function esIgual(valor) {
   return typeof valor === 'string' && /^igual$/i.test(valor.trim());
@@ -23,12 +25,16 @@ const corregirCarteleriaWizard = new Scenes.WizardScene(
     );
     return ctx.wizard.next();
   },
-  // 1: recibir el producto -> preguntar el precio
+  // 1: recibir el producto -> preguntar el precio (salvo "nuevo_ingreso", que no tiene)
   async (ctx) => {
     const t = texto(ctx);
     if (esCancelar(t)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
     if (!t) { await ctx.reply('Mandame el nombre del producto, "igual" o "cancelar".'); return; }
     ctx.wizard.state.producto = esIgual(t) ? ctx.wizard.state.carteleria.producto : t;
+
+    if (ctx.wizard.state.carteleria.tipo_precio === 'nuevo_ingreso') {
+      return regenerarYReenviar(ctx, null);
+    }
 
     const precioActual = Number(ctx.wizard.state.carteleria.precio);
     await ctx.reply(`Precio actual: $${precioActual.toFixed(2)}\n¿Cuál es el correcto? (o "igual", o "cancelar")`);
@@ -45,30 +51,39 @@ const corregirCarteleriaWizard = new Scenes.WizardScene(
       precio = parsePrecio(t);
       if (precio === null) { await ctx.reply('Mandame un precio válido (ej: 1500 o 1500,50), "igual" o "cancelar".'); return; }
     }
-
-    const { carteleria, producto } = ctx.wizard.state;
-    try {
-      const disenoBuffer = await generarCartel({
-        tipoGrafica: carteleria.tipo,
-        tipoPrecio: carteleria.tipo_precio,
-        producto,
-        precio,
-        vencimiento: carteleria.vencimiento,
-        imagenProductoBuffer: null,
-      });
-
-      await guardarDiseno(carteleria.id, { producto, precio, disenoFileId: null });
-      const actualizado = await carteleriaPorId(carteleria.id);
-      const { avisados, disenoFileId } = await avisarVerificacionMarketing(ctx.telegram, { carteleria: actualizado, disenoBuffer });
-      if (disenoFileId) await guardarDiseno(carteleria.id, { producto, precio, disenoFileId });
-
-      await ctx.reply(`Listo, mandé el diseño corregido para que lo vuelvan a verificar (${avisados} persona(s)).`);
-    } catch (e) {
-      console.error('No pude regenerar el diseño de cartelería:', e.message);
-      await ctx.reply('No pude regenerar el diseño. Probá de nuevo con /carteleria o avisale al admin.');
-    }
-    return ctx.scene.leave();
+    return regenerarYReenviar(ctx, precio);
   }
 );
+
+async function regenerarYReenviar(ctx, precio) {
+  const { carteleria, producto } = ctx.wizard.state;
+  try {
+    // "nuevo_ingreso": la imagen del cartel es la propia foto que subió Depósito —
+    // hay que volver a descargarla (no la guardamos en memoria entre wizards).
+    const imagenProductoBuffer = carteleria.tipo_precio === 'nuevo_ingreso'
+      ? await descargarImagenTelegram(ctx.telegram, carteleria.foto_file_id)
+      : null;
+
+    const disenoBuffer = await generarCartel({
+      tipoGrafica: carteleria.tipo,
+      tipoPrecio: carteleria.tipo_precio,
+      producto,
+      precio,
+      vencimiento: carteleria.vencimiento,
+      imagenProductoBuffer,
+    });
+
+    await guardarDiseno(carteleria.id, { producto, precio, disenoFileId: null });
+    const actualizado = await carteleriaPorId(carteleria.id);
+    const { avisados, disenoFileId } = await avisarVerificacionMarketing(ctx.telegram, { carteleria: actualizado, disenoBuffer });
+    if (disenoFileId) await guardarDiseno(carteleria.id, { producto, precio, disenoFileId });
+
+    await ctx.reply(`Listo, mandé el diseño corregido para que lo vuelvan a verificar (${avisados} persona(s)).`);
+  } catch (e) {
+    console.error('No pude regenerar el diseño de cartelería:', e.message);
+    await ctx.reply('No pude regenerar el diseño. Probá de nuevo con /carteleria o avisale al admin.');
+  }
+  return ctx.scene.leave();
+}
 
 module.exports = corregirCarteleriaWizard;

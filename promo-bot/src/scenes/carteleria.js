@@ -1,7 +1,11 @@
-// Wizard /carteleria (área Depósito): pide una foto del producto con el precio, el tipo de
-// gráfica y el tipo de precio, y arma el diseño final automáticamente:
-//   1. Lee producto y precio de la foto con IA (visión, solo lectura — nunca dibuja nada).
-//   2. Compone el cartel por código (sharp) sobre la plantilla que corresponda.
+// Wizard /carteleria (área Depósito): pide una foto del producto (+ precio, salvo para
+// "nuevo ingreso"), el tipo de gráfica y el tipo de precio, y arma el diseño final
+// automáticamente:
+//   1. Lee producto (y precio, si corresponde) de la foto con IA (visión, solo lectura —
+//      nunca dibuja nada).
+//   2. Compone el cartel por código (satori + sharp) sobre la plantilla que corresponda.
+//      "nuevo_ingreso" (solo A4/A4 Color) no lleva precio: la propia foto que sube
+//      Depósito se compone en el hueco de imagen del cartel.
 //   3. Le manda a MARKETING la foto original + el diseño generado, para que lo verifique
 //      contra la foto antes de imprimir o pedirlo a la gráfica (ver acciones-deposito.js).
 // Si la IA falla o no está configurada, cae al flujo viejo: foto cruda directo a Marketing,
@@ -142,10 +146,15 @@ async function intentarGenerarDiseno(ctx, { id, fotoFileId, tipo, tipoPrecio, ca
     const imagenBuffer = await descargarImagenTelegram(ctx.telegram, fotoFileId);
     const datos = await extraerProductoPrecio(imagenBuffer);
     if (!datos) return false;
+    // "nuevo_ingreso" no lleva precio: si es cualquier otro tipo, sí lo necesitamos
+    // de verdad (si la IA no lo pudo leer, mejor caer al flujo viejo que mostrar $0).
+    if (tipoPrecio !== 'nuevo_ingreso' && typeof datos.precio !== 'number') return false;
 
     const disenoBuffer = await generarCartel({
       tipoGrafica: tipo, tipoPrecio, producto: datos.producto, precio: datos.precio, vencimiento,
-      imagenProductoBuffer: null, // catálogo de imágenes de producto: mejora futura
+      // "nuevo_ingreso": la foto que subió Depósito ES la imagen del cartel.
+      // Para el resto todavía no hay catálogo de imágenes de producto (mejora futura).
+      imagenProductoBuffer: tipoPrecio === 'nuevo_ingreso' ? imagenBuffer : null,
     });
 
     await guardarDiseno(id, { producto: datos.producto, precio: datos.precio, disenoFileId: null });

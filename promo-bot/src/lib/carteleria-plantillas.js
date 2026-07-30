@@ -15,10 +15,12 @@ const path = require('path');
 
 const DIR = path.join(__dirname, '..', '..', 'assets', 'carteleria');
 
-// tipos de precio válidos por tipo de gráfica (mismo criterio que el wizard)
+// tipos de precio válidos por tipo de gráfica (mismo criterio que el wizard).
+// "nuevo_ingreso" no es realmente un "precio" — es un aviso de producto nuevo sin
+// precio, pero vive en esta misma lista porque comparte el mecanismo de selección.
 const TIPOS_PRECIO_POR_GRAFICA = {
-  a4: ['corto_vencimiento', 'politica', 'precio_piso'],
-  a4_color: ['corto_vencimiento', 'politica', 'precio_piso'],
+  a4: ['corto_vencimiento', 'politica', 'precio_piso', 'nuevo_ingreso'],
+  a4_color: ['corto_vencimiento', 'politica', 'precio_piso', 'nuevo_ingreso'],
   cartel_simple: ['politica', 'precio_piso'],
   ciguena: ['politica', 'precio_piso'],
 };
@@ -27,7 +29,11 @@ const LABELS_TIPO_PRECIO = {
   corto_vencimiento: 'Corto vencimiento',
   politica: 'Política',
   precio_piso: 'Precio al piso',
+  nuevo_ingreso: 'Nuevo ingreso',
 };
+
+// tipos de precio que NO llevan precio en el cartel final (solo producto + foto).
+const TIPOS_PRECIO_SIN_PRECIO = ['nuevo_ingreso'];
 
 // A4 / A4 Color: plantilla vertical (~800x1125), pastilla roja "$ ___ FINAL" arriba,
 // caja oscura de nombre de producto abajo, disclaimer fijo al pie.
@@ -51,6 +57,17 @@ const CAMPOS_A4_CORTO_VENCIMIENTO = {
   colorNombre: '#ffffff', // caja oscura de fondo
 };
 
+// A4 nuevo ingreso: plantilla vertical (~1135x1600), banner "¡NUEVO INGRESO!" +
+// subtítulo "Consultá por este artículo a tu vendedor!" fijos, SIN precio — la
+// foto que sube Depósito va directo al hueco central (es la misma foto, no un
+// catálogo aparte), caja oscura de nombre, logo + redes fijos al pie.
+const CAMPOS_A4_NUEVO_INGRESO = {
+  imagenProducto: { x: 0.08, y: 0.27, ancho: 0.84, alto: 0.42 },
+  nombreLinea1: { x: 0.16, y: 0.758, ancho: 0.68, alto: 0.035, align: 'center' },
+  nombreLinea2: { x: 0.16, y: 0.805, ancho: 0.68, alto: 0.032, align: 'center' },
+  colorNombre: '#ffffff', // caja oscura de fondo
+};
+
 // Cartel simple / Cigüeña: plantilla horizontal (~1600x1066), "$" grande fijo a la
 // izquierda, "FINAL" fijo arriba a la derecha, precio grande en el campo amarillo,
 // barra blanca de nombre abajo, footer negro con disclaimer fijo.
@@ -65,6 +82,7 @@ const PLANTILLAS = {
   'a4:precio_piso': { archivo: path.join(DIR, 'a4_precio_piso.jpg'), ancho: 800, alto: 1126, campos: CAMPOS_A4_PRECIO },
   'a4:politica': { archivo: path.join(DIR, 'a4_politica.jpg'), ancho: 799, alto: 1125, campos: CAMPOS_A4_PRECIO },
   'a4:corto_vencimiento': { archivo: path.join(DIR, 'a4_corto_vencimiento.jpg'), ancho: 1131, alto: 1600, campos: CAMPOS_A4_CORTO_VENCIMIENTO },
+  'a4:nuevo_ingreso': { archivo: path.join(DIR, 'a4_nuevo_ingreso.jpg'), ancho: 1135, alto: 1600, campos: CAMPOS_A4_NUEVO_INGRESO },
   'cartel_simple:precio_piso': { archivo: path.join(DIR, 'cartel_precio_piso.jpg'), ancho: 1600, alto: 1066, campos: CAMPOS_CARTEL_PRECIO },
   'cartel_simple:politica': { archivo: path.join(DIR, 'cartel_politica.jpg'), ancho: 1600, alto: 1066, campos: CAMPOS_CARTEL_PRECIO },
 };
@@ -91,6 +109,7 @@ module.exports = {
   PLANTILLAS,
   TIPOS_PRECIO_POR_GRAFICA,
   LABELS_TIPO_PRECIO,
+  TIPOS_PRECIO_SIN_PRECIO,
   plantillaPara,
   tiposPrecioValidos,
   claveTipoGrafica,

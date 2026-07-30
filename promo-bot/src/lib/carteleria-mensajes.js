@@ -51,7 +51,9 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer 
   const { id, foto_file_id: fotoFileId, tipo, tipo_precio: tipoPrecio, cantidad_copias: cantidadCopias, producto, precio } = carteleria;
   const { label } = TIPOS[tipo];
   const copiasTexto = cantidadCopias ? `, ${cantidadCopias === 1 ? '1 copia' : `${cantidadCopias} copias`}` : '';
-  const captionDiseno = `🖼️ Diseño generado: ${producto} — $${Number(precio).toFixed(2)} (${label}, ${LABELS_TIPO_PRECIO[tipoPrecio]}${copiasTexto}). Verificalo contra la foto original.`;
+  // "nuevo_ingreso" no lleva precio — precio viene null en ese caso.
+  const precioTexto = precio === null || precio === undefined ? '' : ` — $${Number(precio).toFixed(2)}`;
+  const captionDiseno = `🖼️ Diseño generado: ${producto}${precioTexto} (${label}, ${LABELS_TIPO_PRECIO[tipoPrecio]}${copiasTexto}). Verificalo contra la foto original.`;
   const botones = {
     reply_markup: {
       inline_keyboard: [

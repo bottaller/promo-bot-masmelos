@@ -1,7 +1,7 @@
 # Área Depósito
 
 > Un doc por área. Este cubre **Depósito**: sus comandos, el flujo de datos y los límites conocidos.
-> Última actualización: **2026-07-29**.
+> Última actualización: **2026-07-30**.
 
 ## Qué hace el rol
 
@@ -19,7 +19,7 @@ pedirlo a la gráfica.
 | Comando | Qué hace |
 |---------|----------|
 | `/informe` | Pregunta el destino (Calidad o Compras), el proveedor o producto (texto libre, **no** se valida contra el maestro de artículos) y el contenido del informe. Guarda todo en `bot.deposito_informes` y avisa por Telegram a todos los que tengan el rol elegido. |
-| `/carteleria` | Pide una foto (producto + precio juntos), el tipo de gráfica (**A4**, **A4 Color**, **Cartel simple**, **Gráfica cigüeña**) y el tipo de precio (**corto vencimiento**, **política**, **precio al piso** — las opciones dependen del tipo de gráfica). Para A4 / A4 Color pregunta la cantidad de copias; para corto vencimiento pregunta también la fecha de vencimiento. Genera el diseño automáticamente y se lo manda a Marketing para que lo verifique — ver detalle abajo. |
+| `/carteleria` | Pide una foto (producto + precio juntos, salvo "nuevo ingreso" — ver abajo), el tipo de gráfica (**A4**, **A4 Color**, **Cartel simple**, **Gráfica cigüeña**) y el tipo de precio (**corto vencimiento**, **política**, **precio al piso**, **nuevo ingreso** — las opciones dependen del tipo de gráfica). Para A4 / A4 Color pregunta la cantidad de copias; para corto vencimiento pregunta también la fecha de vencimiento. Genera el diseño automáticamente y se lo manda a Marketing para que lo verifique — ver detalle abajo. |
 
 ## Modelo de datos
 
@@ -35,13 +35,17 @@ pedirlo a la gráfica.
 - `foto_file_id` — la foto ORIGINAL que mandó Depósito (se reenvía por `file_id`, no se vuelve a
   descargar salvo para la lectura por IA — ver abajo).
 - `tipo` — `'a4'` | `'a4_color'` | `'cartel_simple'` | `'ciguena'`.
-- `tipo_precio` — `'corto_vencimiento'` | `'politica'` | `'precio_piso'` (migración 031). A4 / A4
-  Color aceptan los tres; Cartel simple / Cigüeña solo `politica` y `precio_piso`.
+- `tipo_precio` — `'corto_vencimiento'` | `'politica'` | `'precio_piso'` | `'nuevo_ingreso'`
+  (migración 031). A4 / A4 Color aceptan los cuatro; Cartel simple / Cigüeña solo `politica` y
+  `precio_piso`. `nuevo_ingreso` no es un precio de verdad — es un aviso de producto nuevo sin
+  precio (ver abajo).
 - `vencimiento` — fecha (`date`), solo cuando `tipo_precio = 'corto_vencimiento'`. `null` en el resto.
 - `cantidad_copias` — solo para A4 / A4 Color; cuántas copias hay que imprimir. `null` para Cartel
   simple / Gráfica cigüeña (esos no se imprimen acá).
-- `producto` / `precio` — lo que la IA leyó de la foto (o lo que corrigió Marketing). `null` si la
-  IA no pudo generar el diseño (flujo viejo, ver más abajo).
+- `producto` — lo que la IA leyó de la foto (o lo que corrigió Marketing). `null` si la IA no pudo
+  generar el diseño (flujo viejo, ver más abajo).
+- `precio` — igual, pero además queda `null` cuando `tipo_precio = 'nuevo_ingreso'` (esa plantilla
+  no tiene campo de precio).
 - `diseno_file_id` — `file_id` de Telegram del cartel ya armado (se sube una sola vez y se reenvía
   por `file_id` al resto de Marketing y en cada reenvío posterior).
 - `verificado_en` — cuándo Marketing aprobó el diseño (`marcarVerificado`, guarda atómica: si dos
@@ -56,23 +60,28 @@ pedirlo a la gráfica.
    control de calidad lo hace Marketing (paso 4).
 2. **Lectura de la foto por IA** (`src/lib/carteleria-vision.js`) — se descarga la foto de Telegram
    y se le pide a `claude-opus-5` (con salida estructurada, `output_config.format` +
-   `json_schema`) que extraiga `{ producto, precio }`. Es un llamado de **solo lectura**: la IA
-   nunca dibuja nada, y no tiene herramientas ni necesita pensar (`thinking: disabled`, `effort:
-   low`) porque es una extracción simple y acotada.
-3. **Composición del cartel** (`src/lib/carteleria-render.js`, con `sharp`) — el precio, el nombre
-   del producto y la fecha de vencimiento se superponen por código sobre la plantilla que
-   corresponda (`src/lib/carteleria-plantillas.js`, `assets/carteleria/`). **El precio nunca lo
-   dibuja un modelo generativo** — lo compone código a partir del número que devolvió la IA, así el
-   valor impreso siempre es exacto. El tamaño de letra se ajusta dinámicamente al largo del texto
-   para que nunca se desborde de la plantilla.
+   `json_schema`) que extraiga `{ producto, precio }` (`precio` es *nullable*: si la foto no
+   muestra un precio — el caso de "nuevo ingreso" — la IA devuelve `null` en vez de inventar un
+   número). Es un llamado de **solo lectura**: la IA nunca dibuja nada, y no tiene herramientas ni
+   necesita pensar (`thinking: disabled`, `effort: low`) porque es una extracción simple y acotada.
+   Para cualquier `tipo_precio` que sí necesite precio, si la IA no lo pudo leer se trata como una
+   extracción fallida (cae al flujo viejo — nunca se muestra "$0").
+3. **Composición del cartel** (`src/lib/carteleria-render.js`, con **satori** + `sharp`) — satori
+   arma todo el layout (plantilla de fondo, textos, foto de producto) como si fuera HTML/flexbox y
+   mide el texto de verdad con `opentype.js` (nombre de producto: hasta 2 líneas, se corta con "…"
+   si no entra — nunca se desborda de la plantilla, sea cual sea el largo); `sharp` solo rasteriza
+   el SVG final a JPEG. **El precio nunca lo dibuja un modelo generativo** — lo compone código a
+   partir del número que devolvió la IA, así el valor impreso siempre es exacto.
    - Plantillas A4 / A4 Color (comparten archivo): `a4_precio_piso.jpg`, `a4_politica.jpg`,
-     `a4_corto_vencimiento.jpg` (esta última con línea-puntero a la fecha de vencimiento y hueco
-     para foto del producto). Nombre del producto en caja oscura → texto blanco.
+     `a4_corto_vencimiento.jpg` (línea-puntero a la fecha de vencimiento + hueco para foto de
+     producto), `a4_nuevo_ingreso.jpg` (banner "¡Nuevo ingreso!" fijo, **sin campo de precio** — el
+     hueco de foto se llena con la propia foto que subió Depósito, no con un catálogo aparte).
+     Nombre del producto en caja oscura → texto blanco.
    - Plantillas Cartel simple / Gráfica cigüeña (comparten archivo): `cartel_precio_piso.jpg`,
      `cartel_politica.jpg`. Nombre del producto en barra blanca → texto oscuro. La **cigüeña se
      renderiza al doble del tamaño de canvas** de la misma plantilla (no es un archivo aparte).
-   - Todavía no hay catálogo de imágenes de producto: el hueco de foto en `a4_corto_vencimiento`
-     queda vacío por ahora (mejora futura).
+   - Para `corto_vencimiento` (a diferencia de `nuevo_ingreso`) todavía no hay catálogo de imágenes
+     de producto: el hueco de foto queda vacío por ahora (mejora futura).
 4. **Verificación de Marketing** — a cada persona con rol `marketing` le llegan dos mensajes: la
    foto original de Depósito, y el diseño generado con el producto/precio detectados en el pie y
    dos botones:
@@ -80,9 +89,11 @@ pedirlo a la gráfica.
      dispara el aviso final (impresión o pedido a la gráfica, ver abajo) + le avisa a Depósito que
      su pedido fue verificado.
    - **"✏️ Corregir"** (`carteleria_corregir:<id>`) — abre un wizard (`corregir-carteleria-wizard`)
-     donde Marketing tipea el producto y/o el precio correctos (o "igual" para no tocar ese campo).
-     El bot **regenera el cartel** con los datos corregidos y se lo vuelve a mandar con los mismos
-     dos botones — se puede corregir las veces que haga falta antes de aprobar.
+     donde Marketing tipea el producto y/o el precio correctos (o "igual" para no tocar ese campo);
+     para `nuevo_ingreso` no pregunta precio (no existe ese campo). El bot **regenera el cartel**
+     con los datos corregidos — para `nuevo_ingreso` vuelve a descargar la foto original y la usa
+     de nuevo como imagen del cartel — y se lo vuelve a mandar con los mismos dos botones — se
+     puede corregir las veces que haga falta antes de aprobar.
 5. **Aviso final a Marketing** (`avisarAMarketingFinal`, mismo helper para el flujo nuevo y el
    viejo) — usa el diseño ya aprobado (o la foto cruda, en el flujo viejo):
    - **A4 / A4 Color**: el cartel con el pie "🖨️ Imprimir A4 — 3 copias." Sin botón — es avisar e
@@ -114,10 +125,11 @@ mensaje. No hay mapeo por proveedor ni por persona — es puramente por rol.
   haber variaciones de escritura entre informes del mismo proveedor.
 - Todavía no hay un comando para **listar** informes ya cargados (quedan en la base, pero se
   consultan solo por Telegram en el momento en que se mandan).
-- `/carteleria` no tiene todavía un catálogo de imágenes de producto: el hueco de foto de la
-  plantilla `a4_corto_vencimiento` queda vacío. El precio y el nombre nunca dependen de esto —
-  solo la ambientación visual del cartel.
-- La tipografía del diseño generado es una sans-serif genérica (no la fuente exacta de la marca);
-  el tamaño se ajusta para que nunca se desborde, pero el "look" no es 100% idéntico al diseño a
-  mano. La calidad de la lectura de producto/precio depende de que la foto sea legible — por eso
-  Marketing siempre la verifica contra la foto original antes de aprobar.
+- `/carteleria` no tiene todavía un catálogo de imágenes de producto para `corto_vencimiento`: ese
+  hueco de foto queda vacío (a diferencia de `nuevo_ingreso`, que usa la propia foto que sube
+  Depósito). El precio y el nombre nunca dependen de esto — solo la ambientación visual del cartel.
+- La tipografía del diseño generado es **Anton** (`@fontsource/anton`, subset `latin` — cubre
+  acentos/ñ), no la fuente exacta de la marca pero del mismo estilo condensado/bold; satori mide el
+  texto real así que nunca se desborda. La calidad de la lectura de producto/precio depende de que
+  la foto sea legible — por eso Marketing siempre la verifica contra la foto original antes de
+  aprobar.

@@ -120,9 +120,9 @@ function cajaLinea({ rect, texto, align, tamanioFuente, color }) {
  * Genera el cartel final.
  * @param {object} datos
  * @param {'a4'|'a4_color'|'cartel_simple'|'ciguena'} datos.tipoGrafica
- * @param {'corto_vencimiento'|'politica'|'precio_piso'} datos.tipoPrecio
+ * @param {'corto_vencimiento'|'politica'|'precio_piso'|'nuevo_ingreso'} datos.tipoPrecio
  * @param {string} datos.producto
- * @param {number} datos.precio
+ * @param {number|null} datos.precio - ignorado si la plantilla no tiene campo de precio (nuevo_ingreso)
  * @param {string|Date|null} datos.vencimiento
  * @param {Buffer|null} datos.imagenProductoBuffer - foto del producto ya descargada, o null
  * @returns {Promise<Buffer>} JPEG del cartel final
@@ -143,37 +143,42 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
 
   if (plantilla.campos.imagenProducto && imagenProductoBuffer) {
     const rect = campoRect(plantilla.campos.imagenProducto, anchoFinal, altoFinal);
+    // La foto de producto siempre viene de Telegram (JPEG) — tanto la del catálogo
+    // futuro como, para "nuevo_ingreso", la misma foto que subió Depósito.
     const productoBase64 = imagenProductoBuffer.toString('base64');
     hijos.push({
       type: 'img',
       props: {
-        src: `data:image/png;base64,${productoBase64}`,
+        src: `data:image/jpeg;base64,${productoBase64}`,
         style: { position: 'absolute', ...rect, objectFit: 'contain' },
       },
     });
   }
 
-  const { entero, decimales } = formatearPrecio(precio);
-  const rectPrecio = campoRect(plantilla.campos.precio, anchoFinal, altoFinal);
-  // Precio en una sola línea: satori no lo achica solo si es más largo (p.ej. "1.899"
-  // vs "999"), así que ajustamos el tamaño según la cantidad de dígitos + el "." de
-  // miles, y dejamos overflow:hidden como red de seguridad para que nunca tape el
-  // "FINAL" fijo de la plantilla.
-  const tamanioPrecio = Math.min(rectPrecio.height * 0.85, rectPrecio.width / (entero.length * 0.62 + 0.47));
-  hijos.push({
-    type: 'div',
-    props: {
-      style: {
-        position: 'absolute', left: rectPrecio.left, top: rectPrecio.top, width: rectPrecio.width, height: rectPrecio.height,
-        display: 'flex', flexDirection: 'row', alignItems: 'flex-start', justifyContent: justify(plantilla.campos.precio.align),
-        overflow: 'hidden',
+  // El precio es opcional: "nuevo_ingreso" no tiene ese campo en la plantilla.
+  if (plantilla.campos.precio) {
+    const { entero, decimales } = formatearPrecio(precio);
+    const rectPrecio = campoRect(plantilla.campos.precio, anchoFinal, altoFinal);
+    // Precio en una sola línea: satori no lo achica solo si es más largo (p.ej. "1.899"
+    // vs "999"), así que ajustamos el tamaño según la cantidad de dígitos + el "." de
+    // miles, y dejamos overflow:hidden como red de seguridad para que nunca tape el
+    // "FINAL" fijo de la plantilla.
+    const tamanioPrecio = Math.min(rectPrecio.height * 0.85, rectPrecio.width / (entero.length * 0.62 + 0.47));
+    hijos.push({
+      type: 'div',
+      props: {
+        style: {
+          position: 'absolute', left: rectPrecio.left, top: rectPrecio.top, width: rectPrecio.width, height: rectPrecio.height,
+          display: 'flex', flexDirection: 'row', alignItems: 'flex-start', justifyContent: justify(plantilla.campos.precio.align),
+          overflow: 'hidden',
+        },
+        children: [
+          { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: '#1a1a1a', lineHeight: 1 }, children: entero } },
+          { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio * 0.38, color: '#1a1a1a', lineHeight: 1, marginLeft: tamanioPrecio * 0.06 }, children: decimales } },
+        ],
       },
-      children: [
-        { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: '#1a1a1a', lineHeight: 1 }, children: entero } },
-        { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio * 0.38, color: '#1a1a1a', lineHeight: 1, marginLeft: tamanioPrecio * 0.06 }, children: decimales } },
-      ],
-    },
-  });
+    });
+  }
 
   const colorNombre = plantilla.campos.colorNombre || '#ffffff';
   const rectLinea1 = campoRect(plantilla.campos.nombreLinea1, anchoFinal, altoFinal);
