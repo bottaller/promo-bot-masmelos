@@ -1,18 +1,67 @@
-// Composición del cartel final: plantilla + texto (producto, precio, vencimiento)
-// + foto del producto, todo por código con sharp. El precio y el nombre NUNCA los
-// dibuja un modelo generativo — así el valor impreso siempre es exacto.
+// Composición del cartel final con satori (layout tipo HTML/flexbox, mide el texto de
+// verdad — sin heurísticas de ancho de letra) + sharp (rasteriza el SVG final a JPEG).
+// El precio y el nombre NUNCA los dibuja un modelo generativo — así el valor impreso
+// siempre es exacto.
+const fs = require('fs');
+const path = require('path');
+const satori = require('satori').default;
 const sharp = require('sharp');
+const opentype = require('@shuding/opentype.js');
 const { plantillaPara } = require('./carteleria-plantillas');
 
 // Gráfica cigüeña = mismo diseño que cartel simple, al doble de tamaño de canvas.
 const ESCALA_CIGUENA = 2;
 
-function escaparXml(texto) {
-  return String(texto)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+// El subset "latin" (U+0000-00FF) trae el alfabeto básico + acentos/ñ en español.
+// "latin-ext" es solo para otros idiomas (checo, polaco, etc.) — NO tiene ni A-Z ni 0-9.
+const RUTA_FUENTE = path.join(
+  __dirname, '..', '..', 'node_modules', '@fontsource', 'anton', 'files', 'anton-latin-400-normal.woff'
+);
+let fuenteCache = null;
+function fuente() {
+  if (!fuenteCache) fuenteCache = fs.readFileSync(RUTA_FUENTE);
+  return fuenteCache;
+}
+
+// Fuente ya parseada, para medir ancho real de texto (satori no expone una API de
+// medición propia — usamos la misma librería que usa por dentro, @shuding/opentype.js).
+let fuenteParseadaCache = null;
+function fuenteParseada() {
+  if (!fuenteParseadaCache) {
+    const buf = fuente();
+    fuenteParseadaCache = opentype.parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+  }
+  return fuenteParseadaCache;
+}
+
+// Corta `texto` en como máximo 2 líneas que entren en `anchoMax` a `tamanioFuente`,
+// midiendo el ancho real de cada palabra (no una heurística) — si no entra en 2
+// líneas, la 2da se recorta con "…". Nunca se desborda de la plantilla.
+function partirEnLineas(texto, tamanioFuente, anchoMax) {
+  const font = fuenteParseada();
+  const anchoDe = (t) => font.getAdvanceWidth(t, tamanioFuente);
+  const palabras = String(texto).toUpperCase().trim().split(/\s+/).filter(Boolean);
+
+  const lineas = [];
+  let actual = '';
+  for (const palabra of palabras) {
+    const candidata = actual ? `${actual} ${palabra}` : palabra;
+    if (!actual || anchoDe(candidata) <= anchoMax) {
+      actual = candidata;
+    } else {
+      lineas.push(actual);
+      actual = palabra;
+    }
+  }
+  if (actual) lineas.push(actual);
+
+  if (lineas.length <= 2) return lineas;
+
+  let recortada = lineas[1];
+  while (recortada.length > 1 && anchoDe(`${recortada}…`) > anchoMax) {
+    recortada = recortada.slice(0, -1).trimEnd();
+  }
+  return [lineas[0], `${recortada}…`];
 }
 
 // $1.999 -> { entero: "1.999", decimales: "99" }. `precio` siempre viene con 2
@@ -27,10 +76,10 @@ function formatearPrecio(precio) {
   };
 }
 
-// 'YYYY-MM-DD' (recién parseado en el wizard) o Date (columna `date` ya leída de la
-// DB, "pg" la devuelve como Date de medianoche LOCAL) -> "D/M/YY", igual al formato
-// que ya usan las plantillas a mano ("VTO: 7/8/26"). Usamos los getters UTC porque
-// la empresa opera en Argentina (UTC-3): medianoche local siempre cae en el mismo
+// Guardado en DB como 'YYYY-MM-DD' (recién parseado en el wizard) o Date (columna `date`
+// ya leída de la DB, "pg" la devuelve como Date de medianoche LOCAL) -> "D/M/YY", igual
+// al formato que ya usan las plantillas a mano ("VTO: 7/8/26"). Usamos los getters UTC
+// porque la empresa opera en Argentina (UTC-3): medianoche local siempre cae en el mismo
 // día calendario en UTC, así que no hay corrimiento de fecha.
 function formatearVencimiento(vencimiento) {
   const fecha = vencimiento instanceof Date ? vencimiento : new Date(`${vencimiento}T00:00:00Z`);
@@ -40,53 +89,31 @@ function formatearVencimiento(vencimiento) {
   return `${dia}/${mes}/${anio}`;
 }
 
-// Corta el nombre del producto en hasta 2 líneas. Heurística simple por cantidad
-// de caracteres (no hay medición real de ancho de fuente); si no entra, se corta.
-function envolverNombre(producto, maxCaracteresPorLinea) {
-  const palabras = String(producto).toUpperCase().trim().split(/\s+/);
-  let linea1 = '';
-  let linea2 = '';
-  for (const palabra of palabras) {
-    const candidata = linea1 ? `${linea1} ${palabra}` : palabra;
-    if (candidata.length <= maxCaracteresPorLinea || !linea1) {
-      linea1 = candidata;
-    } else {
-      linea2 = linea2 ? `${linea2} ${palabra}` : palabra;
-    }
-  }
-  if (linea2.length > maxCaracteresPorLinea) {
-    linea2 = linea2.slice(0, maxCaracteresPorLinea - 1).trimEnd() + '…';
-  }
-  return [linea1, linea2];
-}
-
-// Sharp/librsvg no mide texto real, así que estimamos el ancho por caracter
-// (fuente bold condensada ~0.6x el tamaño de fuente) para que nunca se desborde
-// del campo, sin importar qué tan largo sea el nombre del producto o el precio.
-const ANCHO_PROMEDIO_GLIFO = 0.95;
-
-function tamanioAjustado(texto, ancho, alto, factorAlto) {
-  const porAlto = alto * (factorAlto || 0.85);
-  const porAncho = ancho / (Math.max(String(texto).length, 1) * ANCHO_PROMEDIO_GLIFO);
-  return Math.min(porAlto, porAncho);
-}
-
 function campoRect(campo, ancho, alto) {
   return {
-    x: campo.x * ancho,
-    y: campo.y * alto,
-    ancho: campo.ancho * ancho,
-    alto: campo.alto * alto,
+    left: campo.x * ancho,
+    top: campo.y * alto,
+    width: campo.ancho * ancho,
+    height: campo.alto * alto,
   };
 }
 
-function textoSvg({ x, y, ancho, alto, texto, align, tamanioFuente, color, pesoFuente }) {
-  const anchorX = align === 'center' ? x + ancho / 2 : x;
-  const textAnchor = align === 'center' ? 'middle' : 'start';
-  const yCentrado = y + alto / 2 + tamanioFuente * 0.3; // aproximación de centrado vertical
-  return `<text x="${anchorX}" y="${yCentrado}" font-family="Arial, Helvetica, sans-serif" ` +
-    `font-weight="${pesoFuente || 900}" font-size="${tamanioFuente}" fill="${color}" ` +
-    `text-anchor="${textAnchor}">${escaparXml(texto)}</text>`;
+function justify(align) {
+  return align === 'center' ? 'center' : 'flex-start';
+}
+
+// Una línea de texto centrada/alineada dentro de su caja.
+function cajaLinea({ rect, texto, align, tamanioFuente, color }) {
+  return {
+    type: 'div',
+    props: {
+      style: {
+        position: 'absolute', left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+        display: 'flex', alignItems: 'center', justifyContent: justify(align), overflow: 'hidden',
+      },
+      children: { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioFuente, color, lineHeight: 1 }, children: texto } },
+    },
+  };
 }
 
 /**
@@ -96,7 +123,7 @@ function textoSvg({ x, y, ancho, alto, texto, align, tamanioFuente, color, pesoF
  * @param {'corto_vencimiento'|'politica'|'precio_piso'} datos.tipoPrecio
  * @param {string} datos.producto
  * @param {number} datos.precio
- * @param {string|null} datos.vencimiento - 'YYYY-MM-DD' o null
+ * @param {string|Date|null} datos.vencimiento
  * @param {Buffer|null} datos.imagenProductoBuffer - foto del producto ya descargada, o null
  * @returns {Promise<Buffer>} JPEG del cartel final
  */
@@ -106,68 +133,81 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
   const anchoFinal = Math.round(plantilla.ancho * escala);
   const altoFinal = Math.round(plantilla.alto * escala);
 
-  const capas = [];
+  const fondoBase64 = fs.readFileSync(plantilla.archivo).toString('base64');
+  const hijos = [
+    {
+      type: 'img',
+      props: { src: `data:image/jpeg;base64,${fondoBase64}`, width: anchoFinal, height: altoFinal, style: { position: 'absolute', left: 0, top: 0 } },
+    },
+  ];
 
-  // Foto del producto (si hay campo definido en la plantilla y se pasó imagen)
   if (plantilla.campos.imagenProducto && imagenProductoBuffer) {
     const rect = campoRect(plantilla.campos.imagenProducto, anchoFinal, altoFinal);
-    const imagenRedimensionada = await sharp(imagenProductoBuffer)
-      .resize(Math.round(rect.ancho), Math.round(rect.alto), { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-      .toBuffer();
-    capas.push({ input: imagenRedimensionada, left: Math.round(rect.x), top: Math.round(rect.y) });
+    const productoBase64 = imagenProductoBuffer.toString('base64');
+    hijos.push({
+      type: 'img',
+      props: {
+        src: `data:image/png;base64,${productoBase64}`,
+        style: { position: 'absolute', ...rect, objectFit: 'contain' },
+      },
+    });
   }
 
-  // Texto (precio, nombre, vencimiento) en un solo overlay SVG
   const { entero, decimales } = formatearPrecio(precio);
-  const campoPrecio = campoRect(plantilla.campos.precio, anchoFinal, altoFinal);
-  const tamanioPrecio = tamanioAjustado(entero, campoPrecio.ancho * 0.78, campoPrecio.alto, 0.85);
-  const tamanioDecimales = tamanioPrecio * 0.4;
+  const rectPrecio = campoRect(plantilla.campos.precio, anchoFinal, altoFinal);
+  // Precio en una sola línea: satori no lo achica solo si es más largo (p.ej. "1.899"
+  // vs "999"), así que ajustamos el tamaño según la cantidad de dígitos + el "." de
+  // miles, y dejamos overflow:hidden como red de seguridad para que nunca tape el
+  // "FINAL" fijo de la plantilla.
+  const tamanioPrecio = Math.min(rectPrecio.height * 0.85, rectPrecio.width / (entero.length * 0.62 + 0.47));
+  hijos.push({
+    type: 'div',
+    props: {
+      style: {
+        position: 'absolute', left: rectPrecio.left, top: rectPrecio.top, width: rectPrecio.width, height: rectPrecio.height,
+        display: 'flex', flexDirection: 'row', alignItems: 'flex-start', justifyContent: justify(plantilla.campos.precio.align),
+        overflow: 'hidden',
+      },
+      children: [
+        { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: '#1a1a1a', lineHeight: 1 }, children: entero } },
+        { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio * 0.38, color: '#1a1a1a', lineHeight: 1, marginLeft: tamanioPrecio * 0.06 }, children: decimales } },
+      ],
+    },
+  });
 
-  const elementosSvg = [];
-  elementosSvg.push(textoSvg({
-    ...campoPrecio, texto: entero, align: plantilla.campos.precio.align,
-    tamanioFuente: tamanioPrecio, color: '#1a1a1a',
-  }));
-  // Decimales, más chicos, pegados a la derecha del entero
-  const xDecimales = campoPrecio.x + (plantilla.campos.precio.align === 'center' ? campoPrecio.ancho / 2 : 0) + tamanioPrecio * entero.length * 0.62;
-  elementosSvg.push(`<text x="${xDecimales}" y="${campoPrecio.y + campoPrecio.alto * 0.42}" ` +
-    `font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="${tamanioDecimales}" ` +
-    `fill="#1a1a1a">${decimales}</text>`);
-
-  const maxCaracteresNombre = tipoGrafica === 'a4' || tipoGrafica === 'a4_color'
-    ? (tipoPrecio === 'corto_vencimiento' ? 26 : 30)
-    : 40;
-  const [nombreLinea1, nombreLinea2] = envolverNombre(producto, maxCaracteresNombre);
   const colorNombre = plantilla.campos.colorNombre || '#ffffff';
-  const campoLinea1 = campoRect(plantilla.campos.nombreLinea1, anchoFinal, altoFinal);
-  elementosSvg.push(textoSvg({
-    ...campoLinea1, texto: nombreLinea1, align: plantilla.campos.nombreLinea1.align,
-    tamanioFuente: tamanioAjustado(nombreLinea1, campoLinea1.ancho, campoLinea1.alto, 0.85), color: colorNombre,
-  }));
+  const rectLinea1 = campoRect(plantilla.campos.nombreLinea1, anchoFinal, altoFinal);
+  const tamanioNombre = rectLinea1.height * 0.72;
+  const [nombreLinea1, nombreLinea2] = partirEnLineas(producto, tamanioNombre, rectLinea1.width);
+  hijos.push(cajaLinea({ rect: rectLinea1, texto: nombreLinea1, align: plantilla.campos.nombreLinea1.align, tamanioFuente: tamanioNombre, color: colorNombre }));
   if (nombreLinea2 && plantilla.campos.nombreLinea2) {
-    const campoLinea2 = campoRect(plantilla.campos.nombreLinea2, anchoFinal, altoFinal);
-    elementosSvg.push(textoSvg({
-      ...campoLinea2, texto: nombreLinea2, align: plantilla.campos.nombreLinea2.align,
-      tamanioFuente: tamanioAjustado(nombreLinea2, campoLinea2.ancho, campoLinea2.alto, 0.85), color: colorNombre,
-    }));
+    const rectLinea2 = campoRect(plantilla.campos.nombreLinea2, anchoFinal, altoFinal);
+    hijos.push(cajaLinea({ rect: rectLinea2, texto: nombreLinea2, align: plantilla.campos.nombreLinea2.align, tamanioFuente: tamanioNombre, color: colorNombre }));
   }
 
   if (vencimiento && plantilla.campos.vencimiento) {
-    const campoVto = campoRect(plantilla.campos.vencimiento, anchoFinal, altoFinal);
-    elementosSvg.push(textoSvg({
-      ...campoVto, texto: `VTO: ${formatearVencimiento(vencimiento)}`, align: 'left',
-      tamanioFuente: campoVto.alto * 0.9, color: '#1a1a1a', pesoFuente: 700,
-    }));
+    const rectVto = campoRect(plantilla.campos.vencimiento, anchoFinal, altoFinal);
+    hijos.push({
+      type: 'div',
+      props: {
+        style: {
+          position: 'absolute', left: rectVto.left, top: rectVto.top, width: rectVto.width, height: rectVto.height,
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
+        },
+        children: {
+          type: 'div',
+          props: { style: { fontFamily: 'Anton', fontSize: rectVto.height * 0.85, color: '#1a1a1a' }, children: `VTO: ${formatearVencimiento(vencimiento)}` },
+        },
+      },
+    });
   }
 
-  const svg = `<svg width="${anchoFinal}" height="${altoFinal}" xmlns="http://www.w3.org/2000/svg">${elementosSvg.join('')}</svg>`;
-  capas.push({ input: Buffer.from(svg), left: 0, top: 0 });
+  const svg = await satori(
+    { type: 'div', props: { style: { width: anchoFinal, height: altoFinal, display: 'flex', position: 'relative' }, children: hijos } },
+    { width: anchoFinal, height: altoFinal, fonts: [{ name: 'Anton', data: fuente(), weight: 400, style: 'normal' }] }
+  );
 
-  return sharp(plantilla.archivo)
-    .resize(anchoFinal, altoFinal)
-    .composite(capas)
-    .jpeg({ quality: 92 })
-    .toBuffer();
+  return sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toBuffer();
 }
 
-module.exports = { generarCartel, formatearPrecio, formatearVencimiento, envolverNombre };
+module.exports = { generarCartel, formatearPrecio, formatearVencimiento };

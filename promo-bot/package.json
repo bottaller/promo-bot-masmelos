@@ -9,9 +9,11 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
+    "@fontsource/anton": "^5.3.0",
     "dotenv": "^16.4.5",
     "pdfkit": "^0.19.1",
     "pg": "^8.13.1",
+    "satori": "^0.29.0",
     "sharp": "^0.35.3",
     "telegraf": "^4.16.3",
     "xlsx": "^0.18.5"
