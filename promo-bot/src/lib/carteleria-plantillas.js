@@ -35,10 +35,11 @@ const LABELS_TIPO_PRECIO = {
 // tipos de precio que NO llevan precio en el cartel final (solo producto + foto).
 const TIPOS_PRECIO_SIN_PRECIO = ['nuevo_ingreso'];
 
-// A4 / A4 Color: plantilla vertical (~800x1125), pastilla roja "$ ___ FINAL" arriba,
-// caja oscura de nombre de producto abajo, disclaimer fijo al pie.
+// A4 / A4 Color: plantilla vertical (~800x1125), pastilla roja "$ ___ FINAL" arriba, hueco de
+// foto de producto en el medio, caja oscura de nombre de producto abajo, disclaimer fijo al pie.
 const CAMPOS_A4_PRECIO = {
   precio: { x: 0.29, y: 0.235, ancho: 0.27, alto: 0.10, align: 'left' },
+  imagenProducto: { x: 0.15, y: 0.37, ancho: 0.70, alto: 0.36 },
   nombreLinea1: { x: 0.145, y: 0.775, ancho: 0.665, alto: 0.045, align: 'center' },
   nombreLinea2: { x: 0.145, y: 0.825, ancho: 0.665, alto: 0.045, align: 'center' },
   colorNombre: '#ffffff', // caja oscura de fondo
@@ -71,10 +72,11 @@ const CAMPOS_A4_NUEVO_INGRESO = {
 };
 
 // Cartel simple / Cigüeña: plantilla horizontal (~1600x1066), "$" grande fijo a la
-// izquierda, "FINAL" fijo arriba a la derecha, precio grande en el campo amarillo,
-// barra blanca de nombre abajo, footer negro con disclaimer fijo.
+// izquierda, "FINAL" fijo arriba a la derecha, precio grande en el campo amarillo, hueco de
+// foto de producto a la derecha, barra blanca de nombre abajo, footer negro con disclaimer fijo.
 const CAMPOS_CARTEL_PRECIO = {
   precio: { x: 0.10, y: 0.20, ancho: 0.55, alto: 0.30, align: 'left' },
+  imagenProducto: { x: 0.35, y: 0.40, ancho: 0.60, alto: 0.33 },
   nombreLinea1: { x: 0.03, y: 0.755, ancho: 0.94, alto: 0.06, align: 'center' },
   nombreLinea2: { x: 0.03, y: 0.825, ancho: 0.94, alto: 0.06, align: 'center' },
   colorNombre: '#1a1a1a', // barra blanca de fondo (no hay caja oscura)
