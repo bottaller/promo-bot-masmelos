@@ -2,6 +2,11 @@ node_modules/
 .env
 *.log
 
+# Fotos originales del catálogo de productos (4500+, ~1.4GB) — se procesan (resize + WebP) y
+# suben a Supabase Storage con scripts/subir-catalogo.js, nunca van al repo. Ver
+# assets/productos/README.md.
+ARTICULOS/
+
 # Artefactos runtime del arqueo (los genera el motor Python en cada corrida)
 arqueo/reports/
 arqueo/data/

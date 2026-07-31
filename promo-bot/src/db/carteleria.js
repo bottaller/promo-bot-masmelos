@@ -3,14 +3,18 @@ const { pool } = require('./pool');
 
 async function crearCarteleria({
   fotoFileId, tipo, tipoPrecio, cantidadCopias, vencimiento,
-  usuarioId, usuarioNombre, usuarioTelegramId, esPrueba,
+  usuarioId, usuarioNombre, usuarioTelegramId, esPrueba, producto, precio,
 }) {
   const { rows } = await pool.query(
     `insert into bot.carteleria
-       (foto_file_id, tipo, tipo_precio, cantidad_copias, vencimiento, usuario_id, usuario_nombre, usuario_telegram_id, es_prueba)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       (foto_file_id, tipo, tipo_precio, cantidad_copias, vencimiento, usuario_id, usuario_nombre, usuario_telegram_id, es_prueba, producto, precio)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      returning id`,
-    [fotoFileId, tipo, tipoPrecio, cantidadCopias ?? null, vencimiento ?? null, usuarioId ?? null, usuarioNombre ?? null, usuarioTelegramId, !!esPrueba]
+    [
+      fotoFileId ?? null, tipo, tipoPrecio, cantidadCopias ?? null, vencimiento ?? null,
+      usuarioId ?? null, usuarioNombre ?? null, usuarioTelegramId, !!esPrueba,
+      producto ?? null, precio ?? null,
+    ]
   );
   return rows[0].id;
 }
@@ -20,9 +24,9 @@ async function carteleriaPorId(id) {
   return rows[0] || null;
 }
 
-// Guarda lo que extrajo la IA + el file_id del diseño generado. Se usa tanto la
-// primera vez (después de generar) como en cada corrección de Marketing
-// (sobrescribe con los datos nuevos y el diseño regenerado).
+// Guarda producto/precio (confirmados por Depósito o corregidos por Marketing) + el file_id
+// del diseño generado. Se usa tanto la primera vez (después de generar) como en cada
+// corrección de Marketing (sobrescribe con los datos nuevos y el diseño regenerado).
 async function guardarDiseno(id, { producto, precio, disenoFileId }) {
   const { rows } = await pool.query(
     `update bot.carteleria set producto = $2, precio = $3, diseno_file_id = $4

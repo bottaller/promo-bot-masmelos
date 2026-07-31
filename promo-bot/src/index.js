@@ -39,11 +39,6 @@ for (const key of requeridas) {
 if (!process.env.OWNER_TELEGRAM_ID) {
   console.error('⚠️  Falta OWNER_TELEGRAM_ID en el .env: /ajuste y /promoprecios no van a poder avisarle a nadie.');
 }
-// ANTHROPIC_API_KEY tampoco corta el arranque: sin ella /carteleria cae al flujo viejo
-// (foto cruda a Marketing, sin diseño automático) — ver src/lib/carteleria-vision.js.
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.error('⚠️  Falta ANTHROPIC_API_KEY en el .env: /carteleria no va a poder generar el diseño automático.');
-}
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 setBot(bot);

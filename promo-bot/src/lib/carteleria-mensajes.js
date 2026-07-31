@@ -1,5 +1,5 @@
-// Mensajes de /carteleria hacia Marketing. Separado del wizard para poder
-// reusarlo tanto al cargar (fallback si falla la IA) como después de que
+// Mensajes de /carteleria hacia Marketing. Separado del wizard para poder reusarlo tanto al
+// cargar el diseño (scenes/carteleria.js, corregir-carteleria.js) como después de que
 // Marketing aprueba el diseño (acciones-deposito.js).
 const { telegramIdsPorRol } = require('../db/usuarios');
 const { LABELS_TIPO_PRECIO } = require('./carteleria-plantillas');
@@ -16,11 +16,10 @@ function linkWhatsApp(texto) {
   return `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`;
 }
 
-// Aviso final a Marketing (imprimir A4, o pedir a la gráfica) — con el file_id que
-// corresponda: el diseño aprobado, o la foto cruda si la IA no pudo generarlo.
-// `destinatarios` es un override explícito de a quién avisar — lo usa /carteleria_prueba
-// para que un pedido de prueba NUNCA le llegue a Marketing real (ver scenes/carteleria.js
-// y acciones-deposito.js). Si no se pasa, va a Marketing como siempre.
+// Aviso final a Marketing (imprimir A4, o pedir a la gráfica) con el diseño ya aprobado —
+// se dispara desde acciones-deposito.js cuando Marketing toca "✅ Está bien". `destinatarios`
+// es un override explícito de a quién avisar — lo usa /carteleria_prueba para que un pedido de
+// prueba NUNCA le llegue a Marketing real. Si no se pasa, va a Marketing como siempre.
 async function avisarAMarketingFinal(telegram, { id, fileIdParaEnviar, tipo, cantidadCopias, destinatarios, esPrueba }) {
   const { label, interno } = TIPOS[tipo];
   const prefijo = esPrueba ? '🧪 PRUEBA (esto no salió para Marketing) — ' : '';
@@ -48,11 +47,11 @@ async function avisarAMarketingFinal(telegram, { id, fileIdParaEnviar, tipo, can
   return avisados;
 }
 
-// Foto original + diseño generado, con los botones de verificación. Sube el
-// diseño (Buffer) una sola vez y reutiliza el file_id que devuelve Telegram
-// para el resto de los destinatarios. Si `carteleria.es_prueba` es true (viene de
-// /carteleria_prueba), esto NUNCA sale para Marketing real — vuelve solo a quien
-// lo probó (usuario_telegram_id), botones incluidos.
+// Diseño generado (+ la foto del código de barras escaneado, si Depósito mandó una — puede no
+// haber ninguna si lo cargó a mano) con los botones de verificación. Sube el diseño (Buffer)
+// una sola vez y reutiliza el file_id que devuelve Telegram para el resto de los destinatarios.
+// Si `carteleria.es_prueba` es true (viene de /carteleria_prueba), esto NUNCA sale para
+// Marketing real — vuelve solo a quien lo probó (usuario_telegram_id), botones incluidos.
 async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer }) {
   const {
     id, foto_file_id: fotoFileId, tipo, tipo_precio: tipoPrecio, cantidad_copias: cantidadCopias,
@@ -63,7 +62,7 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer 
   // "nuevo_ingreso" no lleva precio — precio viene null en ese caso.
   const precioTexto = precio === null || precio === undefined ? '' : ` — $${Number(precio).toFixed(2)}`;
   const prefijo = esPrueba ? '🧪 PRUEBA (solo vos ves esto) — ' : '';
-  const captionDiseno = `${prefijo}🖼️ Diseño generado: ${producto}${precioTexto} (${label}, ${LABELS_TIPO_PRECIO[tipoPrecio]}${copiasTexto}). Verificalo contra la foto original.`;
+  const captionDiseno = `${prefijo}🖼️ Diseño generado: ${producto}${precioTexto} (${label}, ${LABELS_TIPO_PRECIO[tipoPrecio]}${copiasTexto}). Revisalo antes de aprobar.`;
   const botones = {
     reply_markup: {
       inline_keyboard: [
@@ -77,7 +76,9 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer 
   let disenoFileId = null;
   for (const tid of esPrueba ? [usuarioTelegramId] : await telegramIdsPorRol('marketing')) {
     try {
-      await telegram.sendPhoto(tid, fotoFileId, { caption: `📷 Foto original de Depósito — pedido #${id}` });
+      if (fotoFileId) {
+        await telegram.sendPhoto(tid, fotoFileId, { caption: `📷 Código de barras escaneado — pedido #${id}` });
+      }
       const enviado = await telegram.sendPhoto(tid, disenoFileId || { source: disenoBuffer }, { caption: captionDiseno, ...botones });
       if (!disenoFileId) {
         const fotos = enviado.photo || [];
