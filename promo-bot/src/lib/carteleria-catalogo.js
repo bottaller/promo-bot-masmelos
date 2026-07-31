@@ -35,8 +35,18 @@ function normalizar(texto) {
     .trim();
 }
 
+// Palabras sin valor distintivo — ni números sueltos ("100", "500": son el gramaje/cantidad,
+// aparecen en cientos de productos no relacionados) ni palabras de relleno del español ("bien",
+// "para", "con"). Sin esto, cualquiera de estas puede desempatar un match por pura casualidad
+// (pasó de verdad: "El producto está BIEN..." matcheó una foto de un brownie "...sabe BIEN...").
+// "100g"/"1kg" (alfanuméricos) sí quedan — esos sí distinguen el producto.
+const PALABRAS_VACIAS = new Set([
+  'los', 'las', 'del', 'con', 'sin', 'por', 'para', 'que', 'una', 'uno', 'esta', 'esto',
+  'eso', 'ese', 'esa', 'son', 'hay', 'muy', 'mas', 'bien', 'mal', 'todo', 'toda', 'otro', 'otra',
+  'como', 'pero', 'porque',
+]);
 function palabras(texto) {
-  return normalizar(texto).split(' ').filter((p) => p.length >= PALABRA_MINIMA);
+  return normalizar(texto).split(' ').filter((p) => p.length >= PALABRA_MINIMA && !/^\d+$/.test(p) && !PALABRAS_VACIAS.has(p));
 }
 
 let manifestCache = null;
