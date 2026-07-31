@@ -50,6 +50,12 @@ const CAMPOS_A4_PRECIO = {
   // de la esquina redondeada del arte.
   cajaNombreSegura: { x: 0.205, ancho: 0.615 },
   colorPrecio: '#ffffff', // "$" y "FINAL" de la pastilla roja son blancos
+  // Tag con punta (banderín) fijo arriba a la derecha de la pastilla — en "precio_piso" dice
+  // "¡PRECIOS AL PISO!" (fijo), en "politica" dice "DTO. X VOL" (fijo) y ahí es donde se
+  // repinta con la política que escribe Depósito (solo se usa cuando tipo_precio=politica, ver
+  // carteleria-render.js). Hasta 2 líneas — la parte de abajo se angosta por la punta del
+  // banderín, por eso el rect no ocupa toda la altura visible del tag.
+  tagPolitica: { x: 0.638, y: 0.248, ancho: 0.135, alto: 0.095, colorFondo: '#34332f', colorTexto: '#ffe000' },
 };
 
 // A4 corto vencimiento: plantilla vertical más grande (~1131x1600), banner
@@ -103,6 +109,11 @@ const CAMPOS_CARTEL_PRECIO = {
   // "FINAL" fijo de al lado — topeamos el tamaño de fuente en 15% del alto del cartel,
   // independiente de dónde se centra el bloque.
   precioAlturaMax: 0.15,
+  // Banner rojo fijo arriba a la izquierda — en "precio_piso" dice "¡PRECIOS AL PISO!" (fijo),
+  // en "politica" dice "DESCUENTO POR VOLUMEN" (fijo) y ahí es donde se repinta con la política
+  // que escribe Depósito (solo cuando tipo_precio=politica). El banner es angosto y se angosta
+  // más todavía hacia la derecha (corte diagonal) — 1 sola línea, se trunca con "…" si no entra.
+  tagPolitica: { x: 0.025, y: 0, ancho: 0.35, alto: 0.09, colorFondo: '#e40e16', colorTexto: '#ffe814', lineas: 1 },
 };
 
 const PLANTILLAS = {

@@ -71,6 +71,34 @@ function partirEnLineas(texto, tamanioFuente, anchoMax) {
   return [linea1, linea2];
 }
 
+// Une `texto` en UNA sola línea que entre en `anchoMax`, recortando con "…" si hace falta —
+// para el tag de política de Cartel/Cigüeña, que se angosta hacia la punta y no da lugar a 2
+// líneas (a diferencia del de A4, que sí usa partirEnLineas normal).
+function unaLinea(texto, tamanioFuente, anchoMax) {
+  const font = fuenteParseada();
+  const anchoDe = (t) => font.getAdvanceWidth(t, tamanioFuente);
+  let linea = String(texto).toUpperCase().trim().replace(/\s+/g, ' ');
+  if (!linea) return '';
+  if (anchoDe(linea) <= anchoMax) return linea;
+  while (linea.length > 1 && anchoDe(`${linea}…`) > anchoMax) linea = linea.slice(0, -1).trimEnd();
+  return `${linea}…`;
+}
+
+// Encuentra el tamaño de fuente más grande (arrancando en `tamanioMax`) con el que `texto`
+// entra en `anchoMax` SIN truncar con "…" — para el tag de política, donde el largo real varía
+// mucho ("3X2" vs "Llevando 6 unidades 15% off") y truncar pierde información importante (un
+// "%" cortado a la mitad es peor que la letra más chica). Nunca baja de `tamanioMin`: ahí sí se
+// acepta el truncado de partirEnLineas/unaLinea como último recurso.
+function ajustarTamanioTag(texto, tamanioMax, tamanioMin, anchoMax, unaSolaLinea) {
+  let tamanio = tamanioMax;
+  let lineas = unaSolaLinea ? [unaLinea(texto, tamanio, anchoMax)] : partirEnLineas(texto, tamanio, anchoMax);
+  while (lineas.some((l) => l.includes('…')) && tamanio > tamanioMin) {
+    tamanio = Math.max(tamanio * 0.92, tamanioMin);
+    lineas = unaSolaLinea ? [unaLinea(texto, tamanio, anchoMax)] : partirEnLineas(texto, tamanio, anchoMax);
+  }
+  return { tamanio, lineas };
+}
+
 // $1.999 -> { entero: "1.999", decimales: "99" }. `precio` siempre viene con 2
 // decimales aunque sean $0 (p.ej. $500 -> entero "500", decimales "00").
 function formatearPrecio(precio) {
@@ -117,10 +145,12 @@ function justify(align) {
  * @param {string} datos.producto
  * @param {number|null} datos.precio - ignorado si la plantilla no tiene campo de precio (nuevo_ingreso)
  * @param {string|Date|null} datos.vencimiento
+ * @param {string|null} datos.politica - solo para tipoPrecio='politica'; reemplaza el tag fijo
+ *   "DTO. X VOL" / "DESCUENTO POR VOLUMEN" por este texto. Se ignora en el resto de los tipos.
  * @param {Buffer|null} datos.imagenProductoBuffer - foto del producto ya descargada, o null
  * @returns {Promise<Buffer>} JPEG del cartel final
  */
-async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencimiento, imagenProductoBuffer }) {
+async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencimiento, politica, imagenProductoBuffer }) {
   const plantilla = plantillaPara(tipoGrafica, tipoPrecio);
   const escala = tipoGrafica === 'ciguena' ? ESCALA_CIGUENA : 1;
   const anchoFinal = Math.round(plantilla.ancho * escala);
@@ -277,6 +307,41 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       })),
     },
   });
+
+  // Tag de política ("DTO. X VOL" / "DESCUENTO POR VOLUMEN" fijos en el arte) — se repinta con
+  // la política que escribió Depósito, solo para tipo_precio=politica. A4 admite 2 líneas
+  // (partirEnLineas, igual que el nombre); Cartel/Cigüeña es angosto y se cierra hacia la punta
+  // del banderín, así que va en 1 sola línea truncada.
+  if (tipoPrecio === 'politica' && politica && plantilla.campos.tagPolitica) {
+    const tag = plantilla.campos.tagPolitica;
+    const rectTag = campoRect(tag, anchoFinal, altoFinal);
+    const unaSolaLinea = tag.lineas === 1;
+    const tamanioMax = rectTag.height * (unaSolaLinea ? 0.6 : 0.4);
+    const { tamanio: tamanioTag, lineas: lineasTag } = ajustarTamanioTag(politica, tamanioMax, tamanioMax * 0.4, rectTag.width, unaSolaLinea);
+    hijos.push({
+      type: 'div',
+      props: {
+        style: {
+          position: 'absolute', left: rectTag.left, top: rectTag.top, width: rectTag.width, height: rectTag.height,
+          backgroundColor: tag.colorFondo,
+        },
+      },
+    });
+    hijos.push({
+      type: 'div',
+      props: {
+        style: {
+          position: 'absolute', left: rectTag.left, top: rectTag.top, width: rectTag.width, height: rectTag.height,
+          display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+          overflow: 'hidden',
+        },
+        children: lineasTag.filter(Boolean).map((linea) => ({
+          type: 'div',
+          props: { style: { fontFamily: 'Anton', fontSize: tamanioTag, color: tag.colorTexto, lineHeight: 1.2 }, children: linea },
+        })),
+      },
+    });
+  }
 
   if (vencimiento && plantilla.campos.vencimiento) {
     const rectVto = campoRect(plantilla.campos.vencimiento, anchoFinal, altoFinal);

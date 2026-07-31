@@ -69,6 +69,7 @@ async function regenerarYReenviar(ctx, precio) {
       producto,
       precio,
       vencimiento: carteleria.vencimiento,
+      politica: carteleria.politica_texto, // no se corrige acá, se preserva la original
       imagenProductoBuffer,
     });
 
