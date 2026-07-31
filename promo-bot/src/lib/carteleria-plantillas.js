@@ -38,7 +38,10 @@ const TIPOS_PRECIO_SIN_PRECIO = ['nuevo_ingreso'];
 // A4 / A4 Color: plantilla vertical (~800x1125), pastilla roja "$ ___ FINAL" arriba, hueco de
 // foto de producto en el medio, caja oscura de nombre de producto abajo, disclaimer fijo al pie.
 const CAMPOS_A4_PRECIO = {
-  precio: { x: 0.29, y: 0.235, ancho: 0.27, alto: 0.10, align: 'left' },
+  // y=0.246 (no 0.235): medido por píxeles contra el rojo real de la píldora en el arte
+  // (a4_precio_piso.jpg y a4_politica.jpg, ambas ~y:0.243-0.249, alto:0.1004) — el precio
+  // arrancaba ~1.4% del alto del cartel por encima de donde arranca la píldora de verdad.
+  precio: { x: 0.29, y: 0.246, ancho: 0.27, alto: 0.10, align: 'left' },
   imagenProducto: { x: 0.15, y: 0.37, ancho: 0.70, alto: 0.36 },
   nombreLinea1: { x: 0.145, y: 0.775, ancho: 0.665, alto: 0.045, align: 'center' },
   nombreLinea2: { x: 0.145, y: 0.825, ancho: 0.665, alto: 0.045, align: 'center' },
@@ -63,7 +66,10 @@ const CAMPOS_A4_PRECIO = {
 // línea puntero hacia la fecha de vencimiento, foto de producto en el medio,
 // caja oscura de nombre, disclaimer con borde fijo al pie.
 const CAMPOS_A4_CORTO_VENCIMIENTO = {
-  precio: { x: 0.35, y: 0.265, ancho: 0.17, alto: 0.055, align: 'left' },
+  // Medido por píxeles contra el rojo real de la píldora en el arte (a4_corto_vencimiento.jpg):
+  // x:0.284-0.630, y:0.245-0.328 (alto real ≈0.083) — el precio usaba solo un 66% del alto
+  // disponible (alto:0.055) y arrancaba centrado más abajo de la píldora real, quedando chico.
+  precio: { x: 0.32, y: 0.248, ancho: 0.20, alto: 0.075, align: 'left' },
   vencimiento: { x: 0.02, y: 0.395, ancho: 0.18, alto: 0.03, align: 'left' },
   imagenProducto: { x: 0.18, y: 0.36, ancho: 0.62, alto: 0.34 },
   nombreLinea1: { x: 0.20, y: 0.73, ancho: 0.62, alto: 0.035, align: 'center' },

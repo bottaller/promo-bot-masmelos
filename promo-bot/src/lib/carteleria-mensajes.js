@@ -92,4 +92,37 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer,
   return { avisados, disenoFileId };
 }
 
-module.exports = { TIPOS, linkWhatsApp, avisarAMarketingFinal, avisarVerificacionMarketing };
+// El matcheo automático de la foto del catálogo quedó ambiguo entre 2-4 candidatas igual de
+// buenas (ver archivosCandidatos en carteleria-catalogo.js) — en vez de adivinar una, le
+// mandamos a Marketing el cartel YA RENDERIZADO con cada opción y que elija cuál es la
+// correcta tocando "Usar esta". Sube cada candidata UNA sola vez (al primer destinatario) y
+// reutiliza esos file_id para el resto — mismo patrón que avisarVerificacionMarketing. Devuelve
+// los file_id ya subidos para que el llamador los guarde (guardarDisenosCandidatos) y pueda
+// resolver el callback sin volver a generar ni subir nada.
+async function avisarEleccionFoto(telegram, { carteleria, disenosBuffers }) {
+  const { id, producto, es_prueba: esPrueba, usuario_telegram_id: usuarioTelegramId } = carteleria;
+  const prefijo = esPrueba ? '🧪 PRUEBA (solo vos ves esto) — ' : '';
+  const destinatarios = esPrueba ? [usuarioTelegramId] : await telegramIdsPorRol('marketing');
+
+  let avisados = 0;
+  const disenosFileIds = new Array(disenosBuffers.length).fill(null);
+  for (const tid of destinatarios) {
+    try {
+      await telegram.sendMessage(tid, `${prefijo}🤔 No encontré una sola foto segura para "${producto}" — elegí cuál es la correcta:`);
+      for (let i = 0; i < disenosBuffers.length; i++) {
+        const enviado = await telegram.sendPhoto(tid, disenosFileIds[i] || { source: disenosBuffers[i] }, {
+          caption: `Opción ${i + 1} de ${disenosBuffers.length}`,
+          reply_markup: { inline_keyboard: [[{ text: `✅ Usar esta (opción ${i + 1})`, callback_data: `carteleria_elegir_foto:${id}:${i}` }]] },
+        });
+        if (!disenosFileIds[i]) {
+          const fotos = enviado.photo || [];
+          disenosFileIds[i] = fotos.length ? fotos[fotos.length - 1].file_id : null;
+        }
+      }
+      avisados++;
+    } catch (e) { console.error('No pude mandarle las opciones de foto a marketing (cartelería):', e.message); }
+  }
+  return { avisados, disenosFileIds };
+}
+
+module.exports = { TIPOS, linkWhatsApp, avisarAMarketingFinal, avisarVerificacionMarketing, avisarEleccionFoto };

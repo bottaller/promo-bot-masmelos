@@ -1,8 +1,8 @@
 // Botones de /carteleria (área Depósito). Vive acá (no en el wizard) porque dispara desde una
 // notificación proactiva — Marketing no tiene ninguna escena activa cuando lo toca.
 // Se registra una sola vez en src/index.js, ANTES del catch-all de callbacks sueltos.
-const { marcarPedidoConfirmado, marcarVerificado } = require('./db/carteleria');
-const { avisarAMarketingFinal } = require('./lib/carteleria-mensajes');
+const { marcarPedidoConfirmado, marcarVerificado, elegirDisenoCandidato } = require('./db/carteleria');
+const { avisarAMarketingFinal, avisarVerificacionMarketing } = require('./lib/carteleria-mensajes');
 const { esDueno } = require('./lib/owner');
 
 function esMarketing(usuario) {
@@ -63,6 +63,28 @@ function registrarAccionesDeposito(bot) {
         `✅ Tu pedido de cartelería #${carteleria.id} (${carteleria.producto || 'sin nombre'}) fue verificado${carteleria.es_prueba ? '' : ' por Marketing'}.`
       );
     } catch (e) { console.error('No pude avisarle a quien pidió la cartelería:', e.message); }
+  });
+
+  // --- /carteleria: el matcheo de fotos quedó ambiguo (ver carteleria-catalogo.js) y Marketing
+  // elige cuál de las 2-4 opciones es la correcta -> esa queda como el diseño y sigue el flujo
+  // de verificación de siempre (✅ Está bien / ✏️ Corregir), como si se hubiera generado 1 sola. ---
+  bot.action(/^carteleria_elegir_foto:(\d+):(\d+)$/, async (ctx) => {
+    if (!puedeAccionar(ctx)) {
+      await ctx.answerCbQuery('Esto es solo para Marketing.', { show_alert: true });
+      return;
+    }
+    const id = Number(ctx.match[1]);
+    const indice = Number(ctx.match[2]);
+    const carteleria = await elegirDisenoCandidato(id, indice);
+    if (!carteleria) {
+      await ctx.answerCbQuery('Ya se había elegido una foto para este pedido.', { show_alert: true });
+      return;
+    }
+    await ctx.answerCbQuery('Listo, esa es la elegida.');
+    try { await ctx.editMessageReplyMarkup(); } catch (e) { /* mensaje viejo */ }
+
+    const { avisados } = await avisarVerificacionMarketing(bot.telegram, { carteleria, disenoFileId: carteleria.diseno_file_id });
+    console.log(`Cartelería #${id}: foto elegida por Marketing, reenviada a verificación (${avisados}).`);
   });
 
   // --- /carteleria: Marketing pide corregir el diseño -> abre el wizard de corrección ---
