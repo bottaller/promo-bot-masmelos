@@ -192,12 +192,12 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // vs "999"), así que ajustamos el tamaño según la cantidad de dígitos + el "." de
     // miles, y dejamos overflow:hidden como red de seguridad para que nunca tape el
     // "FINAL" fijo de la plantilla.
-    // Tope de altura: por defecto el 85% del rect (funciona bien en A4, donde el rect ya es
-    // angosto) — pero en Cartel/Cigüeña el rect es alto de por sí (para centrar bien) y con un
-    // precio corto ("999") ese 85% da una fuente gigante que empequeñece al "FINAL" fijo de al
-    // lado. precioAlturaMax (fracción del alto del cartel, no del rect) permite un tope más chico
-    // sin afectar dónde se centra el bloque — eso lo sigue definiendo rectPrecio, sin cambios.
-    const capAltura = plantilla.campos.precioAlturaMax ? plantilla.campos.precioAlturaMax * altoFinal : rectPrecio.height * 0.85;
+    // Tope de altura: 85% del rect. En Cartel/Cigüeña el rect es alto a propósito (para
+    // centrar bien el bloque con precios de distinto largo, ver más abajo) — un tope de altura
+    // más chico dejaba SIEMPRE el mismo tamaño de fuente sin importar el largo del precio,
+    // chico y lejos del "$"/"FINAL" fijos. El tope por ancho de abajo ya evita que un precio
+    // largo choque con el "FINAL" fijo, así que no hace falta un segundo tope de altura.
+    const capAltura = rectPrecio.height * 0.85;
     const tamanioPrecio = Math.min(capAltura, rectPrecio.width / (entero.length * 0.62 + 0.47));
     // Un precio largo (ej. "1.500" vs "999") achica tamanioPrecio para no desbordar — si el
     // bloque quedara anclado arriba (flex-start), un precio más chico dejaría un hueco vacío
