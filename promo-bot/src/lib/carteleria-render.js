@@ -214,6 +214,48 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       height: (rectLinea2.top + rectLinea2.height) - rectLinea1.top,
     };
   }
+
+  // La plantilla trae una línea divisoria fija pensada para separar línea 1 de línea 2, dibujada
+  // justo en el centro vertical de rectNombre — con 1 sola línea centrada ahí, el texto le
+  // pasaba por encima ("pisando la línea"). Repintamos el interior de la caja con su color real
+  // (sampleado del arte) para taparla, y si hacen falta 2 líneas dibujamos NOSOTROS una nueva
+  // divisoria, siempre exactamente en el medio entre ambas (2 líneas de igual alto centradas en
+  // rectNombre siempre parten justo en su centro, así que no hace falta calcular la posición real
+  // de cada línea).
+  // rectNombre viene del área de TEXTO (nombreLinea1/2) — no necesariamente coincide con la
+  // parte RECTA de la caja de la plantilla (esquinas redondeadas): pintar directo con esas
+  // coordenadas puede asomar con esquinas cuadradas por fuera de la curva. cajaNombreSegura
+  // (medida a mano por plantilla, sampleando dónde termina realmente la parte recta) define el
+  // ancho seguro para pintar; alto y posición vertical los toma de rectNombre (ahí nunca hubo
+  // problema, el ancho es lo único que varía por el redondeado de las esquinas).
+  const cajaSegura = plantilla.campos.cajaNombreSegura;
+  const rectFondoNombre = cajaSegura
+    ? { left: cajaSegura.x * anchoFinal, top: rectNombre.top, width: cajaSegura.ancho * anchoFinal, height: rectNombre.height }
+    : rectNombre;
+  if (plantilla.campos.colorFondoNombre) {
+    hijos.push({
+      type: 'div',
+      props: {
+        style: {
+          position: 'absolute', left: rectFondoNombre.left, top: rectFondoNombre.top, width: rectFondoNombre.width, height: rectFondoNombre.height,
+          backgroundColor: plantilla.campos.colorFondoNombre,
+        },
+      },
+    });
+  }
+  if (nombreLinea2 && plantilla.campos.colorDivisorNombre) {
+    const grosorDivisor = Math.max(1.5, altoFinal * 0.0015);
+    hijos.push({
+      type: 'div',
+      props: {
+        style: {
+          position: 'absolute', left: rectFondoNombre.left, top: rectNombre.top + rectNombre.height / 2 - grosorDivisor / 2,
+          width: rectFondoNombre.width, height: grosorDivisor, backgroundColor: plantilla.campos.colorDivisorNombre,
+        },
+      },
+    });
+  }
+
   hijos.push({
     type: 'div',
     props: {
