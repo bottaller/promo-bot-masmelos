@@ -47,12 +47,14 @@ async function avisarAMarketingFinal(telegram, { id, fileIdParaEnviar, tipo, can
   return avisados;
 }
 
-// Diseño generado (+ la foto del código de barras escaneado, si Depósito mandó una — puede no
-// haber ninguna si lo cargó a mano) con los botones de verificación. Sube el diseño (Buffer)
-// una sola vez y reutiliza el file_id que devuelve Telegram para el resto de los destinatarios.
-// Si `carteleria.es_prueba` es true (viene de /carteleria_prueba), esto NUNCA sale para
-// Marketing real — vuelve solo a quien lo probó (usuario_telegram_id), botones incluidos.
-async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer }) {
+// Diseño (+ la foto del código de barras escaneado, si Depósito mandó una — puede no haber
+// ninguna si lo cargó a mano) con los botones de verificación. Si viene `disenoFileId` (Marketing
+// subió su propio diseño ya armado, ver corregir-carteleria.js) lo reusa tal cual, sin volver a
+// subir nada; si no, sube `disenoBuffer` una sola vez y reutiliza el file_id que devuelve
+// Telegram para el resto de los destinatarios. Si `carteleria.es_prueba` es true (viene de
+// /carteleria_prueba), esto NUNCA sale para Marketing real — vuelve solo a quien lo probó
+// (usuario_telegram_id), botones incluidos.
+async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer, disenoFileId: disenoFileIdInicial }) {
   const {
     id, foto_file_id: fotoFileId, tipo, tipo_precio: tipoPrecio, cantidad_copias: cantidadCopias,
     producto, precio, es_prueba: esPrueba, usuario_telegram_id: usuarioTelegramId,
@@ -62,7 +64,7 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer 
   // "nuevo_ingreso" no lleva precio — precio viene null en ese caso.
   const precioTexto = precio === null || precio === undefined ? '' : ` — $${Number(precio).toFixed(2)}`;
   const prefijo = esPrueba ? '🧪 PRUEBA (solo vos ves esto) — ' : '';
-  const captionDiseno = `${prefijo}🖼️ Diseño generado: ${producto}${precioTexto} (${label}, ${LABELS_TIPO_PRECIO[tipoPrecio]}${copiasTexto}). Revisalo antes de aprobar.`;
+  const captionDiseno = `${prefijo}🖼️ Diseño a verificar: ${producto}${precioTexto} (${label}, ${LABELS_TIPO_PRECIO[tipoPrecio]}${copiasTexto}). Revisalo antes de aprobar.`;
   const botones = {
     reply_markup: {
       inline_keyboard: [
@@ -73,7 +75,7 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer 
   };
 
   let avisados = 0;
-  let disenoFileId = null;
+  let disenoFileId = disenoFileIdInicial || null;
   for (const tid of esPrueba ? [usuarioTelegramId] : await telegramIdsPorRol('marketing')) {
     try {
       if (fotoFileId) {

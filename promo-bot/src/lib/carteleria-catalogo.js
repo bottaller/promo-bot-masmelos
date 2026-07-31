@@ -56,6 +56,30 @@ function palabras(texto) {
   return normalizar(texto).split(' ').filter((p) => p.length >= PALABRA_MINIMA && !/^\d+$/.test(p) && !PALABRAS_VACIAS.has(p));
 }
 
+// Plural simple ("talitas" vs "talita", "galletas" vs "galleta") — sin esto son palabras
+// DISTINTAS para el puntaje, así que un plural de más/de menos entre lo que tipeó Depósito y
+// el nombre del archivo le resta coincidencias reales al match correcto y lo empareja con
+// candidatos sueltos que no tienen nada que ver (pasó de verdad con "TALITAS URQUIZA PIZZA":
+// "talita urquiza pizza.webp" perdía el punto de "talita"/"talitas" y quedaba empatado con
+// "talitas urquiza 100g.webp", genérico sin sabor). Heurística liviana, no un stemmer
+// completo — alcanza para el caso común de plural regular en español (agregar "s").
+function raiz(palabra) {
+  return palabra.length > 4 && palabra.endsWith('s') ? palabra.slice(0, -1) : palabra;
+}
+
+// Números sueltos (talle/cantidad: "354", "500", "1", "75" de "1.75") — quedan afuera del
+// puntaje principal en `palabras()` porque aparecen en cientos de productos no relacionados,
+// pero SÍ sirven para desempatar entre variantes del MISMO producto en distinto tamaño/envase
+// (ver más abajo) — sin esto, "COCA COLA LATA X 354CC" empataba en puntaje con TODOS los
+// tamaños de Coca Cola del catálogo (354cc lata, 500cc, 1.75L, 2.25L botella...) y ganaba
+// cualquiera de ellos por orden de aparición en el manifest, no el que realmente se pidió.
+// Se extraen las corridas de dígitos de CUALQUIER parte del texto (no solo tokens 100%
+// numéricos) porque Depósito suele escribirlo pegado ("X354cc", "6X473ml") — con split()
+// simple ese "354" quedaría escondido dentro de un token alfanumérico y nunca se vería.
+function numerosDe(texto) {
+  return new Set(normalizar(texto).match(/\d+/g) || []);
+}
+
 // Palabras que cambian el PRODUCTO, no solo lo describen — si el nombre buscado y el archivo no
 // coinciden en tener (o no tener) alguna de estas, NUNCA matchean por más palabras en común que
 // compartan (pasó de verdad: "COCA COLA" sin más terminaba matcheando "COCA COLA ZERO..." porque
@@ -119,18 +143,39 @@ function archivoMasParecido(nombreProducto, articuloCodigo) {
   const palabrasProducto = new Set(palabras(nombreProducto));
   if (!palabrasProducto.size) return null;
 
-  let mejorArchivo = null;
   let mejorPuntaje = 0;
+  let empatados = [];
   for (const archivo of archivos) {
     if (codigoDe(archivo)) continue; // ya se probaron por código arriba
     const palabrasArchivo = new Set(palabras(path.parse(archivo).name));
     if (sonProductosDistintos(palabrasProducto, palabrasArchivo)) continue;
+    const raicesArchivo = new Set([...palabrasArchivo].map(raiz));
     let coincidencias = 0;
     for (const palabra of palabrasProducto) {
-      if (palabrasArchivo.has(palabra)) coincidencias++;
+      if (raicesArchivo.has(raiz(palabra))) coincidencias++;
     }
+    if (coincidencias === 0) continue;
     if (coincidencias > mejorPuntaje) {
       mejorPuntaje = coincidencias;
+      empatados = [archivo];
+    } else if (coincidencias === mejorPuntaje) {
+      empatados.push(archivo);
+    }
+  }
+  if (!empatados.length) return null;
+  if (empatados.length === 1) return empatados[0];
+
+  // Empate por palabras reales (pasa seguido: "coca cola" matchea todas las variantes de
+  // tamaño) — desempatar por talle/cantidad, que es justo lo que distingue a esas variantes.
+  const numerosProducto = numerosDe(nombreProducto);
+  let mejorArchivo = empatados[0];
+  let mejorSolapeNumeros = -1;
+  for (const archivo of empatados) {
+    const numerosArchivo = numerosDe(path.parse(archivo).name);
+    let solape = 0;
+    for (const n of numerosProducto) if (numerosArchivo.has(n)) solape++;
+    if (solape > mejorSolapeNumeros) {
+      mejorSolapeNumeros = solape;
       mejorArchivo = archivo;
     }
   }
@@ -153,4 +198,4 @@ async function buscarImagenProducto(nombreProducto, articuloCodigo) {
   }
 }
 
-module.exports = { buscarImagenProducto, listarCatalogo };
+module.exports = { buscarImagenProducto, listarCatalogo, archivoMasParecido };
