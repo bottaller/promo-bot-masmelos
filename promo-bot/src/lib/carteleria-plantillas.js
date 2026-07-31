@@ -98,6 +98,11 @@ const CAMPOS_CARTEL_PRECIO = {
   // redondeadas que esquivar, así que coincide con nombreLinea1.
   cajaNombreSegura: { x: 0.03, ancho: 0.94 },
   colorPrecio: '#1a1a1a', // "$" y "FINAL" son negros sobre el fondo amarillo
+  // El rect de precio es alto (para centrar bien el bloque, ver carteleria-render.js), pero con
+  // un precio corto ("999") el 85% de esa altura da una fuente gigante que empequeñece el
+  // "FINAL" fijo de al lado — topeamos el tamaño de fuente en 15% del alto del cartel,
+  // independiente de dónde se centra el bloque.
+  precioAlturaMax: 0.15,
 };
 
 const PLANTILLAS = {

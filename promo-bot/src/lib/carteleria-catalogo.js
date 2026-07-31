@@ -40,13 +40,42 @@ function normalizar(texto) {
 // "para", "con"). Sin esto, cualquiera de estas puede desempatar un match por pura casualidad
 // (pasó de verdad: "El producto está BIEN..." matcheó una foto de un brownie "...sabe BIEN...").
 // "100g"/"1kg" (alfanuméricos) sí quedan — esos sí distinguen el producto.
+// También packaging/formato genérico ("lata", "uni", "gase" -> aparecen en cientos de productos
+// de cualquier marca, ej. "uni" está en 660 nombres distintos del maestro) — pasó de verdad:
+// "GASE.COCA COLA LATA...UNI" empataba con "CERVEZA BRAHMA LATA...UNI" (2 y 2, "lata"+"uni")
+// contra las marcas reales ("coca cola"), y el desempate por orden alfabético elegía cualquier
+// cosa que empiece antes con mayúscula.
 const PALABRAS_VACIAS = new Set([
   'los', 'las', 'del', 'con', 'sin', 'por', 'para', 'que', 'una', 'uno', 'esta', 'esto',
   'eso', 'ese', 'esa', 'son', 'hay', 'muy', 'mas', 'bien', 'mal', 'todo', 'toda', 'otro', 'otra',
   'como', 'pero', 'porque',
+  'gase', 'lata', 'latas', 'uni', 'unid', 'unidad', 'unidades', 'pack', 'display', 'botella',
+  'caja', 'sachet', 'pote', 'sobre', 'bolsa',
 ]);
 function palabras(texto) {
   return normalizar(texto).split(' ').filter((p) => p.length >= PALABRA_MINIMA && !/^\d+$/.test(p) && !PALABRAS_VACIAS.has(p));
+}
+
+// Palabras que cambian el PRODUCTO, no solo lo describen — si el nombre buscado y el archivo no
+// coinciden en tener (o no tener) alguna de estas, NUNCA matchean por más palabras en común que
+// compartan (pasó de verdad: "COCA COLA" sin más terminaba matcheando "COCA COLA ZERO..." porque
+// "gase", "coca", "cola", "lata", "uni" son iguales en los dos nombres — con el conteo simple,
+// esas 5 coincidencias pesaban más que la única palabra distinta, "zero").
+const PALABRAS_DISTINTIVAS = [
+  // variantes de línea (cambian el producto, no solo lo describen)
+  'zero', 'light', 'diet', 'mini', 'maxi', 'free',
+  // sabores comunes en golosinas/bebidas/snacks (kiosco) — un producto puede compartir marca y
+  // casi todas las demás palabras con otro sabor y aun así ser un producto distinto
+  'menta', 'frutilla', 'banana', 'lima', 'limon', 'naranja', 'durazno', 'manzana', 'anana',
+  'ananas', 'mango', 'frambuesa', 'arandano', 'cereza', 'uva', 'mora', 'coco', 'cafe',
+  'vainilla', 'chocolate', 'miel', 'sandia', 'tutti', 'frutos',
+];
+
+function sonProductosDistintos(palabrasProducto, palabrasArchivo) {
+  for (const distintiva of PALABRAS_DISTINTIVAS) {
+    if (palabrasProducto.has(distintiva) !== palabrasArchivo.has(distintiva)) return true;
+  }
+  return false;
 }
 
 let manifestCache = null;
@@ -95,6 +124,7 @@ function archivoMasParecido(nombreProducto, articuloCodigo) {
   for (const archivo of archivos) {
     if (codigoDe(archivo)) continue; // ya se probaron por código arriba
     const palabrasArchivo = new Set(palabras(path.parse(archivo).name));
+    if (sonProductosDistintos(palabrasProducto, palabrasArchivo)) continue;
     let coincidencias = 0;
     for (const palabra of palabrasProducto) {
       if (palabrasArchivo.has(palabra)) coincidencias++;
