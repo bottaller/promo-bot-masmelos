@@ -163,18 +163,31 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // miles, y dejamos overflow:hidden como red de seguridad para que nunca tape el
     // "FINAL" fijo de la plantilla.
     const tamanioPrecio = Math.min(rectPrecio.height * 0.85, rectPrecio.width / (entero.length * 0.62 + 0.47));
+    // Un precio largo (ej. "1.500" vs "999") achica tamanioPrecio para no desbordar — si el
+    // bloque quedara anclado arriba (flex-start), un precio más chico dejaría un hueco vacío
+    // debajo y se vería "flotando" desalineado del "$"/"FINAL" fijos de la plantilla. Igual que
+    // con el nombre: centramos el bloque completo verticalmente (contenedor externo), y adentro
+    // mantenemos el precio y los centavos en su propia fila para conservar el efecto de
+    // superíndice (centavos arriba a la derecha, más chicos).
     hijos.push({
       type: 'div',
       props: {
         style: {
           position: 'absolute', left: rectPrecio.left, top: rectPrecio.top, width: rectPrecio.width, height: rectPrecio.height,
-          display: 'flex', flexDirection: 'row', alignItems: 'flex-start', justifyContent: justify(plantilla.campos.precio.align),
+          display: 'flex', flexDirection: 'column', justifyContent: 'center',
+          alignItems: justify(plantilla.campos.precio.align) === 'center' ? 'center' : 'flex-start',
           overflow: 'hidden',
         },
-        children: [
-          { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: colorPrecio, lineHeight: 1 }, children: entero } },
-          { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio * 0.38, color: colorPrecio, lineHeight: 1, marginLeft: tamanioPrecio * 0.06 }, children: decimales } },
-        ],
+        children: {
+          type: 'div',
+          props: {
+            style: { display: 'flex', flexDirection: 'row', alignItems: 'flex-start' },
+            children: [
+              { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: colorPrecio, lineHeight: 1 }, children: entero } },
+              { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio * 0.38, color: colorPrecio, lineHeight: 1, marginLeft: tamanioPrecio * 0.06 }, children: decimales } },
+            ],
+          },
+        },
       },
     });
   }
