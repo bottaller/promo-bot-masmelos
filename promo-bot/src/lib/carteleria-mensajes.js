@@ -47,12 +47,14 @@ async function avisarAMarketingFinal(telegram, { id, fileIdParaEnviar, tipo, can
   return avisados;
 }
 
-// Diseño generado (+ la foto del código de barras escaneado, si Depósito mandó una — puede no
-// haber ninguna si lo cargó a mano) con los botones de verificación. Sube el diseño (Buffer)
-// una sola vez y reutiliza el file_id que devuelve Telegram para el resto de los destinatarios.
-// Si `carteleria.es_prueba` es true (viene de /carteleria_prueba), esto NUNCA sale para
-// Marketing real — vuelve solo a quien lo probó (usuario_telegram_id), botones incluidos.
-async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer }) {
+// Diseño (+ la foto del código de barras escaneado, si Depósito mandó una — puede no haber
+// ninguna si lo cargó a mano) con los botones de verificación. Si viene `disenoFileId` (Marketing
+// subió su propio diseño ya armado, ver corregir-carteleria.js) lo reusa tal cual, sin volver a
+// subir nada; si no, sube `disenoBuffer` una sola vez y reutiliza el file_id que devuelve
+// Telegram para el resto de los destinatarios. Si `carteleria.es_prueba` es true (viene de
+// /carteleria_prueba), esto NUNCA sale para Marketing real — vuelve solo a quien lo probó
+// (usuario_telegram_id), botones incluidos.
+async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer, disenoFileId: disenoFileIdInicial }) {
   const {
     id, foto_file_id: fotoFileId, tipo, tipo_precio: tipoPrecio, cantidad_copias: cantidadCopias,
     producto, precio, es_prueba: esPrueba, usuario_telegram_id: usuarioTelegramId,
@@ -62,7 +64,7 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer 
   // "nuevo_ingreso" no lleva precio — precio viene null en ese caso.
   const precioTexto = precio === null || precio === undefined ? '' : ` — $${Number(precio).toFixed(2)}`;
   const prefijo = esPrueba ? '🧪 PRUEBA (solo vos ves esto) — ' : '';
-  const captionDiseno = `${prefijo}🖼️ Diseño generado: ${producto}${precioTexto} (${label}, ${LABELS_TIPO_PRECIO[tipoPrecio]}${copiasTexto}). Revisalo antes de aprobar.`;
+  const captionDiseno = `${prefijo}🖼️ Diseño a verificar: ${producto}${precioTexto} (${label}, ${LABELS_TIPO_PRECIO[tipoPrecio]}${copiasTexto}). Revisalo antes de aprobar.`;
   const botones = {
     reply_markup: {
       inline_keyboard: [
@@ -73,7 +75,7 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer 
   };
 
   let avisados = 0;
-  let disenoFileId = null;
+  let disenoFileId = disenoFileIdInicial || null;
   for (const tid of esPrueba ? [usuarioTelegramId] : await telegramIdsPorRol('marketing')) {
     try {
       if (fotoFileId) {
@@ -90,4 +92,37 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer 
   return { avisados, disenoFileId };
 }
 
-module.exports = { TIPOS, linkWhatsApp, avisarAMarketingFinal, avisarVerificacionMarketing };
+// El matcheo automático de la foto del catálogo quedó ambiguo entre 2-4 candidatas igual de
+// buenas (ver archivosCandidatos en carteleria-catalogo.js) — en vez de adivinar una, le
+// mandamos a Marketing el cartel YA RENDERIZADO con cada opción y que elija cuál es la
+// correcta tocando "Usar esta". Sube cada candidata UNA sola vez (al primer destinatario) y
+// reutiliza esos file_id para el resto — mismo patrón que avisarVerificacionMarketing. Devuelve
+// los file_id ya subidos para que el llamador los guarde (guardarDisenosCandidatos) y pueda
+// resolver el callback sin volver a generar ni subir nada.
+async function avisarEleccionFoto(telegram, { carteleria, disenosBuffers }) {
+  const { id, producto, es_prueba: esPrueba, usuario_telegram_id: usuarioTelegramId } = carteleria;
+  const prefijo = esPrueba ? '🧪 PRUEBA (solo vos ves esto) — ' : '';
+  const destinatarios = esPrueba ? [usuarioTelegramId] : await telegramIdsPorRol('marketing');
+
+  let avisados = 0;
+  const disenosFileIds = new Array(disenosBuffers.length).fill(null);
+  for (const tid of destinatarios) {
+    try {
+      await telegram.sendMessage(tid, `${prefijo}🤔 No encontré una sola foto segura para "${producto}" — elegí cuál es la correcta:`);
+      for (let i = 0; i < disenosBuffers.length; i++) {
+        const enviado = await telegram.sendPhoto(tid, disenosFileIds[i] || { source: disenosBuffers[i] }, {
+          caption: `Opción ${i + 1} de ${disenosBuffers.length}`,
+          reply_markup: { inline_keyboard: [[{ text: `✅ Usar esta (opción ${i + 1})`, callback_data: `carteleria_elegir_foto:${id}:${i}` }]] },
+        });
+        if (!disenosFileIds[i]) {
+          const fotos = enviado.photo || [];
+          disenosFileIds[i] = fotos.length ? fotos[fotos.length - 1].file_id : null;
+        }
+      }
+      avisados++;
+    } catch (e) { console.error('No pude mandarle las opciones de foto a marketing (cartelería):', e.message); }
+  }
+  return { avisados, disenosFileIds };
+}
+
+module.exports = { TIPOS, linkWhatsApp, avisarAMarketingFinal, avisarVerificacionMarketing, avisarEleccionFoto };

@@ -37,6 +37,33 @@ async function guardarDiseno(id, { producto, precio, disenoFileId }) {
   return rows[0] || null;
 }
 
+// El matcheo automático de fotos quedó ambiguo (2-4 candidatas igual de buenas, ver
+// carteleria-catalogo.js) — guarda los file_id de Telegram de esas opciones ya renderizadas,
+// mientras Marketing elige cuál es la correcta (ver elegirDisenoCandidato).
+async function guardarDisenosCandidatos(id, disenosCandidatos) {
+  const { rows } = await pool.query(
+    `update bot.carteleria set disenos_candidatos = $2
+      where id = $1
+      returning *`,
+    [id, JSON.stringify(disenosCandidatos)]
+  );
+  return rows[0] || null;
+}
+
+// Marketing eligió una de las fotos candidatas — la deja como el diseño final y vacía
+// disenos_candidatos. Guarda atómica: null si ya se había elegido antes (evita que un segundo
+// click, de la misma persona o de otra de Marketing, pise la elección ya hecha).
+async function elegirDisenoCandidato(id, indice) {
+  const { rows } = await pool.query(
+    `update bot.carteleria
+        set diseno_file_id = disenos_candidatos ->> $2::int, disenos_candidatos = null
+      where id = $1 and disenos_candidatos is not null
+      returning *`,
+    [id, indice]
+  );
+  return rows[0] || null;
+}
+
 // Marketing confirma el diseño ("Está bien"). Guarda atómica: null si ya lo
 // había verificado otra persona de Marketing (evita doble-disparo del aviso de
 // impresión/pedido si dos tocan el botón casi al mismo tiempo).
@@ -66,6 +93,8 @@ module.exports = {
   crearCarteleria,
   carteleriaPorId,
   guardarDiseno,
+  guardarDisenosCandidatos,
+  elegirDisenoCandidato,
   marcarVerificado,
   marcarPedidoConfirmado,
 };

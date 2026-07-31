@@ -21,6 +21,7 @@ const PROJECT_URL = process.env.SUPABASE_STORAGE_URL || 'https://lgxqdycrerxkflw
 const BUCKET = 'productos';
 const MANIFEST_PATH = path.join(__dirname, '..', '..', 'assets', 'productos-manifest.json');
 const PALABRA_MINIMA = 3; // ignora palabras muy cortas ("x", "de", "c/") al matchear
+const PUNTAJE_MINIMO = 2; // con 1 sola palabra en común el match es demasiado poco confiable
 
 // Rango Unicode de marcas diacríticas combinantes (acentos/ñ sueltos después de
 // normalize('NFD')). Construido por código de caracter (no como literal en el
@@ -45,15 +46,55 @@ function normalizar(texto) {
 // "GASE.COCA COLA LATA...UNI" empataba con "CERVEZA BRAHMA LATA...UNI" (2 y 2, "lata"+"uni")
 // contra las marcas reales ("coca cola"), y el desempate por orden alfabético elegía cualquier
 // cosa que empiece antes con mayúscula.
+// "galle"/"alf"/"past" son el mismo problema que "gase": prefijos de categoría abreviados con
+// punto ("GALLE.", "ALF.", "PAST.") que aparecen en cientos de productos de cualquier marca
+// (conteo real sobre el manifest: "galle" 232 veces, "choco" 274, "alf" 51, "past" 38) — sin
+// sacarlos, pesan más que la marca real y hacen ganar a un producto de otra marca que por
+// casualidad comparte más de estos genéricos (pasó de verdad: "GALLE.MANA VAINILLA...CHOCO"
+// matcheaba "GALLE.COFLER CHOCO...VAINILLA" por "galle"+"choco"+"vainilla", perdiendo contra la
+// marca real "mana"). "removebg"/"preview" son artefactos del nombre de archivo que deja la
+// herramienta de recorte de fondo (".../foto-removebg-preview.png"), no describen el producto.
 const PALABRAS_VACIAS = new Set([
   'los', 'las', 'del', 'con', 'sin', 'por', 'para', 'que', 'una', 'uno', 'esta', 'esto',
   'eso', 'ese', 'esa', 'son', 'hay', 'muy', 'mas', 'bien', 'mal', 'todo', 'toda', 'otro', 'otra',
   'como', 'pero', 'porque',
   'gase', 'lata', 'latas', 'uni', 'unid', 'unidad', 'unidades', 'pack', 'display', 'botella',
   'caja', 'sachet', 'pote', 'sobre', 'bolsa',
+  'galle', 'choco', 'alf', 'past', 'removebg', 'preview',
+  // "yerba"/"mate" (categoría, no marca): "YERBA MATE PLAYADITO X 1KG" empataba con CUALQUIER
+  // otra marca de yerba (canarias, barao, la merced...) por "yerba"+"mate" solos.
+  'yerba', 'mate',
 ]);
 function palabras(texto) {
   return normalizar(texto).split(' ').filter((p) => p.length >= PALABRA_MINIMA && !/^\d+$/.test(p) && !PALABRAS_VACIAS.has(p));
+}
+
+// Plural simple ("talitas" vs "talita", "galletas" vs "galleta") — sin esto son palabras
+// DISTINTAS para el puntaje, así que un plural de más/de menos entre lo que tipeó Depósito y
+// el nombre del archivo le resta coincidencias reales al match correcto y lo empareja con
+// candidatos sueltos que no tienen nada que ver (pasó de verdad con "TALITAS URQUIZA PIZZA":
+// "talita urquiza pizza.webp" perdía el punto de "talita"/"talitas" y quedaba empatado con
+// "talitas urquiza 100g.webp", genérico sin sabor). Heurística liviana, no un stemmer
+// completo — alcanza para el caso común de plural regular en español (agregar "s").
+// "rell" (abreviatura de "relleno/rellena/rellenas", 52 veces en el manifest) es el mismo
+// problema: "GALLE.MANA VAINILLA RELLENAS...152 G" no matcheaba "mana rell 152.webp" (el
+// archivo correcto) por ese desacople, y terminaba ganando otra marca por casualidad.
+function raiz(palabra) {
+  if (palabra === 'rell' || palabra.startsWith('rellen')) return 'rell';
+  return palabra.length > 4 && palabra.endsWith('s') ? palabra.slice(0, -1) : palabra;
+}
+
+// Números sueltos (talle/cantidad: "354", "500", "1", "75" de "1.75") — quedan afuera del
+// puntaje principal en `palabras()` porque aparecen en cientos de productos no relacionados,
+// pero SÍ sirven para desempatar entre variantes del MISMO producto en distinto tamaño/envase
+// (ver más abajo) — sin esto, "COCA COLA LATA X 354CC" empataba en puntaje con TODOS los
+// tamaños de Coca Cola del catálogo (354cc lata, 500cc, 1.75L, 2.25L botella...) y ganaba
+// cualquiera de ellos por orden de aparición en el manifest, no el que realmente se pidió.
+// Se extraen las corridas de dígitos de CUALQUIER parte del texto (no solo tokens 100%
+// numéricos) porque Depósito suele escribirlo pegado ("X354cc", "6X473ml") — con split()
+// simple ese "354" quedaría escondido dentro de un token alfanumérico y nunca se vería.
+function numerosDe(texto) {
+  return new Set(normalizar(texto).match(/\d+/g) || []);
 }
 
 // Palabras que cambian el PRODUCTO, no solo lo describen — si el nombre buscado y el archivo no
@@ -61,19 +102,36 @@ function palabras(texto) {
 // compartan (pasó de verdad: "COCA COLA" sin más terminaba matcheando "COCA COLA ZERO..." porque
 // "gase", "coca", "cola", "lata", "uni" son iguales en los dos nombres — con el conteo simple,
 // esas 5 coincidencias pesaban más que la única palabra distinta, "zero").
-const PALABRAS_DISTINTIVAS = [
-  // variantes de línea (cambian el producto, no solo lo describen)
-  'zero', 'light', 'diet', 'mini', 'maxi', 'free',
-  // sabores comunes en golosinas/bebidas/snacks (kiosco) — un producto puede compartir marca y
-  // casi todas las demás palabras con otro sabor y aun así ser un producto distinto
+// Separadas en dos grupos porque no se relajan igual: una variante de LÍNEA (zero/light/...) es
+// siempre un producto distinto, así el archivo diga "vs" (varios sabores) o no. Un SABOR en
+// cambio puede estar incluido en un archivo "surtido" sin que su nombre lo liste explícitamente
+// — ver `esSurtido` más abajo.
+const LINEAS_DISTINTAS = ['zero', 'light', 'diet', 'mini', 'maxi', 'free'];
+
+// Sabores comunes en golosinas/bebidas/snacks (kiosco) — un producto puede compartir marca y
+// casi todas las demás palabras con otro sabor y aun así ser un producto distinto.
+const SABORES = [
   'menta', 'frutilla', 'banana', 'lima', 'limon', 'naranja', 'durazno', 'manzana', 'anana',
   'ananas', 'mango', 'frambuesa', 'arandano', 'cereza', 'uva', 'mora', 'coco', 'cafe',
   'vainilla', 'chocolate', 'miel', 'sandia', 'tutti', 'frutos',
 ];
 
-function sonProductosDistintos(palabrasProducto, palabrasArchivo) {
-  for (const distintiva of PALABRAS_DISTINTIVAS) {
-    if (palabrasProducto.has(distintiva) !== palabrasArchivo.has(distintiva)) return true;
+// "vs" = "varios sabores/variedades", abreviatura frecuente en el catálogo (87 archivos) para
+// fotos de exhibidores/cajas surtidas — ej. "PASTillas MENTHO PLUS vs X 12 UNI". Buscar un
+// sabor puntual ("...CEREZA...") no debería descartar ese archivo solo porque no lista "cereza"
+// en el nombre: es justamente el que más probablemente lo tenga adentro. Chequea el texto
+// normalizado directo (no `palabras()`) porque "vs" tiene 2 letras — PALABRA_MINIMA lo filtraría.
+function esSurtido(nombreArchivo) {
+  return normalizar(nombreArchivo).split(' ').includes('vs');
+}
+
+function sonProductosDistintos(palabrasProducto, palabrasArchivo, nombreArchivo) {
+  for (const linea of LINEAS_DISTINTAS) {
+    if (palabrasProducto.has(linea) !== palabrasArchivo.has(linea)) return true;
+  }
+  if (esSurtido(nombreArchivo)) return false;
+  for (const sabor of SABORES) {
+    if (palabrasProducto.has(sabor) !== palabrasArchivo.has(sabor)) return true;
   }
   return false;
 }
@@ -105,43 +163,136 @@ function normalizarCodigo(codigo) {
   return Number.isFinite(n) ? String(n) : String(codigo).trim();
 }
 
-// Devuelve el nombre de archivo (en el bucket) que mejor matchea, o null si no hay ninguno.
-function archivoMasParecido(nombreProducto, articuloCodigo) {
-  const archivos = listarCatalogo();
-  if (!archivos.length) return null;
-
-  if (articuloCodigo) {
-    const codigoBuscado = normalizarCodigo(articuloCodigo);
-    const porCodigo = archivos.filter((a) => codigoDe(a) && normalizarCodigo(codigoDe(a)) === codigoBuscado).sort();
-    if (porCodigo.length) return porCodigo[0];
-  }
-
-  const palabrasProducto = new Set(palabras(nombreProducto));
-  if (!palabrasProducto.size) return null;
-
-  let mejorArchivo = null;
-  let mejorPuntaje = 0;
-  for (const archivo of archivos) {
-    if (codigoDe(archivo)) continue; // ya se probaron por código arriba
-    const palabrasArchivo = new Set(palabras(path.parse(archivo).name));
-    if (sonProductosDistintos(palabrasProducto, palabrasArchivo)) continue;
-    let coincidencias = 0;
-    for (const palabra of palabrasProducto) {
-      if (palabrasArchivo.has(palabra)) coincidencias++;
-    }
-    if (coincidencias > mejorPuntaje) {
-      mejorPuntaje = coincidencias;
-      mejorArchivo = archivo;
-    }
-  }
-  return mejorArchivo;
+// Match por código exacto — el mismo para archivoMasParecido y archivosCandidatos, y NUNCA
+// ambiguo (si hay código, listado a mano por Depósito o leído del código de barras, es la
+// fuente más confiable que hay, no tiene sentido preguntarle a Marketing).
+function archivoPorCodigo(articuloCodigo) {
+  if (!articuloCodigo) return null;
+  const codigoBuscado = normalizarCodigo(articuloCodigo);
+  const porCodigo = listarCatalogo().filter((a) => codigoDe(a) && normalizarCodigo(codigoDe(a)) === codigoBuscado).sort();
+  return porCodigo.length ? porCodigo[0] : null;
 }
 
-// Devuelve el Buffer de la foto del catálogo que mejor matchea, o null si no hay ninguna
-// coincidencia (catálogo vacío, o ningún archivo comparte código/palabras).
-async function buscarImagenProducto(nombreProducto, articuloCodigo) {
-  const archivo = archivoMasParecido(nombreProducto, articuloCodigo);
-  if (!archivo) return null;
+// Núcleo del matcheo por superposición de palabras (código exacto ya se resolvió aparte, ver
+// archivoPorCodigo) — compartido entre archivoMasParecido y archivosCandidatos para no repetir
+// el recorrido completo del catálogo. Devuelve los archivos empatados en el puntaje más alto
+// (mejorPuntaje), listos para que cada función de arriba decida qué hacer con el empate.
+function candidatosPorPalabras(nombreProducto) {
+  const palabrasProducto = new Set(palabras(nombreProducto));
+  if (!palabrasProducto.size) return { empatados: [], mejorPuntaje: 0, palabrasProducto };
+
+  let mejorPuntaje = 0;
+  let empatados = []; // [{ archivo, tamanioArchivo }]
+  for (const archivo of listarCatalogo()) {
+    if (codigoDe(archivo)) continue; // ya se probaron por código arriba
+    const nombreArchivo = path.parse(archivo).name;
+    const palabrasArchivo = new Set(palabras(nombreArchivo));
+    if (sonProductosDistintos(palabrasProducto, palabrasArchivo, nombreArchivo)) continue;
+    const raicesArchivo = new Set([...palabrasArchivo].map(raiz));
+    let coincidencias = 0;
+    for (const palabra of palabrasProducto) {
+      if (raicesArchivo.has(raiz(palabra))) coincidencias++;
+    }
+    if (coincidencias === 0) continue;
+    if (coincidencias > mejorPuntaje) {
+      mejorPuntaje = coincidencias;
+      empatados = [{ archivo, tamanioArchivo: palabrasArchivo.size }];
+    } else if (coincidencias === mejorPuntaje) {
+      empatados.push({ archivo, tamanioArchivo: palabrasArchivo.size });
+    }
+  }
+  return { empatados, mejorPuntaje, palabrasProducto };
+}
+
+// Con 1 sola palabra en común hay demasiadas chances de que sea casualidad, no el producto
+// real (pasó de verdad varias veces: "cereza" o "baggio" sueltos matcheaban cualquier cosa) —
+// mejor sin foto que con una que probablemente esté mal. EXCEPCIÓN: si esa única palabra es
+// TODO el contenido distintivo de ambos lados (nombre buscado Y archivo se reducen los dos a
+// esa misma palabra — ej. "WD-40 AEROSOL..." contra "WD-40 AEROSOL....webp", donde "wd" y los
+// números no cuentan como palabra), es un match exacto y específico, no una casualidad.
+function empatePocoConfiable(empatados, mejorPuntaje, palabrasProducto) {
+  if (mejorPuntaje >= PUNTAJE_MINIMO) return null;
+  const exacto = mejorPuntaje === 1 && palabrasProducto.size === 1
+    ? empatados.find((e) => e.tamanioArchivo === 1)
+    : null;
+  return exacto ? [exacto.archivo] : [];
+}
+
+// Desempate por talle/cantidad (pasa seguido: "coca cola" matchea todas las variantes de
+// tamaño) — devuelve TODOS los que quedan mejor parados, que puede seguir siendo más de uno
+// (ver archivosCandidatos) si ninguno tiene un número que lo distinga de los demás.
+function desempatarPorNumeros(empatados, nombreProducto) {
+  const numerosProducto = numerosDe(nombreProducto);
+  const conSolape = empatados.map(({ archivo }) => {
+    const numerosArchivo = numerosDe(path.parse(archivo).name);
+    let solape = 0;
+    for (const n of numerosProducto) if (numerosArchivo.has(n)) solape++;
+    return { archivo, solape };
+  });
+  const mejorSolape = Math.max(...conSolape.map((e) => e.solape));
+  return conSolape.filter((e) => e.solape === mejorSolape).map((e) => e.archivo);
+}
+
+// Varios archivos del mismo producto (fotos distintas del mismo artículo, típicamente con
+// sufijo "(1)"/"(2)", o nombrado con alguna diferencia menor de mayúscula/plural) tienen las
+// mismas palabras reales — eso NO es ambigüedad de producto, es la misma foto repetida, y
+// mostrárselo a Marketing como "elegí entre estas 3" sería confuso (pasó de verdad: "COCA COLA
+// LATA 354CC" quedaba con 3 "candidatos" que eran la misma lata; "GALLE.TRIO PEPAS" con 2 que
+// diferían solo en "pepas"/"pepa"). Misma raíz que usa el puntaje (`raiz`, plural-insensible) —
+// nos quedamos con 1 archivo por cada combinación distinta de palabras reales.
+function sinFotosRepetidas(archivos) {
+  const vistos = new Set();
+  const unicos = [];
+  for (const archivo of archivos) {
+    const firma = [...palabras(path.parse(archivo).name)].map(raiz).sort().join('|');
+    if (vistos.has(firma)) continue;
+    vistos.add(firma);
+    unicos.push(archivo);
+  }
+  return unicos;
+}
+
+// Devuelve el nombre de archivo (en el bucket) que mejor matchea, o null si no hay ninguno.
+// Ante un empate, elige uno solo (con el mejor desempate posible) — para el uso normal, donde
+// hace falta una sola foto. Ver `archivosCandidatos` para el caso en que el empate es real y
+// conviene preguntarle a Marketing en vez de adivinar.
+function archivoMasParecido(nombreProducto, articuloCodigo) {
+  if (!listarCatalogo().length) return null;
+  const porCodigo = archivoPorCodigo(articuloCodigo);
+  if (porCodigo) return porCodigo;
+
+  const { empatados, mejorPuntaje, palabrasProducto } = candidatosPorPalabras(nombreProducto);
+  if (!palabrasProducto.size) return null;
+  const pocoConfiable = empatePocoConfiable(empatados, mejorPuntaje, palabrasProducto);
+  if (pocoConfiable) return pocoConfiable[0] || null;
+  if (empatados.length === 1) return empatados[0].archivo;
+
+  return desempatarPorNumeros(empatados, nombreProducto)[0];
+}
+
+// Como archivoMasParecido, pero cuando el matcheo automático queda ambiguo entre 2 o más fotos
+// igual de buenas (incluso después de desempatar por talle/cantidad), devuelve esas opciones en
+// vez de adivinar una sola — así Marketing puede elegir a mano cuál es la correcta en vez de
+// tener que corregir todo el cartel después (ver scenes/carteleria.js). Con código de artículo
+// exacto, o con un solo candidato claro, nunca es ambiguo: devuelve un array de 1 elemento. Sin
+// ningún match, array vacío — el llamador decide si eso significa "sin foto" o "no preguntar".
+function archivosCandidatos(nombreProducto, articuloCodigo, max = 4) {
+  if (!listarCatalogo().length) return [];
+  const porCodigo = archivoPorCodigo(articuloCodigo);
+  if (porCodigo) return [porCodigo];
+
+  const { empatados, mejorPuntaje, palabrasProducto } = candidatosPorPalabras(nombreProducto);
+  if (!palabrasProducto.size) return [];
+  const pocoConfiable = empatePocoConfiable(empatados, mejorPuntaje, palabrasProducto);
+  if (pocoConfiable) return pocoConfiable;
+  if (empatados.length === 1) return [empatados[0].archivo];
+
+  const desempatados = sinFotosRepetidas(desempatarPorNumeros(empatados, nombreProducto));
+  return desempatados.slice(0, max);
+}
+
+// Baja el Buffer de UNA foto del catálogo, o null si falla la descarga.
+async function descargarFoto(archivo) {
   try {
     const url = `${PROJECT_URL}/storage/v1/object/public/${BUCKET}/${encodeURIComponent(archivo)}`;
     const res = await fetch(url);
@@ -153,4 +304,22 @@ async function buscarImagenProducto(nombreProducto, articuloCodigo) {
   }
 }
 
-module.exports = { buscarImagenProducto, listarCatalogo };
+// Devuelve el Buffer de la foto del catálogo que mejor matchea, o null si no hay ninguna
+// coincidencia (catálogo vacío, o ningún archivo comparte código/palabras).
+async function buscarImagenProducto(nombreProducto, articuloCodigo) {
+  const archivo = archivoMasParecido(nombreProducto, articuloCodigo);
+  return archivo ? descargarFoto(archivo) : null;
+}
+
+// Como buscarImagenProducto, pero devuelve TODOS los Buffers candidatos cuando el matcheo
+// queda ambiguo (ver archivosCandidatos) — 1 solo Buffer si el match es confiable, ninguno si
+// no hay match. Descartar (sin frenar todo) las que fallen la descarga individualmente.
+async function buscarImagenesCandidatas(nombreProducto, articuloCodigo, max = 4) {
+  const archivos = archivosCandidatos(nombreProducto, articuloCodigo, max);
+  const buffers = await Promise.all(archivos.map(descargarFoto));
+  return buffers.filter(Boolean);
+}
+
+module.exports = {
+  buscarImagenProducto, buscarImagenesCandidatas, listarCatalogo, archivoMasParecido, archivosCandidatos,
+};
