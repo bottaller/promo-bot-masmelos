@@ -95,10 +95,11 @@ final automáticamente y Marketing lo verifica antes de imprimir o pedirlo a la 
      `cartel_politica.jpg`. Nombre del producto en barra blanca → texto oscuro. La **cigüeña se
      renderiza al doble del tamaño de canvas** de la misma plantilla (no es un archivo aparte).
    - **La foto del código de barras NUNCA se compone en el cartel** — solo sirvió para identificar
-     el producto (paso 1). Las plantillas con hueco de imagen (`nuevo_ingreso`, `corto_vencimiento`)
-     usan la foto **ya limpia** del catálogo (`assets/productos/`, `src/lib/carteleria-catalogo.js`),
-     matcheada por el nombre del producto (por palabras en común entre ese nombre y el nombre del
-     archivo — no hace falta que sea exacto). Si ningún archivo del catálogo matchea, el cartel
+     el producto (paso 1). **Las 6 combinaciones de plantilla tienen hueco de foto de producto**
+     (`imagenProducto` en `carteleria-plantillas.js`) y usan la foto **ya limpia** del catálogo
+     (`assets/productos/`, `src/lib/carteleria-catalogo.js`), matcheada primero por código de
+     artículo y si no por el nombre del producto (por palabras en común entre ese nombre y el
+     nombre del archivo — no hace falta que sea exacto). Si ningún archivo del catálogo matchea, el cartel
      queda **sin foto** (nunca se usa la foto del código de barras como respaldo — no tiene ningún
      sentido visual. Hay un recorte de fondo automático con IA, `src/lib/carteleria-fondo.js`, que
      se probó para otro propósito y quedó sin usar — ver "Límites conocidos").
@@ -147,8 +148,8 @@ mensaje. No hay mapeo por proveedor ni por persona — es puramente por rol.
   consultan solo por Telegram en el momento en que se mandan).
 - El catálogo tiene ~4550 fotos cargadas (Supabase Storage, ver `assets/productos/README.md`), la
   mayoría nombradas por código de artículo. Un producto que no esté en ese catálogo (o cuyo código
-  no matcheó ninguna foto) simplemente sale **sin foto** en los carteles con hueco de imagen
-  (`nuevo_ingreso`, `corto_vencimiento`) — el precio y el nombre nunca dependen de esto.
+  no matcheó ninguna foto) simplemente sale **sin foto** — las 6 combinaciones de plantilla tienen
+  hueco de imagen, pero el precio y el nombre nunca dependen de esto.
 - El matcheo del catálogo es primero por **código de artículo exacto** (determinístico, la mayoría
   de los casos) y recién si no hay código cae a superposición de palabras entre el nombre del
   producto y el nombre del archivo (`carteleria-catalogo.js`) — para los pocos archivos con nombre
