@@ -1,16 +1,25 @@
-// Catálogo de fotos de producto SIN fondo (assets/productos/), para componer en
-// el hueco de imagen de los carteles que lo tienen (nuevo_ingreso, corto_vencimiento).
+// Catálogo de fotos de producto SIN fondo, para componer en el hueco de imagen de los
+// carteles que lo tienen (nuevo_ingreso, corto_vencimiento). Vive en Supabase Storage (bucket
+// "productos", PÚBLICO) — son ~4500 fotos; se subieron con un script aparte (resize a 900px +
+// WebP, así entraban cómodas en el free tier) porque 1.4GB en crudo no tenía sentido comitear
+// al repo. El bot arma la URL pública directo y la trae por HTTP — NO necesita ninguna key de
+// Supabase en runtime (esa key la usa solo, una vez, el script de subida).
 //
-// La foto que sube Depósito por /carteleria NUNCA se compone directo en el cartel:
-// solo sirve para que la IA identifique de qué producto se trata (carteleria-vision.js).
-// Con ese nombre se busca acá la foto ya limpia correspondiente. Si no hay una que
-// matchee, el cartel queda sin foto — no se usa la foto cruda (con fondo) como
-// respaldo.
-const fs = require('fs');
+// Para no tener que listar el bucket en cada cartel (lento, y de a 100/1000 por página), la
+// lista de nombres de archivo se cachea en assets/productos-manifest.json (generada por el
+// mismo script de subida) y se carga una sola vez por proceso.
+//
+// Matcheo: primero por CÓDIGO de artículo exacto (la mayoría de los archivos se llaman así, ej.
+// "10013 (1).webp" -> código 10013 — viene del maestro bot.articulos cuando Depósito escaneó el
+// código de barras o lo tipeó). Si no hay código, o no matchea ninguno, cae a superposición de
+// palabras entre el nombre del producto y el nombre del archivo (para los pocos archivos con
+// nombre descriptivo en vez de código). Si no hay match de ningún tipo, el cartel queda sin foto
+// — mejor sin foto que con una equivocada.
 const path = require('path');
 
-const DIR = path.join(__dirname, '..', '..', 'assets', 'productos');
-const EXTENSIONES_VALIDAS = /\.(jpe?g|png|webp)$/i;
+const PROJECT_URL = process.env.SUPABASE_STORAGE_URL || 'https://lgxqdycrerxkflwedohw.supabase.co';
+const BUCKET = 'productos';
+const MANIFEST_PATH = path.join(__dirname, '..', '..', 'assets', 'productos-manifest.json');
 const PALABRA_MINIMA = 3; // ignora palabras muy cortas ("x", "de", "c/") al matchear
 
 // Rango Unicode de marcas diacríticas combinantes (acentos/ñ sueltos después de
@@ -30,24 +39,51 @@ function palabras(texto) {
   return normalizar(texto).split(' ').filter((p) => p.length >= PALABRA_MINIMA);
 }
 
+let manifestCache = null;
 function listarCatalogo() {
-  if (!fs.existsSync(DIR)) return [];
-  return fs.readdirSync(DIR).filter((f) => EXTENSIONES_VALIDAS.test(f));
+  if (manifestCache) return manifestCache;
+  try {
+    manifestCache = require(MANIFEST_PATH);
+  } catch (e) {
+    manifestCache = [];
+  }
+  return manifestCache;
 }
 
-// Matcheo por superposición de palabras entre el nombre del producto y el nombre
-// del archivo (sin extensión). Devuelve el archivo con más palabras en común: si
-// ninguno comparte ni una palabra, no hay match (null) — mejor sin foto que con
-// una equivocada.
-function archivoMasParecido(nombreProducto) {
+// "10013 (1).webp" -> "10013" (el archivo se llama por código de artículo, con un sufijo
+// opcional "(N)" cuando hay más de una foto del mismo producto). Si el nombre no es puramente
+// numérico (ej. "3 bombones bariloche.webp"), devuelve null — es un archivo con nombre
+// descriptivo, se matchea por palabras más abajo.
+function codigoDe(archivo) {
+  const base = path.parse(archivo).name.replace(/\s*\(\d+\)\s*$/, '').trim();
+  return /^\d+$/.test(base) ? base : null;
+}
+
+// bot.articulos.codigo viene con ceros a la izquierda (ej. "010013"), los nombres de archivo
+// no (ej. "10013.webp") — se compara como número, no como string, para que matcheen igual.
+function normalizarCodigo(codigo) {
+  const n = Number(codigo);
+  return Number.isFinite(n) ? String(n) : String(codigo).trim();
+}
+
+// Devuelve el nombre de archivo (en el bucket) que mejor matchea, o null si no hay ninguno.
+function archivoMasParecido(nombreProducto, articuloCodigo) {
   const archivos = listarCatalogo();
   if (!archivos.length) return null;
+
+  if (articuloCodigo) {
+    const codigoBuscado = normalizarCodigo(articuloCodigo);
+    const porCodigo = archivos.filter((a) => codigoDe(a) && normalizarCodigo(codigoDe(a)) === codigoBuscado).sort();
+    if (porCodigo.length) return porCodigo[0];
+  }
+
   const palabrasProducto = new Set(palabras(nombreProducto));
   if (!palabrasProducto.size) return null;
 
   let mejorArchivo = null;
   let mejorPuntaje = 0;
   for (const archivo of archivos) {
+    if (codigoDe(archivo)) continue; // ya se probaron por código arriba
     const palabrasArchivo = new Set(palabras(path.parse(archivo).name));
     let coincidencias = 0;
     for (const palabra of palabrasProducto) {
@@ -61,16 +97,18 @@ function archivoMasParecido(nombreProducto) {
   return mejorArchivo;
 }
 
-// Devuelve el Buffer de la foto del catálogo que mejor matchea `nombreProducto`,
-// o null si no hay ninguna coincidencia (catálogo vacío, o ningún archivo
-// comparte palabras con el nombre).
-async function buscarImagenProducto(nombreProducto) {
-  const archivo = archivoMasParecido(nombreProducto);
+// Devuelve el Buffer de la foto del catálogo que mejor matchea, o null si no hay ninguna
+// coincidencia (catálogo vacío, o ningún archivo comparte código/palabras).
+async function buscarImagenProducto(nombreProducto, articuloCodigo) {
+  const archivo = archivoMasParecido(nombreProducto, articuloCodigo);
   if (!archivo) return null;
   try {
-    return fs.readFileSync(path.join(DIR, archivo));
+    const url = `${PROJECT_URL}/storage/v1/object/public/${BUCKET}/${encodeURIComponent(archivo)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
   } catch (e) {
-    console.error('No pude leer la imagen del catálogo:', e.message);
+    console.error('No pude bajar la imagen del catálogo:', e.message);
     return null;
   }
 }

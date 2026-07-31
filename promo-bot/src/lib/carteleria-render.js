@@ -136,14 +136,16 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
 
   if (plantilla.campos.imagenProducto && imagenProductoBuffer) {
     const rect = campoRect(plantilla.campos.imagenProducto, anchoFinal, altoFinal);
-    // Puede venir tal cual de Telegram (JPEG) o ya sin fondo (PNG con transparencia,
-    // ver carteleria-fondo.js) — detectamos por los primeros bytes, no asumimos.
-    const mime = imagenProductoBuffer[0] === 0x89 ? 'image/png' : 'image/jpeg';
-    const productoBase64 = imagenProductoBuffer.toString('base64');
+    // satori NO decodifica WebP (el catálogo sube todo en ese formato, ver
+    // carteleria-catalogo.js) — a pesar de que "image/webp" aparece en su bundle, no hay
+    // decoder real: el <img> se ignora en silencio, sin tirar error. Normalizamos siempre a
+    // PNG con sharp antes de pasarlo, sea cual sea el formato de entrada.
+    const productoPngBuffer = await sharp(imagenProductoBuffer).png().toBuffer();
+    const productoBase64 = productoPngBuffer.toString('base64');
     hijos.push({
       type: 'img',
       props: {
-        src: `data:${mime};base64,${productoBase64}`,
+        src: `data:image/png;base64,${productoBase64}`,
         style: { position: 'absolute', ...rect, objectFit: 'contain' },
       },
     });
