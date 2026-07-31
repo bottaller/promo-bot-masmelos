@@ -43,7 +43,19 @@ const CAMPOS_A4_PRECIO = {
   nombreLinea1: { x: 0.145, y: 0.775, ancho: 0.665, alto: 0.045, align: 'center' },
   nombreLinea2: { x: 0.145, y: 0.825, ancho: 0.665, alto: 0.045, align: 'center' },
   colorNombre: '#ffffff', // caja oscura de fondo
+  colorFondoNombre: '#332a21', // color real de la caja (sampleado del arte), para repintar la línea divisoria fija
+  colorDivisorNombre: 'rgba(255,255,255,0.35)',
+  // Ancho real de la parte RECTA de la caja (sampleado por píxeles en la fila del divisor,
+  // con un margen chico) — repintar más ancho que esto asoma con esquinas cuadradas por fuera
+  // de la esquina redondeada del arte.
+  cajaNombreSegura: { x: 0.205, ancho: 0.615 },
   colorPrecio: '#ffffff', // "$" y "FINAL" de la pastilla roja son blancos
+  // Tag con punta (banderín) fijo arriba a la derecha de la pastilla — en "precio_piso" dice
+  // "¡PRECIOS AL PISO!" (fijo), en "politica" dice "DTO. X VOL" (fijo) y ahí es donde se
+  // repinta con la política que escribe Depósito (solo se usa cuando tipo_precio=politica, ver
+  // carteleria-render.js). Hasta 2 líneas — la parte de abajo se angosta por la punta del
+  // banderín, por eso el rect no ocupa toda la altura visible del tag.
+  tagPolitica: { x: 0.638, y: 0.248, ancho: 0.135, alto: 0.095, colorFondo: '#34332f', colorTexto: '#ffe000' },
 };
 
 // A4 corto vencimiento: plantilla vertical más grande (~1131x1600), banner
@@ -57,6 +69,9 @@ const CAMPOS_A4_CORTO_VENCIMIENTO = {
   nombreLinea1: { x: 0.20, y: 0.73, ancho: 0.62, alto: 0.035, align: 'center' },
   nombreLinea2: { x: 0.20, y: 0.77, ancho: 0.62, alto: 0.032, align: 'center' },
   colorNombre: '#ffffff', // caja oscura de fondo
+  colorFondoNombre: '#434341',
+  colorDivisorNombre: 'rgba(255,255,255,0.35)',
+  cajaNombreSegura: { x: 0.234, ancho: 0.572 },
   colorPrecio: '#ffffff', // "$" y "FINAL" de la pastilla roja son blancos
 };
 
@@ -69,6 +84,9 @@ const CAMPOS_A4_NUEVO_INGRESO = {
   nombreLinea1: { x: 0.16, y: 0.758, ancho: 0.68, alto: 0.035, align: 'center' },
   nombreLinea2: { x: 0.16, y: 0.805, ancho: 0.68, alto: 0.032, align: 'center' },
   colorNombre: '#ffffff', // caja oscura de fondo
+  colorFondoNombre: '#3c3c3a',
+  colorDivisorNombre: 'rgba(255,255,255,0.35)',
+  cajaNombreSegura: { x: 0.167, ancho: 0.705 },
 };
 
 // Cartel simple / Cigüeña: plantilla horizontal (~1600x1066), "$" grande fijo a la
@@ -80,7 +98,22 @@ const CAMPOS_CARTEL_PRECIO = {
   nombreLinea1: { x: 0.03, y: 0.755, ancho: 0.94, alto: 0.06, align: 'center' },
   nombreLinea2: { x: 0.03, y: 0.825, ancho: 0.94, alto: 0.06, align: 'center' },
   colorNombre: '#1a1a1a', // barra blanca de fondo (no hay caja oscura)
+  colorFondoNombre: '#ffffff',
+  colorDivisorNombre: 'rgba(0,0,0,0.18)',
+  // Acá "la caja" es toda la franja blanca de abajo, borde a borde — sin esquinas
+  // redondeadas que esquivar, así que coincide con nombreLinea1.
+  cajaNombreSegura: { x: 0.03, ancho: 0.94 },
   colorPrecio: '#1a1a1a', // "$" y "FINAL" son negros sobre el fondo amarillo
+  // El rect de precio es alto (para centrar bien el bloque, ver carteleria-render.js), pero con
+  // un precio corto ("999") el 85% de esa altura da una fuente gigante que empequeñece el
+  // "FINAL" fijo de al lado — topeamos el tamaño de fuente en 15% del alto del cartel,
+  // independiente de dónde se centra el bloque.
+  precioAlturaMax: 0.15,
+  // Banner rojo fijo arriba a la izquierda — en "precio_piso" dice "¡PRECIOS AL PISO!" (fijo),
+  // en "politica" dice "DESCUENTO POR VOLUMEN" (fijo) y ahí es donde se repinta con la política
+  // que escribe Depósito (solo cuando tipo_precio=politica). El banner es angosto y se angosta
+  // más todavía hacia la derecha (corte diagonal) — 1 sola línea, se trunca con "…" si no entra.
+  tagPolitica: { x: 0.025, y: 0, ancho: 0.35, alto: 0.09, colorFondo: '#e40e16', colorTexto: '#ffe814', lineas: 1 },
 };
 
 const PLANTILLAS = {

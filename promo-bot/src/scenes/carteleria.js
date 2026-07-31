@@ -171,6 +171,10 @@ function crearCarteleriaWizard({ id, esPrueba }) {
     ctx.wizard.state.precio = precio;
 
     const tipo = ctx.wizard.state.tipo;
+    if (ctx.wizard.state.tipoPrecio === 'politica') {
+      await ctx.reply('¿Cuál es la política? (ej: "3x2", "2da unidad al 50%") — reemplaza el texto genérico del cartel.');
+      return ctx.wizard.selectStep(9);
+    }
     if (ctx.wizard.state.tipoPrecio === 'corto_vencimiento') {
       await ctx.reply('¿Cuál es la fecha de vencimiento? (formato D/M/AAAA, ej: 7/8/2026)');
       return ctx.wizard.next();
@@ -203,20 +207,35 @@ function crearCarteleriaWizard({ id, esPrueba }) {
     }
     ctx.wizard.state.cantidadCopias = cantidad;
     return procesarYFinalizar(ctx, esPrueba);
+  },
+  // 9: (solo tipo_precio=politica) recibir la política -> cantidad de copias (si es interno) o terminar
+  async (ctx) => {
+    const t = texto(ctx);
+    if (esCancelar(t)) { await ctx.reply('Cancelado.'); return ctx.scene.leave(); }
+    if (!t) { await ctx.reply('Escribí la política (o "cancelar").'); return; }
+    ctx.wizard.state.politica = t;
+
+    const tipo = ctx.wizard.state.tipo;
+    if (TIPOS[tipo].interno) {
+      await ctx.reply('¿Cuántas copias necesitás?');
+      ctx.wizard.selectStep(8);
+      return;
+    }
+    return procesarYFinalizar(ctx, esPrueba);
   }
   );
 }
 
 async function procesarYFinalizar(ctx, esPrueba) {
   const u = ctx.state.usuario;
-  const { fotoCodigoFileId, tipo, tipoPrecio, cantidadCopias, vencimiento, producto, precio, articuloCodigo } = ctx.wizard.state;
+  const { fotoCodigoFileId, tipo, tipoPrecio, cantidadCopias, vencimiento, producto, precio, articuloCodigo, politica } = ctx.wizard.state;
 
   const id = await crearCarteleria({
     fotoFileId: fotoCodigoFileId || null, tipo, tipoPrecio, cantidadCopias, vencimiento,
     usuarioId: u ? u.id : null,
     usuarioNombre: u ? u.nombre : (ctx.from.username || ctx.from.first_name || null),
     usuarioTelegramId: ctx.from.id,
-    esPrueba, producto, precio: precio ?? null,
+    esPrueba, producto, precio: precio ?? null, politica: politica ?? null,
   });
 
   await ctx.reply('Dame un momento, estoy generando el diseño...');
@@ -224,7 +243,7 @@ async function procesarYFinalizar(ctx, esPrueba) {
   try {
     const imagenProductoBuffer = await buscarImagenProducto(producto, articuloCodigo);
     const disenoBuffer = await generarCartel({
-      tipoGrafica: tipo, tipoPrecio, producto, precio: precio ?? null, vencimiento, imagenProductoBuffer,
+      tipoGrafica: tipo, tipoPrecio, producto, precio: precio ?? null, vencimiento, politica: politica ?? null, imagenProductoBuffer,
     });
 
     const carteleria = await carteleriaPorId(id);
