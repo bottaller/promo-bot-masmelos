@@ -125,14 +125,35 @@ function esSurtido(nombreArchivo) {
   return normalizar(nombreArchivo).split(' ').includes('vs');
 }
 
+// Abreviatura real de sabor que aparece en el catálogo (11 archivos: "CHICLE BELDENT BOT. MTA
+// ...") — sin esto, un archivo de sabor MENTA se veía como "sin sabor" (no dice "menta" entero)
+// y pasaba el chequeo de abajo aunque el sabor buscado fuera otro (pasó de verdad: "CHICLE
+// MENTOS...FRUTILLA" terminaba matcheando un Beldent de menta). Mapa chico a propósito — cada
+// entrada tiene que estar confirmada contra el manifest real, no adivinada (ej. "van" NO es
+// "vainilla" acá: son cigarrillos "Van Haasen"/"Van Kiff").
+const ABREVIATURAS_SABOR = { mta: 'menta' };
+
+function saboresDe(palabrasArchivo) {
+  const encontrados = new Set();
+  for (const sabor of SABORES) if (palabrasArchivo.has(sabor)) encontrados.add(sabor);
+  for (const [abrev, sabor] of Object.entries(ABREVIATURAS_SABOR)) {
+    if (palabrasArchivo.has(abrev)) encontrados.add(sabor);
+  }
+  return encontrados;
+}
+
+// Asimétrico a propósito: si el ARCHIVO no nombra ningún sabor (ni completo ni abreviado), no
+// lo descartamos por sabor — puede ser una foto genérica del producto sin ese dato en el nombre
+// (pasó de verdad: "mana rell 152.webp" no dice "vainilla" y perdía contra otra marca que sí la
+// nombraba). Si el archivo SÍ nombra un sabor puntual, tiene que coincidir con lo buscado.
 function sonProductosDistintos(palabrasProducto, palabrasArchivo, nombreArchivo) {
   for (const linea of LINEAS_DISTINTAS) {
     if (palabrasProducto.has(linea) !== palabrasArchivo.has(linea)) return true;
   }
   if (esSurtido(nombreArchivo)) return false;
-  for (const sabor of SABORES) {
-    if (palabrasProducto.has(sabor) !== palabrasArchivo.has(sabor)) return true;
-  }
+  const saboresArchivo = saboresDe(palabrasArchivo);
+  if (!saboresArchivo.size) return false;
+  for (const sabor of saboresArchivo) if (!palabrasProducto.has(sabor)) return true;
   return false;
 }
 
