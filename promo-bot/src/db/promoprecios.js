@@ -1,13 +1,13 @@
 // Acceso a datos de /promoprecios (Calidad -> dueño -> Compras/Marketing -> Ventas/Depósito).
 const { pool } = require('./pool');
 
-async function crearPromoPrecios({ archivoFileId, archivoNombre, usuarioId, usuarioNombre, usuarioTelegramId }) {
+async function crearPromoPrecios({ archivoFileId, archivoNombre, usuarioId, usuarioNombre, usuarioTelegramId, esPrueba }) {
   const { rows } = await pool.query(
     `insert into bot.promoprecios
-       (archivo_file_id, archivo_nombre, usuario_id, usuario_nombre, usuario_telegram_id)
-     values ($1,$2,$3,$4,$5)
+       (archivo_file_id, archivo_nombre, usuario_id, usuario_nombre, usuario_telegram_id, es_prueba)
+     values ($1,$2,$3,$4,$5,$6)
      returning id`,
-    [archivoFileId, archivoNombre ?? null, usuarioId ?? null, usuarioNombre ?? null, usuarioTelegramId]
+    [archivoFileId, archivoNombre ?? null, usuarioId ?? null, usuarioNombre ?? null, usuarioTelegramId, !!esPrueba]
   );
   return rows[0].id;
 }
