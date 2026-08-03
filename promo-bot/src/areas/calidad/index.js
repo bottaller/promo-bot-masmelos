@@ -11,6 +11,7 @@ const ajusteWizard = require('../../scenes/ajuste');
 const promoPreciosWizard = require('../../scenes/promoprecios');
 const validarPromoPreciosWizard = require('../../scenes/validar-promoprecios');
 const revisarImagenWizard = require('../../scenes/revisar-imagen');
+const auditoriaAlturaWizard = require('../../scenes/auditoria-altura');
 const { requiereArea } = require('../../middleware/authz');
 const { altasEnOferta } = require('../../db/compras');
 const { construirExcelControl } = require('../../lib/control-excel');
@@ -26,6 +27,7 @@ const comandos = [
   { comando: 'control', descripcion: 'Excel de lo que está en oferta, por vencimiento' },
   { comando: 'ajuste', descripcion: 'Subir el archivo de ajuste para que sea revisado' },
   { comando: 'promoprecios', descripcion: 'Subir el archivo final de promociones y precios' },
+  { comando: 'auditoria_altura', descripcion: 'Auditar mercadería en altura: pallet, pasillo y producto escaneado' },
 ];
 
 // /control: genera y manda un Excel con todo lo que está en oferta, ordenado por vencimiento.
@@ -49,12 +51,13 @@ function registrar(bot) {
   bot.command('control', requiereArea(CODIGO), control);
   bot.command('ajuste', requiereArea(CODIGO), (ctx) => ctx.scene.enter('ajuste-wizard'));
   bot.command('promoprecios', requiereArea(CODIGO), (ctx) => ctx.scene.enter('promoprecios-wizard'));
+  bot.command('auditoria_altura', requiereArea(CODIGO), (ctx) => ctx.scene.enter('auditoria-altura-wizard'));
 }
 
 module.exports = {
   codigo: CODIGO,
   nombre: 'Calidad',
-  scenes: [altaWizard, reposicionWizard, cambioPromocionWizard, bajaWizard, ajusteWizard, promoPreciosWizard, validarPromoPreciosWizard, revisarImagenWizard],
+  scenes: [altaWizard, reposicionWizard, cambioPromocionWizard, bajaWizard, ajusteWizard, promoPreciosWizard, validarPromoPreciosWizard, revisarImagenWizard, auditoriaAlturaWizard],
   comandos,
   registrar,
 };
