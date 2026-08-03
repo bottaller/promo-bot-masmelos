@@ -70,14 +70,24 @@ const CAMPOS_A4_CORTO_VENCIMIENTO = {
   // x:0.284-0.630, y:0.245-0.328 (alto real ≈0.083) — el precio usaba solo un 66% del alto
   // disponible (alto:0.055) y arrancaba centrado más abajo de la píldora real, quedando chico.
   precio: { x: 0.32, y: 0.248, ancho: 0.20, alto: 0.075, align: 'left' },
-  vencimiento: { x: 0.02, y: 0.395, ancho: 0.18, alto: 0.03, align: 'left' },
+  // Medido por píxeles contra el tramo HORIZONTAL de la línea puntero fija (arranca en
+  // x:0.084 y dobla en x:0.2325, a y≈0.418): el campo viejo (x:0.02) arrancaba 6-7% del ancho
+  // a la IZQUIERDA de donde empieza la línea, así que el texto "VTO: ..." quedaba flotando
+  // separado de la línea en vez de sentarse justo arriba de ella.
+  vencimiento: { x: 0.084, y: 0.383, ancho: 0.148, alto: 0.033, align: 'left' },
   imagenProducto: { x: 0.18, y: 0.36, ancho: 0.62, alto: 0.34 },
-  nombreLinea1: { x: 0.20, y: 0.73, ancho: 0.62, alto: 0.035, align: 'center' },
-  nombreLinea2: { x: 0.20, y: 0.77, ancho: 0.62, alto: 0.032, align: 'center' },
+  // Medido por píxeles contra la caja oscura real (a4_corto_vencimiento.jpg): y:0.7131-0.8050
+  // (alto real ≈0.0919) — el campo viejo (y:0.73, hasta y:0.802) arrancaba 1.7% del alto MÁS
+  // ABAJO que el techo real de la caja, dejando un margen vacío arriba y el bloque de texto
+  // corrido hacia el borde inferior en vez de centrado.
+  nombreLinea1: { x: 0.20, y: 0.721, ancho: 0.62, alto: 0.0355, align: 'center' },
+  nombreLinea2: { x: 0.20, y: 0.762, ancho: 0.62, alto: 0.0355, align: 'center' },
   colorNombre: '#ffffff', // caja oscura de fondo
   colorFondoNombre: '#434341',
   colorDivisorNombre: 'rgba(255,255,255,0.35)',
-  cajaNombreSegura: { x: 0.234, ancho: 0.572 },
+  // Medido por píxeles: la parte recta de la caja real llega hasta x:0.206-0.8347 — se deja
+  // ~1% de margen a cada lado (no hasta el borde exacto) para no asomar por la esquina redondeada.
+  cajaNombreSegura: { x: 0.216, ancho: 0.608 },
   colorPrecio: '#ffffff', // "$" y "FINAL" de la pastilla roja son blancos
 };
 
@@ -99,8 +109,24 @@ const CAMPOS_A4_NUEVO_INGRESO = {
 // izquierda, "FINAL" fijo arriba a la derecha, precio grande en el campo amarillo, hueco de
 // foto de producto a la derecha, barra blanca de nombre abajo, footer negro con disclaimer fijo.
 const CAMPOS_CARTEL_PRECIO = {
-  precio: { x: 0.10, y: 0.20, ancho: 0.55, alto: 0.30, align: 'left' },
-  imagenProducto: { x: 0.35, y: 0.40, ancho: 0.60, alto: 0.33 },
+  // Agrandado (antes x:0.10,y:0.20,ancho:0.55,alto:0.30): con el tamaño de fuente calculado por
+  // ancho REAL (ver carteleria-render.js) el precio quedaba chico porque el casillero viejo lo
+  // topeaba — medido por píxeles contra el arte (cartel_precio_piso.jpg): el "$" fijo termina en
+  // x:0.069 y "FINAL" fijo arranca en x:0.689, así que hay lugar hasta x≈0.60 sin pisar ninguno
+  // de los dos ni invadir la zona de la foto de producto (que ahora arranca en x:0.58).
+  // Un poco más grande todavía: ancho:0.53→0.545 (un punto más de tamaño de fuente).
+  precio: { x: 0.075, y: 0.16, ancho: 0.545, alto: 0.54, align: 'left' },
+  // Corrido más a la derecha (antes x:0.35) y agrandada — con la foto de producto renderizada
+  // DESPUÉS de la caja del nombre (ver generarCartel en carteleria-render.js), no importa que
+  // pise la franja blanca ni la línea divisoria: queda arriba de todo eso, igual que en el diseño
+  // real (el pan de la referencia tapa buena parte del cartel de nombre con la parte de abajo de
+  // la bolsa).
+  // Punto medio entre el 3er y 4to ajuste (y:0.46/0.50 -> 0.48, alto:0.41/0.40 -> 0.405) + más
+  // ancho para que la foto (con su relación de aspecto real, sin deformar por objectFit:contain)
+  // se vea más grande: ancho 0.33→0.35.
+  // Último ajuste: un poco más arriba (y:0.48→0.45→0.42) — a la derecha ya no hay más lugar,
+  // x:0.65 con este ancho ya llega justo al borde derecho de la plantilla (x+ancho=1.0).
+  imagenProducto: { x: 0.65, y: 0.42, ancho: 0.35, alto: 0.405 },
   nombreLinea1: { x: 0.03, y: 0.755, ancho: 0.94, alto: 0.06, align: 'center' },
   nombreLinea2: { x: 0.03, y: 0.825, ancho: 0.94, alto: 0.06, align: 'center' },
   colorNombre: '#1a1a1a', // barra blanca de fondo (no hay caja oscura)
@@ -117,7 +143,19 @@ const CAMPOS_CARTEL_PRECIO = {
   // en "politica" dice "DESCUENTO POR VOLUMEN" (fijo) y ahí es donde se repinta con la política
   // que escribe Depósito (solo cuando tipo_precio=politica). El banner es angosto y se angosta
   // más todavía hacia la derecha (corte diagonal) — 1 sola línea, se trunca con "…" si no entra.
-  tagPolitica: { x: 0.025, y: 0, ancho: 0.35, alto: 0.09, colorFondo: '#e40e16', colorTexto: '#ffe814', lineas: 1 },
+  // anguloGrados: medido por píxeles contra el borde diagonal de abajo del banner en el arte
+  // (cartel_precio_piso.jpg: sube de y:0.161 a y:0.119 entre x:0.03 y x:0.44, ≈-4°) — el texto
+  // fijo "¡PRECIOS AL PISO!" sigue esa inclinación; sin rotar, el texto repintado por Depósito
+  // quedaba derecho contra un borde en diagonal.
+  // OJO: el rectángulo de fondo (colorFondo) tiene que arrancar en y:0 SIEMPRE — es lo que tapa
+  // el texto fijo original ("¡PRECIOS AL PISO!"), que llega hasta el mismísimo borde superior de
+  // la plantilla (medido por píxeles: y:0.052-0.123). Correr y no tapa una franja arriba y deja
+  // asomar el texto viejo. Para bajar el texto NUEVO sin perder esa cobertura, se corre solo el
+  // texto con textoOffsetY (fracción de `alto` — ver carteleria-render.js), no el fondo.
+  tagPolitica: {
+    x: 0.025, y: 0, ancho: 0.35, alto: 0.09, colorFondo: '#e40e16', colorTexto: '#ffe814', lineas: 1,
+    anguloGrados: -4, textoOffsetY: 0.22,
+  },
 };
 
 const PLANTILLAS = {

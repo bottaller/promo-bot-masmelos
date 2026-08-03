@@ -164,23 +164,6 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     },
   ];
 
-  if (plantilla.campos.imagenProducto && imagenProductoBuffer) {
-    const rect = campoRect(plantilla.campos.imagenProducto, anchoFinal, altoFinal);
-    // satori NO decodifica WebP (el catálogo sube todo en ese formato, ver
-    // carteleria-catalogo.js) — a pesar de que "image/webp" aparece en su bundle, no hay
-    // decoder real: el <img> se ignora en silencio, sin tirar error. Normalizamos siempre a
-    // PNG con sharp antes de pasarlo, sea cual sea el formato de entrada.
-    const productoPngBuffer = await sharp(imagenProductoBuffer).png().toBuffer();
-    const productoBase64 = productoPngBuffer.toString('base64');
-    hijos.push({
-      type: 'img',
-      props: {
-        src: `data:image/png;base64,${productoBase64}`,
-        style: { position: 'absolute', ...rect, objectFit: 'contain' },
-      },
-    });
-  }
-
   // El precio es opcional: "nuevo_ingreso" no tiene ese campo en la plantilla.
   if (plantilla.campos.precio) {
     const { entero, decimales } = formatearPrecio(precio);
@@ -189,16 +172,24 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // negro en las de cartel) — así el precio que agregamos calza con el diseño.
     const colorPrecio = plantilla.campos.colorPrecio || '#1a1a1a';
     // Precio en una sola línea: satori no lo achica solo si es más largo (p.ej. "1.899"
-    // vs "999"), así que ajustamos el tamaño según la cantidad de dígitos + el "." de
-    // miles, y dejamos overflow:hidden como red de seguridad para que nunca tape el
-    // "FINAL" fijo de la plantilla.
+    // vs "999"), así que calculamos el tamaño más grande que entra — con el ancho REAL de
+    // "entero" + "decimales" (medido con la fuente de verdad, igual que partirEnLineas/el tag
+    // de política — antes esto era la única fuente que usaba una heurística de "0.62 de ancho
+    // por carácter", quedando bastante más chico de lo que el casillero permitía). Como el ancho
+    // de un texto escala lineal con el tamaño de fuente, alcanza con medir a tamaño 1 y despejar.
     // Tope de altura: 85% del rect. En Cartel/Cigüeña el rect es alto a propósito (para
     // centrar bien el bloque con precios de distinto largo, ver más abajo) — un tope de altura
     // más chico dejaba SIEMPRE el mismo tamaño de fuente sin importar el largo del precio,
     // chico y lejos del "$"/"FINAL" fijos. El tope por ancho de abajo ya evita que un precio
     // largo choque con el "FINAL" fijo, así que no hace falta un segundo tope de altura.
     const capAltura = rectPrecio.height * 0.85;
-    const tamanioPrecio = Math.min(capAltura, rectPrecio.width / (entero.length * 0.62 + 0.47));
+    const font = fuenteParseada();
+    const anchoEnteroPorUnidad = font.getAdvanceWidth(entero, 1);
+    const anchoDecimalesPorUnidad = font.getAdvanceWidth(decimales, 1);
+    // width(S) = S*anchoEnteroPorUnidad + margenPorUnidad*S + (0.38*S)*anchoDecimalesPorUnidad
+    const anchoPorUnidadDeTamanio = anchoEnteroPorUnidad + 0.06 + 0.38 * anchoDecimalesPorUnidad;
+    const capAncho = rectPrecio.width / anchoPorUnidadDeTamanio;
+    const tamanioPrecio = Math.min(capAltura, capAncho);
     // Un precio largo (ej. "1.500" vs "999") achica tamanioPrecio para no desbordar — si el
     // bloque quedara anclado arriba (flex-start), un precio más chico dejaría un hueco vacío
     // debajo y se vería "flotando" desalineado del "$"/"FINAL" fijos de la plantilla. Igual que
@@ -308,6 +299,28 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     },
   });
 
+  // La foto de producto se dibuja DESPUÉS de la caja del nombre (no antes) — en Cartel/Cigüeña
+  // el diseño real pisa la franja blanca del nombre con la parte de abajo de la foto (a propósito,
+  // para que se vea grande), y si la pintábamos antes, la caja del nombre (que repinta un
+  // rectángulo opaco para tapar su línea divisoria fija) la tapaba a la altura de esa franja.
+  // Dibujándola al final queda arriba de todo eso, sin que nada la recorte.
+  if (plantilla.campos.imagenProducto && imagenProductoBuffer) {
+    const rect = campoRect(plantilla.campos.imagenProducto, anchoFinal, altoFinal);
+    // satori NO decodifica WebP (el catálogo sube todo en ese formato, ver
+    // carteleria-catalogo.js) — a pesar de que "image/webp" aparece en su bundle, no hay
+    // decoder real: el <img> se ignora en silencio, sin tirar error. Normalizamos siempre a
+    // PNG con sharp antes de pasarlo, sea cual sea el formato de entrada.
+    const productoPngBuffer = await sharp(imagenProductoBuffer).png().toBuffer();
+    const productoBase64 = productoPngBuffer.toString('base64');
+    hijos.push({
+      type: 'img',
+      props: {
+        src: `data:image/png;base64,${productoBase64}`,
+        style: { position: 'absolute', ...rect, objectFit: 'contain' },
+      },
+    });
+  }
+
   // Tag de política ("DTO. X VOL" / "DESCUENTO POR VOLUMEN" fijos en el arte) — se repinta con
   // la política que escribió Depósito, solo para tipo_precio=politica. A4 admite 2 líneas
   // (partirEnLineas, igual que el nombre); Cartel/Cigüeña es angosto y se cierra hacia la punta
@@ -318,6 +331,17 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     const unaSolaLinea = tag.lineas === 1;
     const tamanioMax = rectTag.height * (unaSolaLinea ? 0.6 : 0.4);
     const { tamanio: tamanioTag, lineas: lineasTag } = ajustarTamanioTag(politica, tamanioMax, tamanioMax * 0.4, rectTag.width, unaSolaLinea);
+    // El banderín de Cartel/Cigüeña es un paralelogramo (corte diagonal, medido por píxeles
+    // contra el arte: ~-4°) y el texto fijo "¡PRECIOS AL PISO!"/"DESCUENTO POR VOLUMEN" que
+    // reemplaza sigue esa inclinación — sin rotar, el texto repintado quedaba derecho, en
+    // diagonal contra el borde de abajo del recuadro.
+    const transformTag = tag.anguloGrados ? { transform: `rotate(${tag.anguloGrados}deg)` } : {};
+    // El texto se puede correr hacia abajo DENTRO del rect (textoOffsetY, fracción de
+    // rectTag.height) sin tocar el fondo — el fondo tiene que seguir tapando el rect completo
+    // (ver comentario de tagPolitica en carteleria-plantillas.js), si no asoma el texto fijo
+    // original en la franja que el fondo dejó de cubrir.
+    const offsetTexto = (tag.textoOffsetY || 0) * rectTag.height;
+    const rectTexto = { left: rectTag.left, top: rectTag.top + offsetTexto, width: rectTag.width, height: rectTag.height - offsetTexto };
     hijos.push({
       type: 'div',
       props: {
@@ -331,9 +355,9 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       type: 'div',
       props: {
         style: {
-          position: 'absolute', left: rectTag.left, top: rectTag.top, width: rectTag.width, height: rectTag.height,
+          position: 'absolute', left: rectTexto.left, top: rectTexto.top, width: rectTexto.width, height: rectTexto.height,
           display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-          overflow: 'hidden',
+          overflow: 'hidden', ...transformTag,
         },
         children: lineasTag.filter(Boolean).map((linea) => ({
           type: 'div',
@@ -345,16 +369,28 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
 
   if (vencimiento && plantilla.campos.vencimiento) {
     const rectVto = campoRect(plantilla.campos.vencimiento, anchoFinal, altoFinal);
+    const textoVto = `VTO: ${formatearVencimiento(vencimiento)}`;
+    // El campo es angosto a propósito (calza con el tramo horizontal de la línea puntero fija
+    // del arte) — a tamaño fijo (altura*0.85), una fecha de 2 dígitos de año entraba pero
+    // "VTO: 31/12/26" no, y sin achicar el texto se partía solo en 2 líneas (satori no trunca
+    // ni ajusta un <div> de texto por su cuenta) tapándose con la línea de abajo. Achicamos
+    // SOLO si hace falta (nunca agrandamos más allá del tope por altura) — la fecha nunca se
+    // trunca con "…", siempre se ve completa.
+    const tamanioMaxPorAltura = rectVto.height * 0.85;
+    const anchoATamanioMax = fuenteParseada().getAdvanceWidth(textoVto, tamanioMaxPorAltura);
+    const tamanioVto = anchoATamanioMax > rectVto.width
+      ? tamanioMaxPorAltura * (rectVto.width / anchoATamanioMax)
+      : tamanioMaxPorAltura;
     hijos.push({
       type: 'div',
       props: {
         style: {
           position: 'absolute', left: rectVto.left, top: rectVto.top, width: rectVto.width, height: rectVto.height,
-          display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-start', overflow: 'hidden',
         },
         children: {
           type: 'div',
-          props: { style: { fontFamily: 'Anton', fontSize: rectVto.height * 0.85, color: '#1a1a1a' }, children: `VTO: ${formatearVencimiento(vencimiento)}` },
+          props: { style: { fontFamily: 'Anton', fontSize: tamanioVto, color: '#1a1a1a', whiteSpace: 'nowrap' }, children: textoVto },
         },
       },
     });
