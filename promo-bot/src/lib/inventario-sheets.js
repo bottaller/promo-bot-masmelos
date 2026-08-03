@@ -39,16 +39,16 @@ async function agregarConteo({ pallet, pasillo, codigo, unidades, displays, bult
   const sheets = await getSheets();
   const fila = await proximaFilaLibre(sheets);
 
-  // El código escaneado va con un apóstrofo adelante para forzarlo como texto (igual que
-  // tipearlo a mano en Sheets): sin esto, USER_ENTERED lo interpreta como número y un EAN que
-  // arranca con 0 (común en UPC-A representado como EAN-13) pierde el cero y ya no matchea
-  // contra MAESTRO.
+  // La columna C (Código escaneado) está formateada en la planilla como texto plano, así que
+  // no hace falta forzarlo con un apóstrofo (eso quedaba visible y rompía las fórmulas): un EAN
+  // que arranca con 0 (común en UPC-A representado como EAN-13) se guarda tal cual, sin perder
+  // el cero.
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: SHEET_ID,
     requestBody: {
       valueInputOption: 'USER_ENTERED',
       data: [
-        { range: `${TAB}!A${fila}:C${fila}`, values: [[pallet, pasillo, `'${codigo}`]] },
+        { range: `${TAB}!A${fila}:C${fila}`, values: [[pallet, pasillo, codigo]] },
         { range: `${TAB}!E${fila}:G${fila}`, values: [[unidades, displays, bultos]] },
       ],
     },
