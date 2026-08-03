@@ -109,13 +109,19 @@ const CAMPOS_A4_NUEVO_INGRESO = {
 // izquierda, "FINAL" fijo arriba a la derecha, precio grande en el campo amarillo, hueco de
 // foto de producto a la derecha, barra blanca de nombre abajo, footer negro con disclaimer fijo.
 const CAMPOS_CARTEL_PRECIO = {
-  // Agrandado de nuevo (antes x:0.075,ancho:0.545) — medido por píxeles contra carteles reales
-  // de referencia (no contra el arte en blanco): en esos carteles "7347"/"1014" arrancan en
-  // x≈0.056 (pegado al "$", que termina en x:0.069) y el precio+centavos llega hasta x≈0.69,
-  // tocando justo donde arranca "FINAL" (x:0.689) — el diseño real no deja margen ahí a
-  // propósito. Puede superponerse con la foto de producto (que arranca en x:0.65) para precios
+  // Medido por píxeles contra carteles reales de referencia (no contra el arte en blanco):
+  // el precio ("7347"/"1014") arranca en x≈0.056 (pegado al "$", que termina en x:0.069) y
+  // llega hasta x≈0.62-0.63 — los CENTAVOS no van pegados al final de esos dígitos: van en su
+  // propio casillero fijo, apilados arriba de "FINAL" (ver `decimales` más abajo), no en la
+  // misma fila. Puede superponerse con la foto de producto (que arranca en x:0.65) para precios
   // largos; el diseño real tampoco lo evita (la foto ahí queda más a la derecha).
-  precio: { x: 0.06, y: 0.16, ancho: 0.63, alto: 0.54, align: 'left' },
+  precio: { x: 0.06, y: 0.16, ancho: 0.6, alto: 0.54, align: 'left' },
+  // Casillero de los centavos ("11", "88") — NO van pegados a la derecha de los dígitos
+  // enteros: medido por píxeles contra los carteles de referencia, van en su propia columna,
+  // centrados sobre "FINAL" (que arranca en x:0.689 y termina en x:0.792 — mismo centro,
+  // x≈0.74) y apilados arriba, con el borde de abajo pegado justo antes de donde arranca
+  // "FINAL" (medido: los centavos terminan en y≈0.213, "FINAL" arranca en y:0.243).
+  decimales: { x: 0.66, ancho: 0.17, techoY: 0.213, align: 'center' },
   // Corrido más a la derecha (antes x:0.35) y agrandada — con la foto de producto renderizada
   // DESPUÉS de la caja del nombre (ver generarCartel en carteleria-render.js), no importa que
   // pise la franja blanca ni la línea divisoria: queda arriba de todo eso, igual que en el diseño
@@ -132,8 +138,10 @@ const CAMPOS_CARTEL_PRECIO = {
   // (ahí arranca el pie de página negro, medido exacto), este es el límite físico del arte
   // actual — para llegar al tamaño de los carteles de referencia (que tienen el pie de página
   // más abajo) haría falta un archivo de arte nuevo con la franja blanca más alta.
-  nombreLinea1: { x: 0.03, y: 0.745, ancho: 0.94, alto: 0.09, align: 'center' },
-  nombreLinea2: { x: 0.03, y: 0.85, ancho: 0.94, alto: 0.09, align: 'center' },
+  // Alineado a la izquierda (antes 'center') — medido contra carteles reales de referencia:
+  // el nombre arranca pegado al margen izquierdo, no centrado en la franja blanca.
+  nombreLinea1: { x: 0.03, y: 0.745, ancho: 0.94, alto: 0.09, align: 'left' },
+  nombreLinea2: { x: 0.03, y: 0.85, ancho: 0.94, alto: 0.09, align: 'left' },
   colorNombre: '#1a1a1a', // barra blanca de fondo (no hay caja oscura)
   colorFondoNombre: '#ffffff',
   colorDivisorNombre: 'rgba(0,0,0,0.18)',

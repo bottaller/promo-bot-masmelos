@@ -188,27 +188,22 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     const capAltura = rectPrecio.height * 0.85;
     const font = fuenteParseada();
     const anchoEnteroPorUnidad = font.getAdvanceWidth(entero, 1);
-    const anchoDecimalesPorUnidad = font.getAdvanceWidth(decimales, 1);
     // Tracking negativo (letras más juntas): medido contra carteles reales de referencia, el
     // precio ahí es notablemente más alto que lo que da nuestra fuente a ancho real SIN tracking
     // — la altura de un glifo no depende del tracking, solo el ancho, así que achicar el espacio
     // entre caracteres deja meter una fuente bastante más grande en el mismo casillero (medido:
-    // -0.09 de tracking, sobre "7347"+"11" en el casillero actual, da la altura de la referencia).
+    // -0.09 de tracking, sobre "7347" en el casillero actual, da la altura de la referencia).
     const TRACKING = -0.09;
     const gapsEntero = Math.max(entero.length - 1, 0);
-    const gapsDecimales = Math.max(decimales.length - 1, 0);
-    // width(S) = S*(anchoEnteroPorUnidad + gapsEntero*TRACKING) + margenPorUnidad*S
-    //          + 0.38*S*(anchoDecimalesPorUnidad + gapsDecimales*TRACKING)
-    const anchoPorUnidadDeTamanio =
-      (anchoEnteroPorUnidad + gapsEntero * TRACKING) + 0.06 + 0.38 * (anchoDecimalesPorUnidad + gapsDecimales * TRACKING);
+    // width(S) = S*(anchoEnteroPorUnidad + gapsEntero*TRACKING) — los centavos van en su propio
+    // casillero (ver más abajo), no comparten ancho con los dígitos enteros.
+    const anchoPorUnidadDeTamanio = anchoEnteroPorUnidad + gapsEntero * TRACKING;
     const capAncho = rectPrecio.width / anchoPorUnidadDeTamanio;
     const tamanioPrecio = Math.min(capAltura, capAncho);
     // Un precio largo (ej. "1.500" vs "999") achica tamanioPrecio para no desbordar — si el
     // bloque quedara anclado arriba (flex-start), un precio más chico dejaría un hueco vacío
-    // debajo y se vería "flotando" desalineado del "$"/"FINAL" fijos de la plantilla. Igual que
-    // con el nombre: centramos el bloque completo verticalmente (contenedor externo), y adentro
-    // mantenemos el precio y los centavos en su propia fila para conservar el efecto de
-    // superíndice (centavos arriba a la derecha, más chicos).
+    // debajo y se vería "flotando" desalineado del "$" fijo de la plantilla. Por eso se centra
+    // el bloque completo verticalmente (contenedor externo).
     hijos.push({
       type: 'div',
       props: {
@@ -220,16 +215,40 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
         },
         children: {
           type: 'div',
-          props: {
-            style: { display: 'flex', flexDirection: 'row', alignItems: 'flex-start' },
-            children: [
-              { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioPrecio * TRACKING }, children: entero } },
-              { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio * 0.38, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioPrecio * 0.38 * TRACKING, marginLeft: tamanioPrecio * 0.06 }, children: decimales } },
-            ],
-          },
+          props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioPrecio * TRACKING }, children: entero },
         },
       },
     });
+
+    // Centavos ("11", "88"): NO van pegados a la derecha de los dígitos enteros — medido por
+    // píxeles contra carteles reales de referencia, van en su propio casillero fijo, apilados
+    // arriba de "FINAL" (fijo en la plantilla), con el borde de abajo pegado justo antes de
+    // donde arranca "FINAL" (`techoY`, ver CAMPOS_CARTEL_PRECIO). El tamaño sigue proporcional
+    // al precio (0.38x), pero la posición es independiente del ancho de "entero".
+    if (plantilla.campos.decimales) {
+      const campoDec = plantilla.campos.decimales;
+      const leftDec = campoDec.x * anchoFinal;
+      const anchoDec = campoDec.ancho * anchoFinal;
+      const techoDecPx = campoDec.techoY * altoFinal;
+      // Tope: no puede ser más alto que el propio "techo" (el hueco entre el borde de arriba de
+      // la plantilla y "FINAL") — sin este tope, un precio grande (que ya no comparte ancho con
+      // los centavos, así que puede crecer más que antes) empujaba los centavos hasta pisar el
+      // logo de arriba.
+      const tamanioDecimales = Math.min(tamanioPrecio * 0.38, techoDecPx * 0.85);
+      hijos.push({
+        type: 'div',
+        props: {
+          style: {
+            position: 'absolute', left: leftDec, width: anchoDec, top: techoDecPx - tamanioDecimales,
+            display: 'flex', justifyContent: campoDec.align === 'center' ? 'center' : 'flex-start',
+          },
+          children: {
+            type: 'div',
+            props: { style: { fontFamily: 'Anton', fontSize: tamanioDecimales, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioDecimales * TRACKING }, children: decimales },
+          },
+        },
+      });
+    }
   }
 
   const colorNombre = plantilla.campos.colorNombre || '#ffffff';
