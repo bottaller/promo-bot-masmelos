@@ -174,13 +174,28 @@ function listarCatalogo() {
   return manifestCache;
 }
 
-// "10013 (1).webp" -> "10013" (el archivo se llama por código de artículo, con un sufijo
-// opcional "(N)" cuando hay más de una foto del mismo producto). Si el nombre no es puramente
-// numérico (ej. "3 bombones bariloche.webp"), devuelve null — es un archivo con nombre
-// descriptivo, se matchea por palabras más abajo.
+// Código de artículo con el que arranca el nombre del archivo. Dos formatos conviven en el bucket:
+//   - "10013 (1).webp"                 -> "10013"  (nombre 100% numérico, formato viejo)
+//   - "042433 ACEITE RBD... (1).webp"  -> "042433" (código + nombre, formato nuevo tras renombrar
+//                                         el catálogo contra el maestro — ver scripts/renombrar)
+// El sufijo opcional "(N)" (más de una foto del mismo producto) se saca primero. Un nombre
+// descriptivo sin código adelante (ej. "3 bombones bariloche.webp") devuelve null y cae al matcheo
+// por palabras. Exigimos ≥4 dígitos + espacio para no confundir un número suelto del principio de
+// un nombre viejo (ej. "3 bombones", "9 de oro") con un código.
 function codigoDe(archivo) {
   const base = path.parse(archivo).name.replace(/\s*\(\d+\)\s*$/, '').trim();
-  return /^\d+$/.test(base) ? base : null;
+  if (/^\d+$/.test(base)) return base;
+  const m = base.match(/^(\d{4,})\s+\S/);
+  return m ? m[1] : null;
+}
+
+// Parte DESCRIPTIVA del nombre, para el matcheo por palabras: sin el código del principio (formato
+// nuevo) ni el sufijo "(N)". "042433 ACEITE RBD... (1)" -> "ACEITE RBD...". Para el formato viejo
+// 100% numérico ("10013 (1)") queda "" — ese archivo SOLO matchea por código, no tiene descripción.
+function descripcionDe(archivo) {
+  const base = path.parse(archivo).name.replace(/\s*\(\d+\)\s*$/, '').trim();
+  if (/^\d+$/.test(base)) return '';
+  return base.replace(/^\d{4,}\s+/, '').trim();
 }
 
 // bot.articulos.codigo viene con ceros a la izquierda (ej. "010013"), los nombres de archivo
@@ -198,16 +213,19 @@ let metadataCache = null;
 function metadataCatalogo() {
   if (metadataCache) return metadataCache;
   metadataCache = listarCatalogo().map((archivo) => {
+    // El nombre para palabras/números es la parte DESCRIPTIVA (sin el código del principio ni "(N)").
+    // Los archivos código+descripción (formato nuevo) matchean por código Y por palabras; los 100%
+    // numéricos (formato viejo) quedan con descripción "" -> palabras vacías -> solo por código.
     const codigo = codigoDe(archivo);
-    if (codigo) return { archivo, codigo };
-    const nombreArchivo = path.parse(archivo).name;
+    const nombreArchivo = descripcionDe(archivo);
     const palabrasArchivo = new Set(palabras(nombreArchivo));
     return {
       archivo,
-      codigo: null,
+      codigo,
       nombreArchivo,
       palabrasArchivo,
       raicesArchivo: new Set([...palabrasArchivo].map(raiz)),
+      numerosArchivo: numerosDe(nombreArchivo),
       surtido: esSurtido(nombreArchivo),
     };
   });
@@ -236,7 +254,7 @@ function frecuenciaPalabras() {
   if (frecuenciaCache) return frecuenciaCache;
   frecuenciaCache = new Map();
   for (const m of metadataCatalogo()) {
-    if (m.codigo) continue;
+    if (!m.palabrasArchivo.size) continue; // 100% numéricos (sin descripción) no cuentan
     for (const r of m.raicesArchivo) frecuenciaCache.set(r, (frecuenciaCache.get(r) || 0) + 1);
   }
   return frecuenciaCache;
@@ -254,7 +272,7 @@ function candidatosPorPalabras(nombreProducto) {
   let mejorPuntaje = 0;
   let empatados = []; // [{ archivo, m }]
   for (const m of metadataCatalogo()) {
-    if (m.codigo) continue; // ya se probaron por código arriba
+    if (!m.palabrasArchivo.size) continue; // 100% numéricos: solo por código, no tienen descripción
     if (sonProductosDistintosCache(palabrasProducto, m)) continue;
     let coincidencias = 0;
     for (const raizProducto of raicesProducto) {
@@ -331,8 +349,10 @@ function empatePocoConfiable(empatados, mejorPuntaje, palabrasProducto) {
 // (ver archivosCandidatos) si ninguno tiene un número que lo distinga de los demás.
 function desempatarPorNumeros(empatados, nombreProducto) {
   const numerosProducto = numerosDe(nombreProducto);
-  const conSolape = empatados.map(({ archivo }) => {
-    const numerosArchivo = numerosDe(path.parse(archivo).name);
+  const conSolape = empatados.map(({ archivo, m }) => {
+    // Números de la parte descriptiva (sin el código del principio, que si no cuenta como "número"
+    // y arruina el desempate por talle). m.numerosArchivo ya viene precalculado desde la metadata.
+    const numerosArchivo = m ? m.numerosArchivo : numerosDe(descripcionDe(archivo));
     let solape = 0;
     for (const n of numerosProducto) if (numerosArchivo.has(n)) solape++;
     return { archivo, solape };

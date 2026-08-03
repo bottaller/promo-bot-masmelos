@@ -76,7 +76,11 @@ t('sabor pedido (frutilla) no matchea un archivo de otro sabor abreviado (mta=me
 
 console.log('archivoMasParecido(): con 1 sola palabra en común, mejor sin foto que con una mal');
 t('nombre sin ningún candidato fuerte -> null, no una foto cualquiera', () => {
-  const archivo = archivoMasParecido('CHOCOLATADA BAGGIO X 200 CC');
+  // La marca real ("zqwxy", inventada) no está en ningún archivo; "shampoo"/"anticaspa" son
+  // genéricas y no alcanzan solas -> null, no agarra un shampoo cualquiera. (El ejemplo anterior,
+  // "CHOCOLATADA BAGGIO", dejó de servir: al renombrar el catálogo contra el maestro, ese producto
+  // pasó a tener su foto exacta y ahora SÍ matchea — que es lo correcto.)
+  const archivo = archivoMasParecido('SHAMPOO ZQWXY ANTICASPA X 400 ML');
   assert.strictEqual(archivo, null);
 });
 t('EXCEPCIÓN: 1 sola palabra pero es TODO el nombre de ambos lados -> match exacto, no null', () => {
