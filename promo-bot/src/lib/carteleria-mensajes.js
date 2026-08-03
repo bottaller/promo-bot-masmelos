@@ -119,6 +119,11 @@ async function avisarEleccionFoto(telegram, { carteleria, disenosBuffers }) {
           disenosFileIds[i] = fotos.length ? fotos[fotos.length - 1].file_id : null;
         }
       }
+      // Ninguna opción tiene por qué ser la correcta — sin esto, Marketing no tiene forma de
+      // decirlo y quedaría eligiendo la "menos mala" a la fuerza.
+      await telegram.sendMessage(tid, 'Si ninguna de las opciones es la correcta:', {
+        reply_markup: { inline_keyboard: [[{ text: '❌ Ninguna — seguir sin foto', callback_data: `carteleria_elegir_foto:${id}:ninguna` }]] },
+      });
       avisados++;
     } catch (e) { console.error('No pude mandarle las opciones de foto a marketing (cartelería):', e.message); }
   }

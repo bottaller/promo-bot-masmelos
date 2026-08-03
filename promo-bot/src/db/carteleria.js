@@ -64,6 +64,19 @@ async function elegirDisenoCandidato(id, indice) {
   return rows[0] || null;
 }
 
+// Marketing tocó "Ninguna es correcta" — ninguna de las candidatas sirve, vacía
+// disenos_candidatos SIN tocar diseno_file_id (el llamador regenera el cartel sin foto). Misma
+// guarda atómica que elegirDisenoCandidato: null si ya se había resuelto.
+async function descartarDisenosCandidatos(id) {
+  const { rows } = await pool.query(
+    `update bot.carteleria set disenos_candidatos = null
+      where id = $1 and disenos_candidatos is not null
+      returning *`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
 // Marketing confirma el diseño ("Está bien"). Guarda atómica: null si ya lo
 // había verificado otra persona de Marketing (evita doble-disparo del aviso de
 // impresión/pedido si dos tocan el botón casi al mismo tiempo).
@@ -95,6 +108,7 @@ module.exports = {
   guardarDiseno,
   guardarDisenosCandidatos,
   elegirDisenoCandidato,
+  descartarDisenosCandidatos,
   marcarVerificado,
   marcarPedidoConfirmado,
 };

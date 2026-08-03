@@ -1,8 +1,9 @@
 // Botones de /carteleria (área Depósito). Vive acá (no en el wizard) porque dispara desde una
 // notificación proactiva — Marketing no tiene ninguna escena activa cuando lo toca.
 // Se registra una sola vez en src/index.js, ANTES del catch-all de callbacks sueltos.
-const { marcarPedidoConfirmado, marcarVerificado, elegirDisenoCandidato } = require('./db/carteleria');
+const { marcarPedidoConfirmado, marcarVerificado, elegirDisenoCandidato, descartarDisenosCandidatos, guardarDiseno } = require('./db/carteleria');
 const { avisarAMarketingFinal, avisarVerificacionMarketing } = require('./lib/carteleria-mensajes');
+const { generarCartel } = require('./lib/carteleria-render');
 const { esDueno } = require('./lib/owner');
 
 function esMarketing(usuario) {
@@ -67,13 +68,42 @@ function registrarAccionesDeposito(bot) {
 
   // --- /carteleria: el matcheo de fotos quedó ambiguo (ver carteleria-catalogo.js) y Marketing
   // elige cuál de las 2-4 opciones es la correcta -> esa queda como el diseño y sigue el flujo
-  // de verificación de siempre (✅ Está bien / ✏️ Corregir), como si se hubiera generado 1 sola. ---
-  bot.action(/^carteleria_elegir_foto:(\d+):(\d+)$/, async (ctx) => {
+  // de verificación de siempre (✅ Está bien / ✏️ Corregir), como si se hubiera generado 1 sola.
+  // "ninguna" = ninguna opción sirve -> se regenera el cartel SIN foto (mismo resultado que si
+  // el catálogo nunca hubiera encontrado nada) en vez de forzar a elegir la "menos mala". ---
+  bot.action(/^carteleria_elegir_foto:(\d+):(\d+|ninguna)$/, async (ctx) => {
     if (!puedeAccionar(ctx)) {
       await ctx.answerCbQuery('Esto es solo para Marketing.', { show_alert: true });
       return;
     }
     const id = Number(ctx.match[1]);
+    const esNinguna = ctx.match[2] === 'ninguna';
+
+    if (esNinguna) {
+      const carteleria = await descartarDisenosCandidatos(id);
+      if (!carteleria) {
+        await ctx.answerCbQuery('Ya se había resuelto la foto de este pedido.', { show_alert: true });
+        return;
+      }
+      await ctx.answerCbQuery('Listo, sigue sin foto.');
+      try { await ctx.editMessageReplyMarkup(); } catch (e) { /* mensaje viejo */ }
+
+      try {
+        const disenoBuffer = await generarCartel({
+          tipoGrafica: carteleria.tipo, tipoPrecio: carteleria.tipo_precio, producto: carteleria.producto,
+          precio: carteleria.precio, vencimiento: carteleria.vencimiento, politica: carteleria.politica_texto,
+          imagenProductoBuffer: null,
+        });
+        const { avisados, disenoFileId } = await avisarVerificacionMarketing(bot.telegram, { carteleria, disenoBuffer });
+        if (disenoFileId) await guardarDiseno(id, { producto: carteleria.producto, precio: carteleria.precio, disenoFileId });
+        console.log(`Cartelería #${id}: ninguna foto candidata servía, regenerado sin foto (${avisados}).`);
+      } catch (e) {
+        console.error('No pude regenerar el cartel sin foto:', e.message);
+        await ctx.reply('No pude regenerar el diseño. Avisale al admin.');
+      }
+      return;
+    }
+
     const indice = Number(ctx.match[2]);
     const carteleria = await elegirDisenoCandidato(id, indice);
     if (!carteleria) {

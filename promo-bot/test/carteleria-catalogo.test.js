@@ -51,12 +51,15 @@ t('otro sabor de la misma marca matchea su propio archivo', () => {
 });
 
 console.log('archivoMasParecido(): "galle"/"choco" no deben pesar más que la marca real');
-t('marca real (mana) le gana al ruido de categoría (galle/choco) de otra marca', () => {
-  // "mana rell 152.webp" no está en la lista, pero al menos ya no debe elegir a ciegas otra
-  // marca ("cofler") solo porque comparte "galle"/"choco" — eso está cubierto por PUNTAJE_MINIMO
-  // más abajo. Acá solo confirmamos que "galle"/"choco" no aparecen manejando el desempate.
+t('marca conocida (sesamo) no se pierde entre el ruido de "galle"', () => {
   const archivo = archivoMasParecido('GALLE.SESAMO GRANIX X 175 G');
   assert.match(archivo, /sesamo/i);
+});
+t('marca real (mana) le gana a otra marca (cofler) que solo comparte sabor/descriptores', () => {
+  // "mana rell 152.webp" no dice "vainilla" — antes perdía contra "GALLE.COFLER...VAINILLA"
+  // por compartir sabor+descriptor con la marca buscada, aunque la marca en sí no coincidiera.
+  const archivo = archivoMasParecido('GALLE.MANA VAINILLA RELLENAS CHOCO X 152 G');
+  assert.match(archivo, /mana/i);
 });
 
 console.log('archivoMasParecido(): "vs" (varios sabores) no descarta un sabor puntual pedido');
@@ -65,9 +68,19 @@ t('"Mentho Plus" + sabor puntual matchea el archivo "vs" (surtido) de esa marca'
   assert.match(archivo, /mentho/i);
 });
 
+console.log('archivoMasParecido(): abreviatura de sabor ("mta"=menta) sigue distinguiendo sabores');
+t('sabor pedido (frutilla) no matchea un archivo de otro sabor abreviado (mta=menta)', () => {
+  const archivo = archivoMasParecido('CHICLE MENTOS BOT FRUTILLA 6 UNI X 56 G');
+  assert.ok(!archivo || !/mta|menta/i.test(archivo));
+});
+
 console.log('archivoMasParecido(): con 1 sola palabra en común, mejor sin foto que con una mal');
 t('nombre sin ningún candidato fuerte -> null, no una foto cualquiera', () => {
-  const archivo = archivoMasParecido('CHOCOLATADA BAGGIO X 200 CC');
+  // La marca real ("zqwxy", inventada) no está en ningún archivo; "shampoo"/"anticaspa" son
+  // genéricas y no alcanzan solas -> null, no agarra un shampoo cualquiera. (El ejemplo anterior,
+  // "CHOCOLATADA BAGGIO", dejó de servir: al renombrar el catálogo contra el maestro, ese producto
+  // pasó a tener su foto exacta y ahora SÍ matchea — que es lo correcto.)
+  const archivo = archivoMasParecido('SHAMPOO ZQWXY ANTICASPA X 400 ML');
   assert.strictEqual(archivo, null);
 });
 t('EXCEPCIÓN: 1 sola palabra pero es TODO el nombre de ambos lados -> match exacto, no null', () => {
