@@ -127,11 +127,13 @@ const CAMPOS_CARTEL_PRECIO = {
   // Último ajuste: un poco más arriba (y:0.48→0.45→0.42) — a la derecha ya no hay más lugar,
   // x:0.65 con este ancho ya llega justo al borde derecho de la plantilla (x+ancho=1.0).
   imagenProducto: { x: 0.65, y: 0.42, ancho: 0.35, alto: 0.405 },
-  // Agrandado (antes alto:0.06/0.06, y:0.755/0.825) — medido por píxeles contra el arte
-  // (cartel_precio_piso.jpg): la franja blanca va de y:0.743 a y:0.93 aprox (el pie de página
-  // negro arranca ahí), así que hay lugar de sobra para un texto más grande sin pisarlo.
-  nombreLinea1: { x: 0.03, y: 0.745, ancho: 0.94, alto: 0.075, align: 'center' },
-  nombreLinea2: { x: 0.03, y: 0.845, ancho: 0.94, alto: 0.075, align: 'center' },
+  // Agrandado al máximo seguro (antes alto:0.075/0.075, y:0.745/0.845) — medido por píxeles
+  // contra el arte (cartel_precio_piso.jpg): la franja blanca real va de y:0.743 a y:0.9456
+  // (ahí arranca el pie de página negro, medido exacto), este es el límite físico del arte
+  // actual — para llegar al tamaño de los carteles de referencia (que tienen el pie de página
+  // más abajo) haría falta un archivo de arte nuevo con la franja blanca más alta.
+  nombreLinea1: { x: 0.03, y: 0.745, ancho: 0.94, alto: 0.09, align: 'center' },
+  nombreLinea2: { x: 0.03, y: 0.85, ancho: 0.94, alto: 0.09, align: 'center' },
   colorNombre: '#1a1a1a', // barra blanca de fondo (no hay caja oscura)
   colorFondoNombre: '#ffffff',
   colorDivisorNombre: 'rgba(0,0,0,0.18)',

@@ -39,9 +39,9 @@ function fuenteParseada() {
 // nos quedamos con el que minimiza el ancho de la línea más ancha de las dos,
 // midiendo con el ancho real de cada palabra (no una heurística). Si ni el mejor
 // balance entra en `anchoMax`, se recorta con "…" — nunca se desborda la plantilla.
-function partirEnLineas(texto, tamanioFuente, anchoMax) {
+function partirEnLineas(texto, tamanioFuente, anchoMax, tracking = 0) {
   const font = fuenteParseada();
-  const anchoDe = (t) => font.getAdvanceWidth(t, tamanioFuente);
+  const anchoDe = (t) => font.getAdvanceWidth(t, tamanioFuente) + Math.max(t.length - 1, 0) * tracking * tamanioFuente;
   const palabras = String(texto).toUpperCase().trim().split(/\s+/).filter(Boolean);
   if (!palabras.length) return [];
   if (palabras.length === 1) return [palabras[0]];
@@ -189,8 +189,18 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     const font = fuenteParseada();
     const anchoEnteroPorUnidad = font.getAdvanceWidth(entero, 1);
     const anchoDecimalesPorUnidad = font.getAdvanceWidth(decimales, 1);
-    // width(S) = S*anchoEnteroPorUnidad + margenPorUnidad*S + (0.38*S)*anchoDecimalesPorUnidad
-    const anchoPorUnidadDeTamanio = anchoEnteroPorUnidad + 0.06 + 0.38 * anchoDecimalesPorUnidad;
+    // Tracking negativo (letras más juntas): medido contra carteles reales de referencia, el
+    // precio ahí es notablemente más alto que lo que da nuestra fuente a ancho real SIN tracking
+    // — la altura de un glifo no depende del tracking, solo el ancho, así que achicar el espacio
+    // entre caracteres deja meter una fuente bastante más grande en el mismo casillero (medido:
+    // -0.09 de tracking, sobre "7347"+"11" en el casillero actual, da la altura de la referencia).
+    const TRACKING = -0.09;
+    const gapsEntero = Math.max(entero.length - 1, 0);
+    const gapsDecimales = Math.max(decimales.length - 1, 0);
+    // width(S) = S*(anchoEnteroPorUnidad + gapsEntero*TRACKING) + margenPorUnidad*S
+    //          + 0.38*S*(anchoDecimalesPorUnidad + gapsDecimales*TRACKING)
+    const anchoPorUnidadDeTamanio =
+      (anchoEnteroPorUnidad + gapsEntero * TRACKING) + 0.06 + 0.38 * (anchoDecimalesPorUnidad + gapsDecimales * TRACKING);
     const capAncho = rectPrecio.width / anchoPorUnidadDeTamanio;
     const tamanioPrecio = Math.min(capAltura, capAncho);
     // Un precio largo (ej. "1.500" vs "999") achica tamanioPrecio para no desbordar — si el
@@ -213,8 +223,8 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
           props: {
             style: { display: 'flex', flexDirection: 'row', alignItems: 'flex-start' },
             children: [
-              { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: colorPrecio, lineHeight: 1 }, children: entero } },
-              { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio * 0.38, color: colorPrecio, lineHeight: 1, marginLeft: tamanioPrecio * 0.06 }, children: decimales } },
+              { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioPrecio * TRACKING }, children: entero } },
+              { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio * 0.38, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioPrecio * 0.38 * TRACKING, marginLeft: tamanioPrecio * 0.06 }, children: decimales } },
             ],
           },
         },
@@ -250,9 +260,16 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
   // de antes —altura*0.72— dejaba) — arrancamos de un tamaño grande (el que llenaría el alto
   // del contenedor con el máximo de líneas permitidas) y achicamos de a poco hasta que entre
   // sin truncar ("…") en el ancho Y sin desbordar en el alto. Mismo patrón que ajustarTamanioTag.
-  let tamanioNombre = (rectNombre.height / (maxLineasNombre * 1.25)) * 1.08;
+  // Tracking negativo (letras más juntas): igual que en el precio, medido contra carteles reales
+  // de referencia — sin esto el nombre quedaba chico porque el ancho real de la fuente (sin
+  // comprimir) lo topeaba antes de llegar al tamaño que se ve en la referencia.
+  // A diferencia del precio (números, tracking negativo se ve bien apretado), en el nombre
+  // (letras + espacios, texto real) un tracking negativo fuerte hace que las letras se toquen
+  // y se vea roto — se probó y se sacó. El agrandado sale del alto real del contenedor nomás.
+  const TRACKING_NOMBRE = 0;
+  let tamanioNombre = rectNombre.height / (maxLineasNombre * 1.25);
   const tamanioMinNombre = rectLinea1.height * 0.4;
-  let [nombreLinea1, nombreLinea2] = partirEnLineas(producto, tamanioNombre, rectLinea1.width);
+  let [nombreLinea1, nombreLinea2] = partirEnLineas(producto, tamanioNombre, rectLinea1.width, TRACKING_NOMBRE);
   const excedeAlto = () => {
     const lineas = nombreLinea2 ? 2 : 1;
     return lineas * tamanioNombre * 1.25 > rectNombre.height;
@@ -262,7 +279,7 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     && tamanioNombre > tamanioMinNombre
   ) {
     tamanioNombre *= 0.94;
-    [nombreLinea1, nombreLinea2] = partirEnLineas(producto, tamanioNombre, rectLinea1.width);
+    [nombreLinea1, nombreLinea2] = partirEnLineas(producto, tamanioNombre, rectLinea1.width, TRACKING_NOMBRE);
   }
 
   // La plantilla trae una línea divisoria fija pensada para separar línea 1 de línea 2, dibujada
@@ -317,7 +334,7 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       },
       children: [nombreLinea1, nombreLinea2].filter(Boolean).map((linea) => ({
         type: 'div',
-        props: { style: { fontFamily: 'Anton', fontSize: tamanioNombre, color: colorNombre, lineHeight: 1.25 }, children: linea },
+        props: { style: { fontFamily: 'Anton', fontSize: tamanioNombre, color: colorNombre, lineHeight: 1.25, letterSpacing: tamanioNombre * TRACKING_NOMBRE }, children: linea },
       })),
     },
   });
