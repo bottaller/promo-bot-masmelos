@@ -2,7 +2,9 @@
 // notificación proactiva — Marketing no tiene ninguna escena activa cuando lo toca.
 // Se registra una sola vez en src/index.js, ANTES del catch-all de callbacks sueltos.
 const { marcarPedidoConfirmado, marcarVerificado, elegirDisenoCandidato, descartarDisenosCandidatos, guardarDiseno } = require('./db/carteleria');
+const { agregarImagenPromo } = require('./db/promoprecios');
 const { avisarAMarketingFinal, avisarVerificacionMarketing } = require('./lib/carteleria-mensajes');
+const { entregarImagenACompras } = require('./lib/promoprecios-mensajes');
 const { generarCartel } = require('./lib/carteleria-render');
 const { esDueno } = require('./lib/owner');
 
@@ -45,6 +47,24 @@ function registrarAccionesDeposito(bot) {
     if (!carteleria) { await ctx.reply('Ya estaba verificado.'); return; }
     try { await ctx.editMessageReplyMarkup(); } catch (e) { /* mensaje viejo */ }
     await ctx.reply('Verificado. Gracias.');
+
+    // Diseño generado automáticamente por /promoprecios (ver scenes/validar-promoprecios.js) en
+    // vez de un pedido normal de /carteleria: no va a imprimir/pedir a la gráfica -> entra
+    // directo al circuito de Compras que ya existe para las imágenes de promoprecios
+    // (Validar/Revisar), y de ahí sigue la ruta de siempre (dueño, Ventas/Depósito/Calidad).
+    if (carteleria.promoprecio_id) {
+      const fileId = carteleria.diseno_file_id || carteleria.foto_file_id;
+      try {
+        const imagen = await agregarImagenPromo({ promoprecioId: carteleria.promoprecio_id, fileId });
+        const destinatarios = carteleria.es_prueba ? [carteleria.usuario_telegram_id] : undefined;
+        const avisadosCompras = await entregarImagenACompras(bot.telegram, imagen, { destinatarios, esPrueba: carteleria.es_prueba });
+        await ctx.reply(`Diseño aprobado. Lo mandé a Compras para que lo valide (${avisadosCompras} persona(s)).`);
+      } catch (e) {
+        console.error('No pude mandar el diseño aprobado de promoprecios a Compras:', e.message);
+        await ctx.reply('Verificado, pero no pude mandarlo a Compras. Avisale al admin.');
+      }
+      return;
+    }
 
     // Un pedido de /carteleria_prueba (es_prueba) nunca dispara el aviso final a Marketing
     // real -> se lo mandamos solo a quien lo probó, para completar el circuito de prueba.

@@ -10,14 +10,13 @@
 //   2. Le manda a MARKETING el diseño generado, para que lo verifique antes de imprimir o
 //      pedirlo a la gráfica (ver acciones-deposito.js).
 const { Scenes } = require('telegraf');
-const { crearCarteleria, carteleriaPorId, guardarDiseno, guardarDisenosCandidatos } = require('../db/carteleria');
+const { crearCarteleria } = require('../db/carteleria');
 const { buscarArticulos } = require('../db/articulos');
 const { esCancelar, opciones, parsePrecio, preguntar, respuesta, texto } = require('../lib/wizard');
-const { TIPOS, avisarVerificacionMarketing, avisarEleccionFoto } = require('../lib/carteleria-mensajes');
+const { TIPOS } = require('../lib/carteleria-mensajes');
 const { tiposPrecioValidos, LABELS_TIPO_PRECIO, TIPOS_PRECIO_SIN_PRECIO } = require('../lib/carteleria-plantillas');
 const { leerCodigoBarras, descargarImagenTelegram } = require('../lib/carteleria-codigo-barras');
-const { buscarImagenProducto, archivosCandidatos, buscarImagenesCandidatas } = require('../lib/carteleria-catalogo');
-const { generarCartel } = require('../lib/carteleria-render');
+const { generarYNotificarMarketing } = require('../lib/carteleria-generar');
 
 // "7/8/26", "07-08-2026", etc. -> 'YYYY-MM-DD' (o null si no es una fecha válida).
 function parseFecha(valor) {
@@ -241,25 +240,15 @@ async function procesarYFinalizar(ctx, esPrueba) {
   await ctx.reply('Dame un momento, estoy generando el diseño...');
 
   try {
-    // Si el matcheo de fotos del catálogo queda ambiguo entre 2-4 candidatas igual de buenas
-    // (ver archivosCandidatos), no adivinamos una: le armamos el cartel completo con CADA
-    // opción y se lo mandamos a Marketing para que elija cuál es la correcta (avisarEleccionFoto).
-    // Con código de artículo exacto, o un solo candidato claro, esto es siempre 1 -> sigue de
-    // largo por el camino de siempre.
-    const candidatos = archivosCandidatos(producto, articuloCodigo);
-    if (candidatos.length > 1) {
-      const imagenesCandidatas = await buscarImagenesCandidatas(producto, articuloCodigo);
-      const disenosBuffers = [];
-      for (const imagenProductoBuffer of imagenesCandidatas) {
-        disenosBuffers.push(await generarCartel({
-          tipoGrafica: tipo, tipoPrecio, producto, precio: precio ?? null, vencimiento, politica: politica ?? null, imagenProductoBuffer,
-        }));
-      }
+    // Si el matcheo de fotos del catálogo queda ambiguo entre 2-4 candidatas igual de buenas,
+    // no adivinamos una: generarYNotificarMarketing le arma el cartel completo con CADA opción
+    // y se lo manda a Marketing para que elija cuál es la correcta. Con código de artículo
+    // exacto, o un solo candidato claro, esto no pasa -> sigue de largo por el camino de siempre.
+    const { ambiguo, avisados } = await generarYNotificarMarketing(ctx.telegram, {
+      id, tipo, tipoPrecio, producto, precio: precio ?? null, vencimiento, politica: politica ?? null, articuloCodigo,
+    });
 
-      const carteleria = await carteleriaPorId(id);
-      const { avisados, disenosFileIds } = await avisarEleccionFoto(ctx.telegram, { carteleria, disenosBuffers });
-      if (avisados > 0) await guardarDisenosCandidatos(id, disenosFileIds);
-
+    if (ambiguo) {
       await ctx.reply(avisados > 0
         ? (esPrueba
           ? 'Encontré varias fotos parecidas — te mandé las opciones para que elijas (no salió para Marketing).'
@@ -267,15 +256,6 @@ async function procesarYFinalizar(ctx, esPrueba) {
         : 'Encontré varias fotos parecidas pero no le pude avisar a nadie (¿hay alguien con el rol "marketing" cargado?). Avisale al admin.');
       return ctx.scene.leave();
     }
-
-    const imagenProductoBuffer = await buscarImagenProducto(producto, articuloCodigo);
-    const disenoBuffer = await generarCartel({
-      tipoGrafica: tipo, tipoPrecio, producto, precio: precio ?? null, vencimiento, politica: politica ?? null, imagenProductoBuffer,
-    });
-
-    const carteleria = await carteleriaPorId(id);
-    const { avisados, disenoFileId } = await avisarVerificacionMarketing(ctx.telegram, { carteleria, disenoBuffer });
-    if (disenoFileId) await guardarDiseno(id, { producto, precio: precio ?? null, disenoFileId });
 
     if (avisados > 0) {
       await ctx.reply(esPrueba ? 'Listo, te mandé el diseño (no salió para Marketing).' : 'Listo, le mandé el diseño a Marketing para que lo verifique.');

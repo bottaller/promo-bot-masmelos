@@ -4,13 +4,17 @@
 const { telegramIdsPorRol } = require('../db/usuarios');
 
 // A Compras (compras_promo): la imagen con sus dos botones. `telegram` es ctx.telegram o
-// bot.telegram, según quién llame — ambos exponen el mismo sendPhoto.
-async function entregarImagenACompras(telegram, imagen) {
+// bot.telegram, según quién llame — ambos exponen el mismo sendPhoto. `destinatarios` es un
+// override explícito de a quién avisar — lo usa un ciclo de /promoprecios_prueba (es_prueba, ver
+// scenes/validar-promoprecios.js / acciones-deposito.js / scenes/imagenes.js) para que NUNCA le
+// llegue a Compras real. Si no se pasa, va a compras_promo como siempre.
+async function entregarImagenACompras(telegram, imagen, { destinatarios, esPrueba } = {}) {
+  const prefijo = esPrueba ? '🧪 PRUEBA — ' : '';
   let avisados = 0;
-  for (const tid of await telegramIdsPorRol('compras_promo')) {
+  for (const tid of destinatarios || (await telegramIdsPorRol('compras_promo'))) {
     try {
       await telegram.sendPhoto(tid, imagen.file_id, {
-        caption: `💲 Imagen #${imagen.orden} de promociones y precios.`,
+        caption: `${prefijo}💲 Imagen #${imagen.orden} de promociones y precios.`,
         reply_markup: {
           inline_keyboard: [[
             { text: '✅ Validar', callback_data: `promo_img_ok:${imagen.id}` },
@@ -35,13 +39,14 @@ async function mandarleImagenAlDueno(telegram, imagen) {
 // Cuando el dueño termina de validar TODAS las imágenes de un ciclo (ver
 // db/promoprecios.js: todasLasImagenesEnviadas / marcarAvisoImpresionEnviado). Lleva un botón
 // para que Marketing confirme cuando ya imprimió y entregó en salón (marcarImpresoEntregado).
-async function avisarImpresionAMarketing(telegram, promoId) {
+async function avisarImpresionAMarketing(telegram, promoId, { destinatarios, esPrueba } = {}) {
+  const prefijo = esPrueba ? '🧪 PRUEBA — ' : '';
   let avisados = 0;
-  for (const tid of await telegramIdsPorRol('marketing')) {
+  for (const tid of destinatarios || (await telegramIdsPorRol('marketing'))) {
     try {
       await telegram.sendMessage(
         tid,
-        '🖨️ Ya está todo validado. Imprimí todas las imágenes en hoja A4 a color — al menos una copia de cada una.',
+        `${prefijo}🖨️ Ya está todo validado. Imprimí todas las imágenes en hoja A4 a color — al menos una copia de cada una.`,
         { reply_markup: { inline_keyboard: [[{ text: '✅ Ya imprimí y entregué en salón', callback_data: `promo_impreso:${promoId}` }]] } }
       );
       avisados++;

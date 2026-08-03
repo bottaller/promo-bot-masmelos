@@ -2,7 +2,7 @@
 // acciones-calidad.js). Pide qué hay que corregir, lo guarda, y le avisa a Marketing cuál imagen
 // tiene que corregir y por qué — sin tocar las demás imágenes del mismo ciclo.
 const { Scenes } = require('telegraf');
-const { marcarImagenRevisar } = require('../db/promoprecios');
+const { marcarImagenRevisar, promoPreciosPorId } = require('../db/promoprecios');
 const { telegramIdsPorRol } = require('../db/usuarios');
 const { respuesta, esCancelar } = require('../lib/wizard');
 
@@ -26,11 +26,18 @@ const revisarImagenWizard = new Scenes.WizardScene(
       return ctx.scene.leave();
     }
 
+    // En un ciclo de /promoprecios_prueba esto NUNCA sale para Marketing real — vuelve solo a
+    // quien lo probó, para poder corregirlo él mismo con /imagenes.
+    const promo = await promoPreciosPorId(imagen.promoprecio_id);
+    const esPrueba = !!(promo && promo.es_prueba);
+    const prefijo = esPrueba ? '🧪 PRUEBA — ' : '';
+    const destinatarios = esPrueba ? [promo.usuario_telegram_id] : await telegramIdsPorRol('marketing');
+
     let avisados = 0;
-    for (const tid of await telegramIdsPorRol('marketing')) {
+    for (const tid of destinatarios) {
       try {
         await ctx.telegram.sendPhoto(tid, imagen.file_id, {
-          caption: `🔁 La imagen #${imagen.orden} necesita una corrección:\n\n${r}\n\nMandame la versión corregida con /imagenes.`,
+          caption: `${prefijo}🔁 La imagen #${imagen.orden} necesita una corrección:\n\n${r}\n\nMandame la versión corregida con /imagenes.`,
         });
         avisados++;
       } catch (e) { console.error('No pude avisarle a marketing:', e.message); }

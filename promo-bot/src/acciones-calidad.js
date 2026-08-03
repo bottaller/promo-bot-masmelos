@@ -7,6 +7,7 @@ const { marcarAjusteVerificado, marcarAjusteRealizado } = require('./db/ajustes'
 const {
   marcarComprasArchivoOk, validarImagenCompras, validarImagenAdmin,
   todasLasImagenesEnviadas, marcarAvisoImpresionEnviado, marcarImpresoEntregado,
+  promoPreciosPorId,
 } = require('./db/promoprecios');
 const { mandarleImagenAlDueno, avisarImpresionAMarketing } = require('./lib/promoprecios-mensajes');
 
@@ -22,6 +23,16 @@ function esComprasPromo(usuario) {
 
 function esMarketing(usuario) {
   return !!(usuario && usuario.areas && usuario.areas.includes('marketing'));
+}
+
+// El dueño del bot también puede tocar los botones de compras_promo/marketing de /promoprecios —
+// es lo que le llega a él mismo en un ciclo de /promoprecios_prueba (mismo criterio que
+// puedeAccionar en acciones-deposito.js para /carteleria_prueba).
+function puedeComoCompras(ctx) {
+  return esComprasPromo(ctx.state.usuario) || esDueno(ctx.from.id);
+}
+function puedeComoMarketing(ctx) {
+  return esMarketing(ctx.state.usuario) || esDueno(ctx.from.id);
 }
 
 // Rol aparte del "calidad" general: solo el responsable puntual que el dueño designe con
@@ -89,7 +100,7 @@ function registrarAccionesCalidad(bot) {
 
   // --- /promoprecios, paso 1: Compras marca el archivo como hecho ---
   bot.action(/^promo_compras_ok:(\d+)$/, async (ctx) => {
-    if (!esComprasPromo(ctx.state.usuario)) {
+    if (!puedeComoCompras(ctx)) {
       await ctx.answerCbQuery('Esto es solo para el responsable de Compras de este ciclo.', { show_alert: true });
       return;
     }
@@ -103,7 +114,7 @@ function registrarAccionesCalidad(bot) {
 
   // --- /promoprecios: Compras valida UNA imagen -> pasa al dueño ---
   bot.action(/^promo_img_ok:(\d+)$/, async (ctx) => {
-    if (!esComprasPromo(ctx.state.usuario)) {
+    if (!puedeComoCompras(ctx)) {
       await ctx.answerCbQuery('Esto es solo para el responsable de Compras de este ciclo.', { show_alert: true });
       return;
     }
@@ -118,7 +129,7 @@ function registrarAccionesCalidad(bot) {
   // --- /promoprecios: Compras pide revisar UNA imagen -> le pregunta qué corregir (ver
   // scenes/revisar-imagen.js) antes de avisarle a Marketing ---
   bot.action(/^promo_img_revisar:(\d+)$/, async (ctx) => {
-    if (!esComprasPromo(ctx.state.usuario)) {
+    if (!puedeComoCompras(ctx)) {
       await ctx.answerCbQuery('Esto es solo para el responsable de Compras de este ciclo.', { show_alert: true });
       return;
     }
@@ -139,13 +150,26 @@ function registrarAccionesCalidad(bot) {
     if (!imagen) { await ctx.reply('Esa imagen ya no estaba pendiente de tu validación.'); return; }
     try { await ctx.editMessageReplyMarkup(); } catch (e) { /* mensaje viejo */ }
 
+    // En un ciclo de /promoprecios_prueba esto NUNCA sale para Ventas/Depósito/Calidad reales —
+    // vuelve solo a quien lo probó, para completar el circuito de prueba sin avisarle a nadie más.
+    const promo = await promoPreciosPorId(imagen.promoprecio_id);
+    const esPrueba = !!(promo && promo.es_prueba);
+    const prefijo = esPrueba ? '🧪 PRUEBA — ' : '';
+
     let enviados = 0;
-    for (const rol of ['ventas', 'deposito', 'calidad']) {
-      for (const tid of await telegramIdsPorRol(rol)) {
-        try {
-          await bot.telegram.sendPhoto(tid, imagen.file_id);
-          enviados++;
-        } catch (e) { console.error(`No pude mandarle la imagen a ${tid}:`, e.message); }
+    if (esPrueba) {
+      try {
+        await bot.telegram.sendPhoto(promo.usuario_telegram_id, imagen.file_id, { caption: `${prefijo}Reenvío a Ventas/Depósito/Calidad` });
+        enviados++;
+      } catch (e) { console.error(`No pude mandarle la imagen de prueba a ${promo.usuario_telegram_id}:`, e.message); }
+    } else {
+      for (const rol of ['ventas', 'deposito', 'calidad']) {
+        for (const tid of await telegramIdsPorRol(rol)) {
+          try {
+            await bot.telegram.sendPhoto(tid, imagen.file_id);
+            enviados++;
+          } catch (e) { console.error(`No pude mandarle la imagen a ${tid}:`, e.message); }
+        }
       }
     }
     await ctx.reply(`Validado. Imagen #${imagen.orden} reenviada a Ventas, Depósito y Calidad (${enviados} persona(s)).`);
@@ -155,7 +179,8 @@ function registrarAccionesCalidad(bot) {
     // casi simultáneas ven "ya no queda nada pendiente".
     if (await todasLasImagenesEnviadas(imagen.promoprecio_id)) {
       if (await marcarAvisoImpresionEnviado(imagen.promoprecio_id)) {
-        const avisadosImpresion = await avisarImpresionAMarketing(bot.telegram, imagen.promoprecio_id);
+        const destinatariosImpresion = esPrueba ? [promo.usuario_telegram_id] : undefined;
+        const avisadosImpresion = await avisarImpresionAMarketing(bot.telegram, imagen.promoprecio_id, { destinatarios: destinatariosImpresion, esPrueba });
         await ctx.reply(`🖨️ Le avisé a Marketing que imprima todo (${avisadosImpresion} persona(s)).`);
       }
     }
@@ -163,7 +188,7 @@ function registrarAccionesCalidad(bot) {
 
   // --- Marketing confirma que ya imprimió y entregó las imágenes en salón -> avisa al dueño ---
   bot.action(/^promo_impreso:(\d+)$/, async (ctx) => {
-    if (!esMarketing(ctx.state.usuario)) {
+    if (!puedeComoMarketing(ctx)) {
       await ctx.answerCbQuery('Esto es solo para Marketing.', { show_alert: true });
       return;
     }

@@ -100,8 +100,11 @@ const imagenesWizard = new Scenes.WizardScene(
     // un envío múltiple se procesan en paralelo, el reparto a Compras se dispara una sola vez.
     const completado = await marcarMarketingCompletado(promo.id);
     if (completado) {
+      // En un ciclo de /promoprecios_prueba esto NUNCA sale para Compras real — vuelve solo a
+      // quien lo probó.
+      const destinatarios = promo.es_prueba ? [promo.usuario_telegram_id] : undefined;
       for (const img of actuales) {
-        await entregarImagenACompras(ctx.telegram, img);
+        await entregarImagenACompras(ctx.telegram, img, { destinatarios, esPrueba: promo.es_prueba });
       }
       await avisarADueno(ctx, `📦 Marketing terminó de mandar las ${promo.imagenes_requeridas} imagen(es) de promociones y precios.`);
       await ctx.reply(`Listo, mandé las ${actuales.length} imágenes a Compras (una por una).`);
@@ -124,7 +127,12 @@ const imagenesWizard = new Scenes.WizardScene(
       await ctx.reply('Esa corrección ya se había resuelto.');
       return ctx.scene.leave();
     }
-    const avisados = await entregarImagenACompras(ctx.telegram, imagen);
+    // En un ciclo de /promoprecios_prueba esto NUNCA sale para Compras real — vuelve solo a
+    // quien lo probó.
+    const promo = await promoPreciosPorId(imagen.promoprecio_id);
+    const esPrueba = !!(promo && promo.es_prueba);
+    const destinatarios = esPrueba ? [promo.usuario_telegram_id] : undefined;
+    const avisados = await entregarImagenACompras(ctx.telegram, imagen, { destinatarios, esPrueba });
     await ctx.reply(`Listo, mandé la corrección de la imagen #${imagen.orden} a Compras (${avisados} persona(s)).`);
     return ctx.scene.leave();
   }

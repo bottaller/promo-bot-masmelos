@@ -8,11 +8,11 @@ const reposicionWizard = require('../../scenes/reposicion');
 const cambioPromocionWizard = require('../../scenes/cambiopromocion');
 const bajaWizard = require('../../scenes/baja');
 const ajusteWizard = require('../../scenes/ajuste');
-const promoPreciosWizard = require('../../scenes/promoprecios');
+const { promoPreciosWizard, promoPreciosPruebaWizard } = require('../../scenes/promoprecios');
 const validarPromoPreciosWizard = require('../../scenes/validar-promoprecios');
 const revisarImagenWizard = require('../../scenes/revisar-imagen');
 const auditoriaAlturaWizard = require('../../scenes/auditoria-altura');
-const { requiereArea } = require('../../middleware/authz');
+const { requiereArea, requiereDueno } = require('../../middleware/authz');
 const { altasEnOferta } = require('../../db/compras');
 const { construirExcelControl } = require('../../lib/control-excel');
 const { fechaHoyArgISO } = require('../../lib/fechas');
@@ -29,6 +29,9 @@ const comandos = [
   { comando: 'promoprecios', descripcion: 'Subir el archivo final de promociones y precios' },
   { comando: 'auditoria_altura', descripcion: 'Auditar mercadería en altura: pallet, pasillo y producto escaneado' },
 ];
+
+// /promoprecios_prueba no se lista en `comandos` (solo el dueño la usa, ver requiereDueno) — no
+// aparece en /menu ni en el menú "/" de Telegram para nadie más, igual que /carteleria_prueba.
 
 // /control: genera y manda un Excel con todo lo que está en oferta, ordenado por vencimiento.
 async function control(ctx) {
@@ -51,13 +54,14 @@ function registrar(bot) {
   bot.command('control', requiereArea(CODIGO), control);
   bot.command('ajuste', requiereArea(CODIGO), (ctx) => ctx.scene.enter('ajuste-wizard'));
   bot.command('promoprecios', requiereArea(CODIGO), (ctx) => ctx.scene.enter('promoprecios-wizard'));
+  bot.command('promoprecios_prueba', requiereDueno(), (ctx) => ctx.scene.enter('promoprecios-prueba-wizard'));
   bot.command('auditoria_altura', requiereArea(CODIGO), (ctx) => ctx.scene.enter('auditoria-altura-wizard'));
 }
 
 module.exports = {
   codigo: CODIGO,
   nombre: 'Calidad',
-  scenes: [altaWizard, reposicionWizard, cambioPromocionWizard, bajaWizard, ajusteWizard, promoPreciosWizard, validarPromoPreciosWizard, revisarImagenWizard, auditoriaAlturaWizard],
+  scenes: [altaWizard, reposicionWizard, cambioPromocionWizard, bajaWizard, ajusteWizard, promoPreciosWizard, promoPreciosPruebaWizard, validarPromoPreciosWizard, revisarImagenWizard, auditoriaAlturaWizard],
   comandos,
   registrar,
 };
