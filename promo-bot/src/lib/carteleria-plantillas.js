@@ -109,13 +109,13 @@ const CAMPOS_A4_NUEVO_INGRESO = {
 // izquierda, "FINAL" fijo arriba a la derecha, precio grande en el campo amarillo, hueco de
 // foto de producto a la derecha, barra blanca de nombre abajo, footer negro con disclaimer fijo.
 const CAMPOS_CARTEL_PRECIO = {
-  // Agrandado (antes x:0.10,y:0.20,ancho:0.55,alto:0.30): con el tamaño de fuente calculado por
-  // ancho REAL (ver carteleria-render.js) el precio quedaba chico porque el casillero viejo lo
-  // topeaba — medido por píxeles contra el arte (cartel_precio_piso.jpg): el "$" fijo termina en
-  // x:0.069 y "FINAL" fijo arranca en x:0.689, así que hay lugar hasta x≈0.60 sin pisar ninguno
-  // de los dos ni invadir la zona de la foto de producto (que ahora arranca en x:0.58).
-  // Un poco más grande todavía: ancho:0.53→0.545 (un punto más de tamaño de fuente).
-  precio: { x: 0.075, y: 0.16, ancho: 0.545, alto: 0.54, align: 'left' },
+  // Agrandado de nuevo (antes x:0.075,ancho:0.545) — medido por píxeles contra carteles reales
+  // de referencia (no contra el arte en blanco): en esos carteles "7347"/"1014" arrancan en
+  // x≈0.056 (pegado al "$", que termina en x:0.069) y el precio+centavos llega hasta x≈0.69,
+  // tocando justo donde arranca "FINAL" (x:0.689) — el diseño real no deja margen ahí a
+  // propósito. Puede superponerse con la foto de producto (que arranca en x:0.65) para precios
+  // largos; el diseño real tampoco lo evita (la foto ahí queda más a la derecha).
+  precio: { x: 0.06, y: 0.16, ancho: 0.63, alto: 0.54, align: 'left' },
   // Corrido más a la derecha (antes x:0.35) y agrandada — con la foto de producto renderizada
   // DESPUÉS de la caja del nombre (ver generarCartel en carteleria-render.js), no importa que
   // pise la franja blanca ni la línea divisoria: queda arriba de todo eso, igual que en el diseño

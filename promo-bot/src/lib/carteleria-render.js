@@ -224,8 +224,6 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
 
   const colorNombre = plantilla.campos.colorNombre || '#ffffff';
   const rectLinea1 = campoRect(plantilla.campos.nombreLinea1, anchoFinal, altoFinal);
-  const tamanioNombre = rectLinea1.height * 0.72;
-  const [nombreLinea1, nombreLinea2] = partirEnLineas(producto, tamanioNombre, rectLinea1.width);
 
   // Los nombres de 1 sola línea NO deben quedar pegados arriba del hueco pensado
   // para 2 líneas (se veía desalineado/con un hueco vacío abajo) — unimos las 2
@@ -235,6 +233,7 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
   // entre en 1 sola línea — si solo centráramos dentro del rect angosto de la
   // línea 1, un nombre corto seguiría pegado arriba del hueco de 2 líneas.
   let rectNombre = rectLinea1;
+  let maxLineasNombre = 1;
   if (plantilla.campos.nombreLinea2) {
     const rectLinea2 = campoRect(plantilla.campos.nombreLinea2, anchoFinal, altoFinal);
     rectNombre = {
@@ -243,6 +242,27 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       width: Math.max(rectLinea1.width, rectLinea2.width),
       height: (rectLinea2.top + rectLinea2.height) - rectLinea1.top,
     };
+    maxLineasNombre = 2;
+  }
+
+  // El tamaño de fuente del nombre se ajusta para llenar el espacio real disponible (medido por
+  // píxeles contra carteles de referencia: el nombre ocupaba mucho más lugar del que este fijo
+  // de antes —altura*0.72— dejaba) — arrancamos de un tamaño grande (el que llenaría el alto
+  // del contenedor con el máximo de líneas permitidas) y achicamos de a poco hasta que entre
+  // sin truncar ("…") en el ancho Y sin desbordar en el alto. Mismo patrón que ajustarTamanioTag.
+  let tamanioNombre = (rectNombre.height / (maxLineasNombre * 1.25)) * 1.08;
+  const tamanioMinNombre = rectLinea1.height * 0.4;
+  let [nombreLinea1, nombreLinea2] = partirEnLineas(producto, tamanioNombre, rectLinea1.width);
+  const excedeAlto = () => {
+    const lineas = nombreLinea2 ? 2 : 1;
+    return lineas * tamanioNombre * 1.25 > rectNombre.height;
+  };
+  while (
+    (nombreLinea1.includes('…') || (nombreLinea2 && nombreLinea2.includes('…')) || excedeAlto())
+    && tamanioNombre > tamanioMinNombre
+  ) {
+    tamanioNombre *= 0.94;
+    [nombreLinea1, nombreLinea2] = partirEnLineas(producto, tamanioNombre, rectLinea1.width);
   }
 
   // La plantilla trae una línea divisoria fija pensada para separar línea 1 de línea 2, dibujada
