@@ -99,14 +99,17 @@ function ajustarTamanioTag(texto, tamanioMax, tamanioMin, anchoMax, unaSolaLinea
   return { tamanio, lineas };
 }
 
-// $1.999 -> { entero: "1.999", decimales: "99" }. `precio` siempre viene con 2
-// decimales aunque sean $0 (p.ej. $500 -> entero "500", decimales "00").
+// $1999 -> { entero: "1999", decimales: "99" }. `precio` siempre viene con 2
+// decimales aunque sean $0 (p.ej. $500 -> entero "500", decimales "00"). Sin punto de miles
+// a propósito (a diferencia del resto del bot, que sí lo usa en texto) — en el cartel cada
+// caracter de menos es lugar de más para agrandar la fuente, y así es como se ve en los
+// carteles reales (ej. "$7347" no "$7.347").
 function formatearPrecio(precio) {
   const numero = Number(precio);
   const entero = Math.trunc(numero);
   const decimales = Math.round((numero - entero) * 100);
   return {
-    entero: entero.toLocaleString('es-AR'),
+    entero: String(entero),
     decimales: String(Math.abs(decimales)).padStart(2, '0'),
   };
 }
