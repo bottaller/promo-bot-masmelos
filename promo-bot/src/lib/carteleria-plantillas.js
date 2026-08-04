@@ -115,7 +115,7 @@ const CAMPOS_CARTEL_PRECIO = {
   // propio casillero fijo, apilados arriba de "FINAL" (ver `decimales` más abajo), no en la
   // misma fila. Puede superponerse con la foto de producto (que arranca en x:0.65) para precios
   // largos; el diseño real tampoco lo evita (la foto ahí queda más a la derecha).
-  precio: { x: 0.06, y: 0.16, ancho: 0.6, alto: 0.54, align: 'left' },
+  precio: { x: 0.06, y: 0.16, ancho: 0.63, alto: 0.54, align: 'left' },
   // Casillero de los centavos ("11", "88") — NO van pegados a la derecha de los dígitos
   // enteros: medido por píxeles contra los carteles de referencia, van en su propia columna,
   // centrados sobre "FINAL" (que arranca en x:0.689 y termina en x:0.792 — mismo centro,
@@ -138,10 +138,11 @@ const CAMPOS_CARTEL_PRECIO = {
   // (ahí arranca el pie de página negro, medido exacto), este es el límite físico del arte
   // actual — para llegar al tamaño de los carteles de referencia (que tienen el pie de página
   // más abajo) haría falta un archivo de arte nuevo con la franja blanca más alta.
-  // Alineado a la izquierda (antes 'center') — medido contra carteles reales de referencia:
-  // el nombre arranca pegado al margen izquierdo, no centrado en la franja blanca.
-  nombreLinea1: { x: 0.03, y: 0.745, ancho: 0.94, alto: 0.09, align: 'left' },
-  nombreLinea2: { x: 0.03, y: 0.85, ancho: 0.94, alto: 0.09, align: 'left' },
+  // A medio camino entre pegado al margen (x:0.03) y centrado (como estaba antes) — medido
+  // contra los carteles reales de referencia: el nombre no arranca pegado al borde, tiene un
+  // margen visible a la izquierda, pero tampoco queda centrado en toda la franja.
+  nombreLinea1: { x: 0.14, y: 0.745, ancho: 0.83, alto: 0.09, align: 'left' },
+  nombreLinea2: { x: 0.14, y: 0.85, ancho: 0.83, alto: 0.09, align: 'left' },
   colorNombre: '#1a1a1a', // barra blanca de fondo (no hay caja oscura)
   colorFondoNombre: '#ffffff',
   colorDivisorNombre: 'rgba(0,0,0,0.18)',

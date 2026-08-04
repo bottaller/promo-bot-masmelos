@@ -191,9 +191,12 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // Tracking negativo (letras más juntas): medido contra carteles reales de referencia, el
     // precio ahí es notablemente más alto que lo que da nuestra fuente a ancho real SIN tracking
     // — la altura de un glifo no depende del tracking, solo el ancho, así que achicar el espacio
-    // entre caracteres deja meter una fuente bastante más grande en el mismo casillero (medido:
-    // -0.09 de tracking, sobre "7347" en el casillero actual, da la altura de la referencia).
-    const TRACKING = -0.09;
+    // entre caracteres deja meter una fuente bastante más grande en el mismo casillero. -0.09 se
+    // veía prolijo en el ancho total pero hacía que pares de dígitos como "3"+"4" o "4"+"7" se
+    // tocaran entre sí (dependiendo de la forma de cada par, no todos los pares dejan el mismo
+    // huequito) — con -0.04 todos los pares quedan separados, y el casillero se ensanchó
+    // (0.60→0.63, ya no comparte ancho con los centavos) para no perder tamaño de fuente.
+    const TRACKING = -0.04;
     const gapsEntero = Math.max(entero.length - 1, 0);
     // width(S) = S*(anchoEnteroPorUnidad + gapsEntero*TRACKING) — los centavos van en su propio
     // casillero (ver más abajo), no comparten ancho con los dígitos enteros.
