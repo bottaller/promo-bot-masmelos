@@ -53,6 +53,18 @@ function fuenteParseadaPrecioFina() {
   return fuenteParseadaPrecioFinaCache;
 }
 
+// Métricas de los dígitos de Oswald SemiBold (medidas una sola vez con
+// font.charToGlyph(d).getAdvanceWidth()/getMetrics(), no dependen de qué precio se esté
+// renderizando -- por eso van hardcodeadas acá en vez de calcularse en generarCartel).
+// Ancho promedio FIJO de los 10 dígitos a fontSize=1 (Oswald, a diferencia de Anton, no tiene
+// todos los dígitos del mismo ancho: 0.543 el "0" contra 0.428 el "7") -- usado para que el
+// tamaño de letra del precio no dependa de qué números específicos toque mostrar.
+const ANCHO_PROMEDIO_DIGITO_OSWALD = 0.4961;
+// Resalte óptico de fábrica de cada dígito por encima de la altura real de mayúscula, en
+// unidades sobre unitsPerEm=1000 ("1","4","5","7" no tienen resalte, quedan en 0 -- igual que
+// la "F" de FINAL).
+const OVERSHOOT_DIGITO_OSWALD = { 0: 11, 1: 0, 2: 10, 3: 11, 4: 0, 5: 0, 6: 10, 7: 0, 8: 10, 9: 10 };
+
 // Reparte `texto` en 2 líneas BALANCEADAS (no amontona todo en la línea 1 dejando
 // la línea 2 vacía y el bloque apretado) — probamos cada punto de corte posible y
 // nos quedamos con el que minimiza el ancho de la línea más ancha de las dos,
@@ -232,7 +244,14 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // en 4, "500" sale exactamente del mismo tamaño que "7347" (le sobra ancho a la derecha,
     // nomás, no hay que llenarlo) y solo un precio de más de 4 cifras se achica de verdad.
     const digitosParaAncho = Math.max(entero.length, 4);
-    const anchoPromedioPorDigito = font.getAdvanceWidth(entero, 1) / entero.length;
+    // Con Oswald, a diferencia de Anton, los dígitos NO son todos del mismo ancho (p.ej. "0"
+    // mide 0.543 contra 0.428 de "7", a fontSize=1) -- medir el ancho promedio con los dígitos
+    // REALES de "entero" hacía que el tamaño de fuente dependiera de qué números específicos
+    // tocaba mostrar: "500" (dígitos anchos) daba un tamaño bastante más chico que "7347"
+    // (dígitos angostos) aun siendo ambos de 3-4 cifras -- se veían de tamaño distinto sin
+    // motivo. ANCHO_PROMEDIO_DIGITO_OSWALD es el promedio FIJO de los 10 dígitos (0-9), así el
+    // tamaño de letra sale igual sin importar qué números haya, solo de la CANTIDAD de cifras.
+    const anchoPromedioPorDigito = usaFuentePrecioFina ? ANCHO_PROMEDIO_DIGITO_OSWALD : font.getAdvanceWidth(entero, 1) / entero.length;
     const anchoEnteroPorUnidad = anchoPromedioPorDigito * digitosParaAncho;
     const gapsEntero = Math.max(digitosParaAncho - 1, 0);
     // width(S) = S*(anchoEnteroPorUnidad + gapsEntero*TRACKING) — los centavos van en su propio
@@ -251,15 +270,30 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     const leftPrecio = usarCentradoCorto ? 0.0688 * anchoFinal : rectPrecio.left;
     const anchoPrecioBox = usarCentradoCorto ? (0.6894 - 0.0688) * anchoFinal : rectPrecio.width;
     // Oswald deja un margen interno (ascent) arriba del glifo más grande que Anton, y encima no
-    // es parejo entre dígitos: los redondos ("0","3","6","8","9") tienen un resalto óptico de
-    // fábrica por encima de la altura real de mayúscula, "1","4","7" no (quedan a la altura de
-    // mayúscula pura, igual que la "F" de FINAL). Calibrado contra "4"/"7" (no contra el string
-    // completo, que queda "tirado para arriba" por el resalto de los redondos) -- offset medido:
-    // 0.0694 de la altura del canvas, a este tamaño de fuente. Techo y alto SOLO se corrigen acá
-    // (con Oswald); con Anton (A4) el rect de la plantilla ya viene calibrado tal cual.
+    // es parejo entre dígitos: medido con font.charToGlyph(d).getMetrics() (bounding box real de
+    // cada glifo, unitsPerEm=1000) -- "1","4","5","7" quedan exactos a la altura real de
+    // mayúscula (yMax=810, igual que la "F" de FINAL); "0","2","3","6","8","9" tienen un resalto
+    // óptico de fábrica de 10-11 unidades por encima de esa altura (ver OVERSHOOT_DIGITO_OSWALD).
+    // OFFSET_LEADING_RATIO_OSWALD ubica el techo de un dígito PLANO exacto sobre "FINAL" -- es
+    // una fracción del TAMAÑO DE FUENTE (no del canvas): el margen interno de la fuente escala
+    // con el tamaño con el que se dibuja, así que un offset fijo en fracción de canvas se
+    // descalibra apenas el tamaño de letra cambia un poco (pasó al fijar ANCHO_PROMEDIO_DIGITO_
+    // OSWALD arriba: el tamaño de "7347" bajó un toque y el offset viejo, en fracción de canvas,
+    // dejó de coincidir). Si el precio tiene ADEMÁS algún dígito redondo, ese resalta un poco más
+    // arriba todavía (ver OVERSHOOT_DIGITO_OSWALD), así que hay que bajar el techo lo que haga
+    // falta para que el punto más alto de VERDAD (el del dígito más "resaltado" que aparezca) sea
+    // el que toque "FINAL" -- con "500" (sin ningún dígito plano -- "5" es plano pero "0"
+    // resalta) el número quedaba "flotando" por encima de "FINAL" si no se compensaba esto.
+    // Techo y alto SOLO se corrigen acá (con Oswald); con Anton (A4) el rect de la plantilla ya
+    // viene calibrado tal cual.
     const FINAL_TOP_CARTEL = 0.2430;
-    const OFFSET_LEADING_OSWALD = 0.0694;
-    const topPrecio = usaFuentePrecioFina ? (FINAL_TOP_CARTEL - OFFSET_LEADING_OSWALD) * altoFinal : rectPrecio.top;
+    const OFFSET_LEADING_RATIO_OSWALD = 0.14131;
+    const resalteMaxUnidades = usaFuentePrecioFina
+      ? Math.max(0, ...[...new Set(entero)].map((d) => OVERSHOOT_DIGITO_OSWALD[d] || 0))
+      : 0;
+    const topPrecio = usaFuentePrecioFina
+      ? FINAL_TOP_CARTEL * altoFinal - OFFSET_LEADING_RATIO_OSWALD * tamanioPrecio + (resalteMaxUnidades / 1000) * tamanioPrecio
+      : rectPrecio.top;
     const altoPrecioBox = usaFuentePrecioFina ? rectPrecio.height + (rectPrecio.top - topPrecio) : rectPrecio.height;
     // Anclado ARRIBA (flex-start, no centrado) — a pedido: el techo tiene que quedar siempre en
     // el mismo lugar (justo sobre "FINAL", ver CAMPOS_CARTEL_PRECIO), y el número crece para
