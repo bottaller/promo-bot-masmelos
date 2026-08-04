@@ -139,11 +139,13 @@ const CAMPOS_CARTEL_PRECIO = {
   // (ahí arranca el pie de página negro, medido exacto), este es el límite físico del arte
   // actual — para llegar al tamaño de los carteles de referencia (que tienen el pie de página
   // más abajo) haría falta un archivo de arte nuevo con la franja blanca más alta.
-  // A medio camino entre pegado al margen (x:0.03) y centrado (como estaba antes) — medido
-  // contra los carteles reales de referencia: el nombre no arranca pegado al borde, tiene un
-  // margen visible a la izquierda, pero tampoco queda centrado en toda la franja.
-  nombreLinea1: { x: 0.14, y: 0.745, ancho: 0.83, alto: 0.09, align: 'left' },
-  nombreLinea2: { x: 0.14, y: 0.85, ancho: 0.83, alto: 0.09, align: 'left' },
+  // Casillero a medio camino entre pegado al margen (x:0.03) y toda la franja (x:0.03,
+  // ancho:0.94) — pero CADA línea centrada adentro de ese casillero (no pegada a su borde
+  // izquierdo): así una línea corta ("MAX X 110 G") no queda descolgada a la izquierda con un
+  // hueco vacío a la derecha, se centra sola — que es como se ve en los carteles reales
+  // (ninguna de las 2 líneas pegada al mismo margen, cada una centrada por su cuenta).
+  nombreLinea1: { x: 0.14, y: 0.745, ancho: 0.83, alto: 0.09, align: 'center' },
+  nombreLinea2: { x: 0.14, y: 0.85, ancho: 0.83, alto: 0.09, align: 'center' },
   colorNombre: '#1a1a1a', // barra blanca de fondo (no hay caja oscura)
   colorFondoNombre: '#ffffff',
   colorDivisorNombre: 'rgba(0,0,0,0.18)',

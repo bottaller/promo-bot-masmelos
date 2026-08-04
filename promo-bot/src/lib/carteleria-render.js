@@ -194,9 +194,8 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // entre caracteres deja meter una fuente bastante más grande en el mismo casillero. -0.09 se
     // veía prolijo en el ancho total pero hacía que pares de dígitos como "3"+"4" o "4"+"7" se
     // tocaran entre sí (dependiendo de la forma de cada par, no todos los pares dejan el mismo
-    // huequito) — con -0.025 quedan separados con más aire todavía, a costa de un poco de
-    // tamaño de fuente (aceptado a pedido: mejor un poco más chico que letras apretadas).
-    const TRACKING = -0.025;
+    // huequito) — bajado de nuevo a pedido (-0.025→-0.01) para más aire todavía entre dígitos.
+    const TRACKING = -0.01;
     const gapsEntero = Math.max(entero.length - 1, 0);
     // width(S) = S*(anchoEnteroPorUnidad + gapsEntero*TRACKING) — los centavos van en su propio
     // casillero (ver más abajo), no comparten ancho con los dígitos enteros.
