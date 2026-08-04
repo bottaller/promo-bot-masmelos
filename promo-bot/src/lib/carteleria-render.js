@@ -257,8 +257,13 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // width(S) = S*(anchoEnteroPorUnidad + gapsEntero*TRACKING) — los centavos van en su propio
     // casillero (ver más abajo), no comparten ancho con los dígitos enteros.
     const anchoPorUnidadDeTamanio = anchoEnteroPorUnidad + gapsEntero * TRACKING;
-    // *0.96: a pedido ("apenas más chico") sobre el de 4 cifras, que da contra este tope.
-    const capAncho = (rectPrecio.width * 0.96) / anchoPorUnidadDeTamanio;
+    // Margen sobre el ancho disponible: con Anton, 0.96 ("apenas más chico" a pedido). Con
+    // Oswald, al fijar ANCHO_PROMEDIO_DIGITO_OSWALD (ver arriba) el tamaño de "7347" bajó ~6% del
+    // que tenía cuando el ancho se medía con sus propios dígitos (0.46925 vs el promedio fijo
+    // 0.4961) -- quedó chico a pedido, vuelto a subir con este margen (1.015) para que dé el
+    // mismo tamaño de antes, ahora igual sin importar los dígitos que tenga el precio.
+    const margenAncho = usaFuentePrecioFina ? 1.015 : 0.96;
+    const capAncho = (rectPrecio.width * margenAncho) / anchoPorUnidadDeTamanio;
     const tamanioPrecio = Math.min(capAltura, capAncho);
     // Con 4+ cifras el precio ya ocupa casi todo rectPrecio (queda igual, ancla a la izquierda
     // como siempre). Con 3 cifras (mismo tamaño de letra que el de 4, ver arriba) sobra ancho a
