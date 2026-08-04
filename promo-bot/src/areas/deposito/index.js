@@ -13,6 +13,9 @@ const CODIGO = 'deposito';
 const comandos = [
   { comando: 'informe', descripcion: 'Cargar un informe sobre un proveedor o producto, para Calidad o Compras' },
   { comando: 'carteleria', descripcion: 'Pedir un cartel (foto de producto + precio) para Marketing' },
+  // /falta lo comparte con Ventas: el handler se registra en areas/ventas (gateado a "ventas O
+  // deposito"). Acá se lista solo para que aparezca en el /menu de Depósito.
+  { comando: 'falta', descripcion: 'Avisar que un producto falta o queda poco (le llega a Compras)' },
 ];
 
 function registrar(bot) {
