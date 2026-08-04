@@ -216,19 +216,28 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // *0.96: a pedido ("apenas más chico") sobre el de 4 cifras, que da contra este tope.
     const capAncho = (rectPrecio.width * 0.96) / anchoPorUnidadDeTamanio;
     const tamanioPrecio = Math.min(capAltura, capAncho);
+    // Con 4+ cifras el precio ya ocupa casi todo rectPrecio (queda igual, ancla a la izquierda
+    // como siempre). Con 3 cifras (mismo tamaño de letra que el de 4, ver arriba) sobra ancho a
+    // la derecha -- a pedido, ese precio se centra en la franja real entre donde termina el "$"
+    // y donde arranca "FINAL" (medido por píxeles contra el arte en blanco: "$" termina en
+    // x:0.0688, "FINAL" arranca en x:0.6894 -- ambos fijos en la plantilla), en vez de dejar todo
+    // el sobrante del lado derecho.
+    const usarCentradoCorto = entero.length < digitosParaAncho;
+    const leftPrecio = usarCentradoCorto ? 0.0688 * anchoFinal : rectPrecio.left;
+    const anchoPrecioBox = usarCentradoCorto ? (0.6894 - 0.0688) * anchoFinal : rectPrecio.width;
     // Anclado ARRIBA (flex-start, no centrado) — a pedido: el techo tiene que quedar siempre en
     // el mismo lugar (justo sobre "FINAL", ver CAMPOS_CARTEL_PRECIO), y el número crece para
     // abajo. Dentro del rango de diseño (3 a 5 cifras) el tope de altura (capAltura) es casi
     // siempre el que manda sobre el de ancho, así que en la práctica el alto queda parejo para
-    // cualquier cantidad de dígitos en ese rango — no hace falta centrar para evitar que quede
-    // "flotando" más arriba.
+    // cualquier cantidad de dígitos en ese rango — no hace falta centrar VERTICALMENTE para
+    // evitar que quede "flotando" más arriba (el centrado de acá arriba es solo horizontal).
     hijos.push({
       type: 'div',
       props: {
         style: {
-          position: 'absolute', left: rectPrecio.left, top: rectPrecio.top, width: rectPrecio.width, height: rectPrecio.height,
+          position: 'absolute', left: leftPrecio, top: rectPrecio.top, width: anchoPrecioBox, height: rectPrecio.height,
           display: 'flex', flexDirection: 'column', justifyContent: 'flex-start',
-          alignItems: justify(plantilla.campos.precio.align) === 'center' ? 'center' : 'flex-start',
+          alignItems: usarCentradoCorto || justify(plantilla.campos.precio.align) === 'center' ? 'center' : 'flex-start',
           overflow: 'hidden',
         },
         children: {
@@ -242,8 +251,7 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // píxeles contra carteles reales de referencia, van en su propio casillero fijo, apilados
     // arriba de "FINAL" (fijo en la plantilla), con el borde de abajo pegado justo antes de
     // donde arranca "FINAL" (`techoY`, ver CAMPOS_CARTEL_PRECIO). El tamaño sigue proporcional
-    // al precio (0.32x, antes 0.38x — un poco más chico a pedido), pero la posición es
-    // independiente del ancho de "entero".
+    // al precio, pero la posición es independiente del ancho de "entero".
     if (plantilla.campos.decimales) {
       const campoDec = plantilla.campos.decimales;
       const leftDec = campoDec.x * anchoFinal;
@@ -253,7 +261,10 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       // la plantilla y "FINAL") — sin este tope, un precio grande (que ya no comparte ancho con
       // los centavos, así que puede crecer más que antes) empujaba los centavos hasta pisar el
       // logo de arriba.
-      const tamanioDecimales = Math.min(tamanioPrecio * 0.32, techoDecPx * 0.85);
+      // 0.20 (antes 0.38, luego 0.32): medido contra "FINAL" -- con 0.32 los centavos daban
+      // altoPx:135 contra los altoPx:78 de "FINAL", 73% más alto que el propio "FINAL" al lado,
+      // se veía desproporcionado. 0.20 los deja cerca del tamaño de "FINAL".
+      const tamanioDecimales = Math.min(tamanioPrecio * 0.20, techoDecPx * 0.85);
       hijos.push({
         type: 'div',
         props: {
