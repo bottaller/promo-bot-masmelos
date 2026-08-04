@@ -139,13 +139,12 @@ const CAMPOS_CARTEL_PRECIO = {
   // (ahí arranca el pie de página negro, medido exacto), este es el límite físico del arte
   // actual — para llegar al tamaño de los carteles de referencia (que tienen el pie de página
   // más abajo) haría falta un archivo de arte nuevo con la franja blanca más alta.
-  // Centrado en el medio de la MITAD IZQUIERDA del cartel (x:0 a x:0.5, centro efectivo x:0.25),
-  // no en el medio de todo el cartel (a pedido explícito: la mitad derecha de la franja blanca
-  // la ocupa la foto de producto). Las 2 líneas se siguen centrando cada una por separado
-  // adentro de este casillero (ver más abajo), pero ahora comparten el centro de la mitad
-  // izquierda en vez del centro de todo el cartel.
-  nombreLinea1: { x: 0, y: 0.745, ancho: 0.5, alto: 0.09, align: 'center' },
-  nombreLinea2: { x: 0, y: 0.85, ancho: 0.5, alto: 0.09, align: 'center' },
+  // Centrado entre el borde izquierdo (x:0) y donde arranca la foto de producto (x:0.65, ver
+  // `imagenProducto` arriba) — centro efectivo x:0.325 — a pedido explícito, no en la mitad
+  // fija del cartel. Las 2 líneas se siguen centrando cada una por separado adentro de este
+  // casillero (ver más abajo), compartiendo este mismo centro.
+  nombreLinea1: { x: 0, y: 0.745, ancho: 0.65, alto: 0.09, align: 'center' },
+  nombreLinea2: { x: 0, y: 0.85, ancho: 0.65, alto: 0.09, align: 'center' },
   colorNombre: '#1a1a1a', // barra blanca de fondo (no hay caja oscura)
   colorFondoNombre: '#ffffff',
   colorDivisorNombre: 'rgba(0,0,0,0.18)',
