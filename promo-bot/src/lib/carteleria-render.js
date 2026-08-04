@@ -192,7 +192,6 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // y:0.745) — bajado a 1.05, que deja el de 3 cifras en y≈0.68, con aire de sobra.
     const capAltura = rectPrecio.height * 1.05;
     const font = fuenteParseada();
-    const anchoEnteroPorUnidad = font.getAdvanceWidth(entero, 1);
     // Tracking negativo (letras más juntas): medido contra carteles reales de referencia, el
     // precio ahí es notablemente más alto que lo que da nuestra fuente a ancho real SIN tracking
     // — la altura de un glifo no depende del tracking, solo el ancho, así que achicar el espacio
@@ -201,7 +200,16 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // tocaran entre sí (dependiendo de la forma de cada par, no todos los pares dejan el mismo
     // huequito) — bajado de nuevo a pedido (-0.025→-0.01) para más aire todavía entre dígitos.
     const TRACKING = -0.01;
-    const gapsEntero = Math.max(entero.length - 1, 0);
+    // El tope de ANCHO se calcula con un mínimo de 4 cifras (no las que tenga "entero" de
+    // verdad) — confirmado que el de 4 cifras quedó perfecto: si un precio de 3 cifras (con más
+    // ancho disponible por dígito) calculara su propio tope, el tipo saldría notablemente más
+    // "gordo" que el de 4, dos precios del mismo diseño con distinto grosor de letra. Con el piso
+    // en 4, "500" sale exactamente del mismo tamaño que "7347" (le sobra ancho a la derecha,
+    // nomás, no hay que llenarlo) y solo un precio de más de 4 cifras se achica de verdad.
+    const digitosParaAncho = Math.max(entero.length, 4);
+    const anchoPromedioPorDigito = font.getAdvanceWidth(entero, 1) / entero.length;
+    const anchoEnteroPorUnidad = anchoPromedioPorDigito * digitosParaAncho;
+    const gapsEntero = Math.max(digitosParaAncho - 1, 0);
     // width(S) = S*(anchoEnteroPorUnidad + gapsEntero*TRACKING) — los centavos van en su propio
     // casillero (ver más abajo), no comparten ancho con los dígitos enteros.
     const anchoPorUnidadDeTamanio = anchoEnteroPorUnidad + gapsEntero * TRACKING;
