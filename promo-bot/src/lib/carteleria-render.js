@@ -17,10 +17,21 @@ const ESCALA_CIGUENA = 2;
 const RUTA_FUENTE = path.join(
   __dirname, '..', '..', 'node_modules', '@fontsource', 'anton', 'files', 'anton-latin-400-normal.woff'
 );
+// Precio de Cartel/Cigüeña (solo ahí, ver USA_FUENTE_PRECIO_FINA más abajo): tipografía más
+// fina en grosor que Anton, a pedido — se probó contra Bebas Neue y Oswald a la misma altura
+// calibrada, Oswald SemiBold (600) fue la elegida.
+const RUTA_FUENTE_PRECIO_FINA = path.join(
+  __dirname, '..', '..', 'node_modules', '@fontsource', 'oswald', 'files', 'oswald-latin-600-normal.woff'
+);
 let fuenteCache = null;
 function fuente() {
   if (!fuenteCache) fuenteCache = fs.readFileSync(RUTA_FUENTE);
   return fuenteCache;
+}
+let fuentePrecioFinaCache = null;
+function fuentePrecioFina() {
+  if (!fuentePrecioFinaCache) fuentePrecioFinaCache = fs.readFileSync(RUTA_FUENTE_PRECIO_FINA);
+  return fuentePrecioFinaCache;
 }
 
 // Fuente ya parseada, para medir ancho real de texto (satori no expone una API de
@@ -33,15 +44,35 @@ function fuenteParseada() {
   }
   return fuenteParseadaCache;
 }
+let fuenteParseadaPrecioFinaCache = null;
+function fuenteParseadaPrecioFina() {
+  if (!fuenteParseadaPrecioFinaCache) {
+    const buf = fuentePrecioFina();
+    fuenteParseadaPrecioFinaCache = opentype.parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+  }
+  return fuenteParseadaPrecioFinaCache;
+}
+
+// Métricas de los dígitos de Oswald SemiBold (medidas una sola vez con
+// font.charToGlyph(d).getAdvanceWidth()/getMetrics(), no dependen de qué precio se esté
+// renderizando -- por eso van hardcodeadas acá en vez de calcularse en generarCartel).
+// Ancho promedio FIJO de los 10 dígitos a fontSize=1 (Oswald, a diferencia de Anton, no tiene
+// todos los dígitos del mismo ancho: 0.543 el "0" contra 0.428 el "7") -- usado para que el
+// tamaño de letra del precio no dependa de qué números específicos toque mostrar.
+const ANCHO_PROMEDIO_DIGITO_OSWALD = 0.4961;
+// Resalte óptico de fábrica de cada dígito por encima de la altura real de mayúscula, en
+// unidades sobre unitsPerEm=1000 ("1","4","5","7" no tienen resalte, quedan en 0 -- igual que
+// la "F" de FINAL).
+const OVERSHOOT_DIGITO_OSWALD = { 0: 11, 1: 0, 2: 10, 3: 11, 4: 0, 5: 0, 6: 10, 7: 0, 8: 10, 9: 10 };
 
 // Reparte `texto` en 2 líneas BALANCEADAS (no amontona todo en la línea 1 dejando
 // la línea 2 vacía y el bloque apretado) — probamos cada punto de corte posible y
 // nos quedamos con el que minimiza el ancho de la línea más ancha de las dos,
 // midiendo con el ancho real de cada palabra (no una heurística). Si ni el mejor
 // balance entra en `anchoMax`, se recorta con "…" — nunca se desborda la plantilla.
-function partirEnLineas(texto, tamanioFuente, anchoMax) {
+function partirEnLineas(texto, tamanioFuente, anchoMax, tracking = 0) {
   const font = fuenteParseada();
-  const anchoDe = (t) => font.getAdvanceWidth(t, tamanioFuente);
+  const anchoDe = (t) => font.getAdvanceWidth(t, tamanioFuente) + Math.max(t.length - 1, 0) * tracking * tamanioFuente;
   const palabras = String(texto).toUpperCase().trim().split(/\s+/).filter(Boolean);
   if (!palabras.length) return [];
   if (palabras.length === 1) return [palabras[0]];
@@ -99,14 +130,17 @@ function ajustarTamanioTag(texto, tamanioMax, tamanioMin, anchoMax, unaSolaLinea
   return { tamanio, lineas };
 }
 
-// $1.999 -> { entero: "1.999", decimales: "99" }. `precio` siempre viene con 2
-// decimales aunque sean $0 (p.ej. $500 -> entero "500", decimales "00").
+// $1999 -> { entero: "1999", decimales: "99" }. `precio` siempre viene con 2
+// decimales aunque sean $0 (p.ej. $500 -> entero "500", decimales "00"). Sin punto de miles
+// a propósito (a diferencia del resto del bot, que sí lo usa en texto) — en el cartel cada
+// caracter de menos es lugar de más para agrandar la fuente, y así es como se ve en los
+// carteles reales (ej. "$7347" no "$7.347").
 function formatearPrecio(precio) {
   const numero = Number(precio);
   const entero = Math.trunc(numero);
   const decimales = Math.round((numero - entero) * 100);
   return {
-    entero: entero.toLocaleString('es-AR'),
+    entero: String(entero),
     decimales: String(Math.abs(decimales)).padStart(2, '0'),
   };
 }
@@ -182,47 +216,148 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // más chico dejaba SIEMPRE el mismo tamaño de fuente sin importar el largo del precio,
     // chico y lejos del "$"/"FINAL" fijos. El tope por ancho de abajo ya evita que un precio
     // largo choque con el "FINAL" fijo, así que no hace falta un segundo tope de altura.
-    const capAltura = rectPrecio.height * 0.85;
-    const font = fuenteParseada();
-    const anchoEnteroPorUnidad = font.getAdvanceWidth(entero, 1);
-    const anchoDecimalesPorUnidad = font.getAdvanceWidth(decimales, 1);
-    // width(S) = S*anchoEnteroPorUnidad + margenPorUnidad*S + (0.38*S)*anchoDecimalesPorUnidad
-    const anchoPorUnidadDeTamanio = anchoEnteroPorUnidad + 0.06 + 0.38 * anchoDecimalesPorUnidad;
-    const capAncho = rectPrecio.width / anchoPorUnidadDeTamanio;
+    // OJO: en la práctica el tope de ALTURA solo termina mandando con precios de 3 cifras — con
+    // 4 o 5 el tope de ANCHO (más abajo) ya los achica antes de llegar a este techo. Con 1.15
+    // (probado contra referencias de 4 cifras, donde este tope no se notaba) un precio de 3
+    // cifras medía 628px, se estiraba hasta y:0.724 y casi tocaba la caja del nombre (arranca en
+    // y:0.745) — bajado a 1.05, que deja el de 3 cifras en y≈0.68, con aire de sobra.
+    const capAltura = rectPrecio.height * 1.05;
+    // Cartel/Cigüeña usa una tipografía más fina en grosor que Anton para el precio (a pedido,
+    // probada contra Bebas Neue y Oswald a la misma altura calibrada -- Oswald SemiBold ganó).
+    // A4 sigue con Anton -- nunca se probó/calibró este cambio contra esas plantillas.
+    const usaFuentePrecioFina = tipoGrafica === 'cartel_simple' || tipoGrafica === 'ciguena';
+    const fontFamilyPrecio = usaFuentePrecioFina ? 'PrecioFina' : 'Anton';
+    const font = usaFuentePrecioFina ? fuenteParseadaPrecioFina() : fuenteParseada();
+    // Tracking negativo (letras más juntas): medido contra carteles reales de referencia con
+    // Anton, el precio ahí es notablemente más alto que lo que da esa fuente a ancho real SIN
+    // tracking — la altura de un glifo no depende del tracking, solo el ancho, así que achicar el
+    // espacio entre caracteres deja meter una fuente bastante más grande en el mismo casillero.
+    // -0.09 se veía prolijo en el ancho total pero hacía que pares de dígitos como "3"+"4" o
+    // "4"+"7" se tocaran entre sí (dependiendo de la forma de cada par, no todos los pares dejan
+    // el mismo huequito) — bajado de nuevo a pedido (-0.025→-0.01) para más aire. Oswald (Cartel/
+    // Cigüeña) ya viene con espaciado prolijo de fábrica, no hace falta tracking negativo ahí.
+    const TRACKING = usaFuentePrecioFina ? 0 : -0.01;
+    // El tope de ANCHO se calcula con un mínimo de 4 cifras (no las que tenga "entero" de
+    // verdad) — confirmado que el de 4 cifras quedó perfecto: si un precio de 3 cifras (con más
+    // ancho disponible por dígito) calculara su propio tope, el tipo saldría notablemente más
+    // "gordo" que el de 4, dos precios del mismo diseño con distinto grosor de letra. Con el piso
+    // en 4, "500" sale exactamente del mismo tamaño que "7347" (le sobra ancho a la derecha,
+    // nomás, no hay que llenarlo) y solo un precio de más de 4 cifras se achica de verdad.
+    const digitosParaAncho = Math.max(entero.length, 4);
+    // Con Oswald, a diferencia de Anton, los dígitos NO son todos del mismo ancho (p.ej. "0"
+    // mide 0.543 contra 0.428 de "7", a fontSize=1) -- medir el ancho promedio con los dígitos
+    // REALES de "entero" hacía que el tamaño de fuente dependiera de qué números específicos
+    // tocaba mostrar: "500" (dígitos anchos) daba un tamaño bastante más chico que "7347"
+    // (dígitos angostos) aun siendo ambos de 3-4 cifras -- se veían de tamaño distinto sin
+    // motivo. ANCHO_PROMEDIO_DIGITO_OSWALD es el promedio FIJO de los 10 dígitos (0-9), así el
+    // tamaño de letra sale igual sin importar qué números haya, solo de la CANTIDAD de cifras.
+    const anchoPromedioPorDigito = usaFuentePrecioFina ? ANCHO_PROMEDIO_DIGITO_OSWALD : font.getAdvanceWidth(entero, 1) / entero.length;
+    const anchoEnteroPorUnidad = anchoPromedioPorDigito * digitosParaAncho;
+    const gapsEntero = Math.max(digitosParaAncho - 1, 0);
+    // width(S) = S*(anchoEnteroPorUnidad + gapsEntero*TRACKING) — los centavos van en su propio
+    // casillero (ver más abajo), no comparten ancho con los dígitos enteros.
+    const anchoPorUnidadDeTamanio = anchoEnteroPorUnidad + gapsEntero * TRACKING;
+    // Margen sobre el ancho disponible: con Anton, 0.96 ("apenas más chico" a pedido). Con
+    // Oswald, al fijar ANCHO_PROMEDIO_DIGITO_OSWALD (ver arriba) el tamaño de "7347" bajó ~6% del
+    // que tenía cuando el ancho se medía con sus propios dígitos (0.46925 vs el promedio fijo
+    // 0.4961) -- quedó chico a pedido, vuelto a subir con este margen (1.015) para que dé el
+    // mismo tamaño de antes, ahora igual sin importar los dígitos que tenga el precio.
+    const margenAncho = usaFuentePrecioFina ? 1.031 : 0.96;
+    const capAncho = (rectPrecio.width * margenAncho) / anchoPorUnidadDeTamanio;
     const tamanioPrecio = Math.min(capAltura, capAncho);
-    // Un precio largo (ej. "1.500" vs "999") achica tamanioPrecio para no desbordar — si el
-    // bloque quedara anclado arriba (flex-start), un precio más chico dejaría un hueco vacío
-    // debajo y se vería "flotando" desalineado del "$"/"FINAL" fijos de la plantilla. Igual que
-    // con el nombre: centramos el bloque completo verticalmente (contenedor externo), y adentro
-    // mantenemos el precio y los centavos en su propia fila para conservar el efecto de
-    // superíndice (centavos arriba a la derecha, más chicos).
+    // Con 4+ cifras el precio ya ocupa casi todo rectPrecio (queda igual, ancla a la izquierda
+    // como siempre). Con 3 cifras (mismo tamaño de letra que el de 4, ver arriba) sobra ancho a
+    // la derecha -- a pedido, ese precio se centra en la franja real entre donde termina el "$"
+    // y donde arranca "FINAL" (medido por píxeles contra el arte en blanco: "$" termina en
+    // x:0.0688, "FINAL" arranca en x:0.6894 -- ambos fijos en la plantilla), en vez de dejar todo
+    // el sobrante del lado derecho.
+    const usarCentradoCorto = entero.length < digitosParaAncho;
+    const leftPrecio = usarCentradoCorto ? 0.0688 * anchoFinal : rectPrecio.left;
+    const anchoPrecioBox = usarCentradoCorto ? (0.6894 - 0.0688) * anchoFinal : rectPrecio.width;
+    // Oswald deja un margen interno (ascent) arriba del glifo más grande que Anton, y encima no
+    // es parejo entre dígitos: medido con font.charToGlyph(d).getMetrics() (bounding box real de
+    // cada glifo, unitsPerEm=1000) -- "1","4","5","7" quedan exactos a la altura real de
+    // mayúscula (yMax=810, igual que la "F" de FINAL); "0","2","3","6","8","9" tienen un resalto
+    // óptico de fábrica de 10-11 unidades por encima de esa altura (ver OVERSHOOT_DIGITO_OSWALD).
+    // OFFSET_LEADING_RATIO_OSWALD ubica el techo de un dígito PLANO exacto sobre "FINAL" -- es
+    // una fracción del TAMAÑO DE FUENTE (no del canvas): el margen interno de la fuente escala
+    // con el tamaño con el que se dibuja, así que un offset fijo en fracción de canvas se
+    // descalibra apenas el tamaño de letra cambia un poco (pasó al fijar ANCHO_PROMEDIO_DIGITO_
+    // OSWALD arriba: el tamaño de "7347" bajó un toque y el offset viejo, en fracción de canvas,
+    // dejó de coincidir). Si el precio tiene ADEMÁS algún dígito redondo, ese resalta un poco más
+    // arriba todavía (ver OVERSHOOT_DIGITO_OSWALD), así que hay que bajar el techo lo que haga
+    // falta para que el punto más alto de VERDAD (el del dígito más "resaltado" que aparezca) sea
+    // el que toque "FINAL" -- con "500" (sin ningún dígito plano -- "5" es plano pero "0"
+    // resalta) el número quedaba "flotando" por encima de "FINAL" si no se compensaba esto.
+    // Techo y alto SOLO se corrigen acá (con Oswald); con Anton (A4) el rect de la plantilla ya
+    // viene calibrado tal cual.
+    const FINAL_TOP_CARTEL = 0.2430;
+    const OFFSET_LEADING_RATIO_OSWALD = 0.14131;
+    const resalteMaxUnidades = usaFuentePrecioFina
+      ? Math.max(0, ...[...new Set(entero)].map((d) => OVERSHOOT_DIGITO_OSWALD[d] || 0))
+      : 0;
+    const topPrecio = usaFuentePrecioFina
+      ? FINAL_TOP_CARTEL * altoFinal - OFFSET_LEADING_RATIO_OSWALD * tamanioPrecio + (resalteMaxUnidades / 1000) * tamanioPrecio
+      : rectPrecio.top;
+    const altoPrecioBox = usaFuentePrecioFina ? rectPrecio.height + (rectPrecio.top - topPrecio) : rectPrecio.height;
+    // Anclado ARRIBA (flex-start, no centrado) — a pedido: el techo tiene que quedar siempre en
+    // el mismo lugar (justo sobre "FINAL", ver CAMPOS_CARTEL_PRECIO), y el número crece para
+    // abajo. Dentro del rango de diseño (3 a 5 cifras) el tope de altura (capAltura) es casi
+    // siempre el que manda sobre el de ancho, así que en la práctica el alto queda parejo para
+    // cualquier cantidad de dígitos en ese rango — no hace falta centrar VERTICALMENTE para
+    // evitar que quede "flotando" más arriba (el centrado de acá arriba es solo horizontal).
     hijos.push({
       type: 'div',
       props: {
         style: {
-          position: 'absolute', left: rectPrecio.left, top: rectPrecio.top, width: rectPrecio.width, height: rectPrecio.height,
-          display: 'flex', flexDirection: 'column', justifyContent: 'center',
-          alignItems: justify(plantilla.campos.precio.align) === 'center' ? 'center' : 'flex-start',
+          position: 'absolute', left: leftPrecio, top: topPrecio, width: anchoPrecioBox, height: altoPrecioBox,
+          display: 'flex', flexDirection: 'column', justifyContent: 'flex-start',
+          alignItems: usarCentradoCorto || justify(plantilla.campos.precio.align) === 'center' ? 'center' : 'flex-start',
           overflow: 'hidden',
         },
         children: {
           type: 'div',
-          props: {
-            style: { display: 'flex', flexDirection: 'row', alignItems: 'flex-start' },
-            children: [
-              { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: colorPrecio, lineHeight: 1 }, children: entero } },
-              { type: 'div', props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio * 0.38, color: colorPrecio, lineHeight: 1, marginLeft: tamanioPrecio * 0.06 }, children: decimales } },
-            ],
-          },
+          props: { style: { fontFamily: fontFamilyPrecio, fontSize: tamanioPrecio, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioPrecio * TRACKING }, children: entero },
         },
       },
     });
+
+    // Centavos ("11", "88"): NO van pegados a la derecha de los dígitos enteros — medido por
+    // píxeles contra carteles reales de referencia, van en su propio casillero fijo, apilados
+    // arriba de "FINAL" (fijo en la plantilla), con el borde de abajo pegado justo antes de
+    // donde arranca "FINAL" (`techoY`, ver CAMPOS_CARTEL_PRECIO). El tamaño sigue proporcional
+    // al precio, pero la posición es independiente del ancho de "entero".
+    if (plantilla.campos.decimales) {
+      const campoDec = plantilla.campos.decimales;
+      const leftDec = campoDec.x * anchoFinal;
+      const anchoDec = campoDec.ancho * anchoFinal;
+      const techoDecPx = campoDec.techoY * altoFinal;
+      // Tope: no puede ser más alto que el propio "techo" (el hueco entre el borde de arriba de
+      // la plantilla y "FINAL") — sin este tope, un precio grande (que ya no comparte ancho con
+      // los centavos, así que puede crecer más que antes) empujaba los centavos hasta pisar el
+      // logo de arriba.
+      // 0.255 (recorrido con Oswald: 0.26→0.34 -muy grande-→0.30 -seguía grande-→0.27 -todavía-
+      // →0.24 -un poco de más chico-→0.255, punto medio entre esos dos últimos, confirmado).
+      // Este campo solo existe en Cartel/Cigüeña, así que siempre usa la fuente fina (Oswald).
+      const tamanioDecimales = Math.min(tamanioPrecio * 0.280, techoDecPx * 0.85);
+      hijos.push({
+        type: 'div',
+        props: {
+          style: {
+            position: 'absolute', left: leftDec, width: anchoDec, top: techoDecPx - tamanioDecimales,
+            display: 'flex', justifyContent: campoDec.align === 'center' ? 'center' : 'flex-start',
+          },
+          children: {
+            type: 'div',
+            props: { style: { fontFamily: 'PrecioFina', fontSize: tamanioDecimales, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioDecimales * TRACKING }, children: decimales },
+          },
+        },
+      });
+    }
   }
 
   const colorNombre = plantilla.campos.colorNombre || '#ffffff';
   const rectLinea1 = campoRect(plantilla.campos.nombreLinea1, anchoFinal, altoFinal);
-  const tamanioNombre = rectLinea1.height * 0.72;
-  const [nombreLinea1, nombreLinea2] = partirEnLineas(producto, tamanioNombre, rectLinea1.width);
 
   // Los nombres de 1 sola línea NO deben quedar pegados arriba del hueco pensado
   // para 2 líneas (se veía desalineado/con un hueco vacío abajo) — unimos las 2
@@ -232,6 +367,7 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
   // entre en 1 sola línea — si solo centráramos dentro del rect angosto de la
   // línea 1, un nombre corto seguiría pegado arriba del hueco de 2 líneas.
   let rectNombre = rectLinea1;
+  let maxLineasNombre = 1;
   if (plantilla.campos.nombreLinea2) {
     const rectLinea2 = campoRect(plantilla.campos.nombreLinea2, anchoFinal, altoFinal);
     rectNombre = {
@@ -240,6 +376,34 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       width: Math.max(rectLinea1.width, rectLinea2.width),
       height: (rectLinea2.top + rectLinea2.height) - rectLinea1.top,
     };
+    maxLineasNombre = 2;
+  }
+
+  // El tamaño de fuente del nombre se ajusta para llenar el espacio real disponible (medido por
+  // píxeles contra carteles de referencia: el nombre ocupaba mucho más lugar del que este fijo
+  // de antes —altura*0.72— dejaba) — arrancamos de un tamaño grande (el que llenaría el alto
+  // del contenedor con el máximo de líneas permitidas) y achicamos de a poco hasta que entre
+  // sin truncar ("…") en el ancho Y sin desbordar en el alto. Mismo patrón que ajustarTamanioTag.
+  // Tracking negativo (letras más juntas): igual que en el precio, medido contra carteles reales
+  // de referencia — sin esto el nombre quedaba chico porque el ancho real de la fuente (sin
+  // comprimir) lo topeaba antes de llegar al tamaño que se ve en la referencia.
+  // A diferencia del precio (números, tracking negativo se ve bien apretado), en el nombre
+  // (letras + espacios, texto real) un tracking negativo fuerte hace que las letras se toquen
+  // y se vea roto — se probó y se sacó. El agrandado sale del alto real del contenedor nomás.
+  const TRACKING_NOMBRE = 0;
+  let tamanioNombre = rectNombre.height / (maxLineasNombre * 1.25);
+  const tamanioMinNombre = rectLinea1.height * 0.4;
+  let [nombreLinea1, nombreLinea2] = partirEnLineas(producto, tamanioNombre, rectLinea1.width, TRACKING_NOMBRE);
+  const excedeAlto = () => {
+    const lineas = nombreLinea2 ? 2 : 1;
+    return lineas * tamanioNombre * 1.25 > rectNombre.height;
+  };
+  while (
+    (nombreLinea1.includes('…') || (nombreLinea2 && nombreLinea2.includes('…')) || excedeAlto())
+    && tamanioNombre > tamanioMinNombre
+  ) {
+    tamanioNombre *= 0.94;
+    [nombreLinea1, nombreLinea2] = partirEnLineas(producto, tamanioNombre, rectLinea1.width, TRACKING_NOMBRE);
   }
 
   // La plantilla trae una línea divisoria fija pensada para separar línea 1 de línea 2, dibujada
@@ -270,18 +434,9 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       },
     });
   }
-  if (nombreLinea2 && plantilla.campos.colorDivisorNombre) {
-    const grosorDivisor = Math.max(1.5, altoFinal * 0.0015);
-    hijos.push({
-      type: 'div',
-      props: {
-        style: {
-          position: 'absolute', left: rectFondoNombre.left, top: rectNombre.top + rectNombre.height / 2 - grosorDivisor / 2,
-          width: rectFondoNombre.width, height: grosorDivisor, backgroundColor: plantilla.campos.colorDivisorNombre,
-        },
-      },
-    });
-  }
+  // Antes se repintaba una línea divisoria propia entre línea 1 y línea 2 (para reemplazar la
+  // fija del arte, tapada arriba por colorFondoNombre) -- sacada a pedido, ya no se dibuja
+  // ninguna línea divisoria entre las 2 líneas del nombre.
 
   hijos.push({
     type: 'div',
@@ -294,7 +449,7 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       },
       children: [nombreLinea1, nombreLinea2].filter(Boolean).map((linea) => ({
         type: 'div',
-        props: { style: { fontFamily: 'Anton', fontSize: tamanioNombre, color: colorNombre, lineHeight: 1.25 }, children: linea },
+        props: { style: { fontFamily: 'Anton', fontSize: tamanioNombre, color: colorNombre, lineHeight: 1.25, letterSpacing: tamanioNombre * TRACKING_NOMBRE }, children: linea },
       })),
     },
   });
@@ -398,7 +553,14 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
 
   const svg = await satori(
     { type: 'div', props: { style: { width: anchoFinal, height: altoFinal, display: 'flex', position: 'relative' }, children: hijos } },
-    { width: anchoFinal, height: altoFinal, fonts: [{ name: 'Anton', data: fuente(), weight: 400, style: 'normal' }] }
+    {
+      width: anchoFinal,
+      height: altoFinal,
+      fonts: [
+        { name: 'Anton', data: fuente(), weight: 400, style: 'normal' },
+        { name: 'PrecioFina', data: fuentePrecioFina(), weight: 600, style: 'normal' },
+      ],
+    }
   );
 
   return sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toBuffer();

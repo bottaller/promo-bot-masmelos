@@ -3,6 +3,10 @@
 // columna "Imagen" y devuelve lo necesario para generarles el cartel automático (ver
 // lib/carteleria-generar.js): código, detalle, vencimiento y precio.
 //
+// El precio del cartel sale de "ACCION A TOMAR" (la decisión tomada para ese producto), NO de
+// "precio de venta final lista 2" — esa es solo la referencia del precio actual/de lista, no el
+// que hay que imprimir.
+//
 // Si el archivo no tiene esas columnas (formato viejo, o cualquier otra cosa) tira una excepción
 // a propósito — el caller (scenes/validar-promoprecios.js) lo interpreta como "no reconocido" y
 // cae al flujo manual de siempre (preguntar la cantidad de imágenes a mano).
@@ -26,7 +30,7 @@ function detectarColumnas(filas) {
     const iCodigo = header.indexOf('codigo');
     const iDetalle = header.indexOf('detalle');
     const iImagen = header.indexOf('imagen');
-    const iPrecio = header.findIndex((h) => h.includes('precio') && h.includes('final'));
+    const iPrecio = header.findIndex((h) => h.includes('accion') && h.includes('tomar'));
     if (iVencimiento >= 0 && iCodigo >= 0 && iDetalle >= 0 && iImagen >= 0 && iPrecio >= 0) {
       return { hIdx: i, iVencimiento, iCodigo, iDetalle, iImagen, iPrecio };
     }
@@ -94,7 +98,7 @@ function parsearProductosConImagen(buffer) {
     return productos;
   }
 
-  throw new Error('No encontré las columnas esperadas (vencimiento, codigo, detalle, precio final, Imagen) en ninguna hoja del archivo.');
+  throw new Error('No encontré las columnas esperadas (vencimiento, codigo, detalle, ACCION A TOMAR, Imagen) en ninguna hoja del archivo.');
 }
 
 module.exports = { parsearProductosConImagen };
