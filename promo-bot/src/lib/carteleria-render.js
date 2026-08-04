@@ -185,11 +185,12 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // más chico dejaba SIEMPRE el mismo tamaño de fuente sin importar el largo del precio,
     // chico y lejos del "$"/"FINAL" fijos. El tope por ancho de abajo ya evita que un precio
     // largo choque con el "FINAL" fijo, así que no hace falta un segundo tope de altura.
-    // 1.05 (no 0.85): medido para que, con el techo fijo en y:0.245 (ver CAMPOS_CARTEL_PRECIO),
-    // un precio de 3 a 5 cifras (todas terminan en la misma altura, el tope de ancho no las
-    // topea en ese rango) llegue hasta el punto medio pedido entre el número y "*CON LA MEJOR
-    // POLÍTICA COMERCIAL" (y:0.65).
-    const capAltura = rectPrecio.height * 1.15;
+    // OJO: en la práctica el tope de ALTURA solo termina mandando con precios de 3 cifras — con
+    // 4 o 5 el tope de ANCHO (más abajo) ya los achica antes de llegar a este techo. Con 1.15
+    // (probado contra referencias de 4 cifras, donde este tope no se notaba) un precio de 3
+    // cifras medía 628px, se estiraba hasta y:0.724 y casi tocaba la caja del nombre (arranca en
+    // y:0.745) — bajado a 1.05, que deja el de 3 cifras en y≈0.68, con aire de sobra.
+    const capAltura = rectPrecio.height * 1.05;
     const font = fuenteParseada();
     const anchoEnteroPorUnidad = font.getAdvanceWidth(entero, 1);
     // Tracking negativo (letras más juntas): medido contra carteles reales de referencia, el
@@ -204,7 +205,8 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // width(S) = S*(anchoEnteroPorUnidad + gapsEntero*TRACKING) — los centavos van en su propio
     // casillero (ver más abajo), no comparten ancho con los dígitos enteros.
     const anchoPorUnidadDeTamanio = anchoEnteroPorUnidad + gapsEntero * TRACKING;
-    const capAncho = rectPrecio.width / anchoPorUnidadDeTamanio;
+    // *0.96: a pedido ("apenas más chico") sobre el de 4 cifras, que da contra este tope.
+    const capAncho = (rectPrecio.width * 0.96) / anchoPorUnidadDeTamanio;
     const tamanioPrecio = Math.min(capAltura, capAncho);
     // Anclado ARRIBA (flex-start, no centrado) — a pedido: el techo tiene que quedar siempre en
     // el mismo lugar (justo sobre "FINAL", ver CAMPOS_CARTEL_PRECIO), y el número crece para
