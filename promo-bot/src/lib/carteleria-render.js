@@ -262,7 +262,7 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // que tenía cuando el ancho se medía con sus propios dígitos (0.46925 vs el promedio fijo
     // 0.4961) -- quedó chico a pedido, vuelto a subir con este margen (1.015) para que dé el
     // mismo tamaño de antes, ahora igual sin importar los dígitos que tenga el precio.
-    const margenAncho = usaFuentePrecioFina ? 1.015 : 0.96;
+    const margenAncho = usaFuentePrecioFina ? 1.031 : 0.96;
     const capAncho = (rectPrecio.width * margenAncho) / anchoPorUnidadDeTamanio;
     const tamanioPrecio = Math.min(capAltura, capAncho);
     // Con 4+ cifras el precio ya ocupa casi todo rectPrecio (queda igual, ancla a la izquierda
@@ -339,7 +339,7 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       // 0.255 (recorrido con Oswald: 0.26→0.34 -muy grande-→0.30 -seguía grande-→0.27 -todavía-
       // →0.24 -un poco de más chico-→0.255, punto medio entre esos dos últimos, confirmado).
       // Este campo solo existe en Cartel/Cigüeña, así que siempre usa la fuente fina (Oswald).
-      const tamanioDecimales = Math.min(tamanioPrecio * 0.255, techoDecPx * 0.85);
+      const tamanioDecimales = Math.min(tamanioPrecio * 0.280, techoDecPx * 0.85);
       hijos.push({
         type: 'div',
         props: {
