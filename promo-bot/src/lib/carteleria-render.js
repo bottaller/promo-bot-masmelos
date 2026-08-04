@@ -434,18 +434,9 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       },
     });
   }
-  if (nombreLinea2 && plantilla.campos.colorDivisorNombre) {
-    const grosorDivisor = Math.max(1.5, altoFinal * 0.0015);
-    hijos.push({
-      type: 'div',
-      props: {
-        style: {
-          position: 'absolute', left: rectFondoNombre.left, top: rectNombre.top + rectNombre.height / 2 - grosorDivisor / 2,
-          width: rectFondoNombre.width, height: grosorDivisor, backgroundColor: plantilla.campos.colorDivisorNombre,
-        },
-      },
-    });
-  }
+  // Antes se repintaba una línea divisoria propia entre línea 1 y línea 2 (para reemplazar la
+  // fija del arte, tapada arriba por colorFondoNombre) -- sacada a pedido, ya no se dibuja
+  // ninguna línea divisoria entre las 2 líneas del nombre.
 
   hijos.push({
     type: 'div',
