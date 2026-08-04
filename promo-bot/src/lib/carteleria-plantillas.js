@@ -120,9 +120,9 @@ const CAMPOS_CARTEL_PRECIO = {
   // enteros: medido por píxeles contra los carteles de referencia, van en su propia columna,
   // centrados EXACTO sobre "FINAL" (que arranca en x:0.6894 y termina en x:0.7919 — centro
   // x:0.74065, de ahí x = centro - ancho/2 = 0.6557) y apilados arriba, con el borde de abajo
-  // pegado justo antes de donde arranca "FINAL" (medido: los centavos terminan en y≈0.213,
-  // "FINAL" arranca en y:0.243).
-  decimales: { x: 0.6557, ancho: 0.17, techoY: 0.213, align: 'center' },
+  // un poco más cerca de "FINAL" que antes (techoY 0.213→0.225, a pedido, "FINAL" arranca en
+  // y:0.243, sigue quedando aire entre los dos).
+  decimales: { x: 0.6557, ancho: 0.17, techoY: 0.225, align: 'center' },
   // Corrido más a la derecha (antes x:0.35) y agrandada — con la foto de producto renderizada
   // DESPUÉS de la caja del nombre (ver generarCartel en carteleria-render.js), no importa que
   // pise la franja blanca ni la línea divisoria: queda arriba de todo eso, igual que en el diseño

@@ -226,7 +226,8 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // píxeles contra carteles reales de referencia, van en su propio casillero fijo, apilados
     // arriba de "FINAL" (fijo en la plantilla), con el borde de abajo pegado justo antes de
     // donde arranca "FINAL" (`techoY`, ver CAMPOS_CARTEL_PRECIO). El tamaño sigue proporcional
-    // al precio (0.38x), pero la posición es independiente del ancho de "entero".
+    // al precio (0.32x, antes 0.38x — un poco más chico a pedido), pero la posición es
+    // independiente del ancho de "entero".
     if (plantilla.campos.decimales) {
       const campoDec = plantilla.campos.decimales;
       const leftDec = campoDec.x * anchoFinal;
@@ -236,7 +237,7 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       // la plantilla y "FINAL") — sin este tope, un precio grande (que ya no comparte ancho con
       // los centavos, así que puede crecer más que antes) empujaba los centavos hasta pisar el
       // logo de arriba.
-      const tamanioDecimales = Math.min(tamanioPrecio * 0.38, techoDecPx * 0.85);
+      const tamanioDecimales = Math.min(tamanioPrecio * 0.32, techoDecPx * 0.85);
       hijos.push({
         type: 'div',
         props: {
