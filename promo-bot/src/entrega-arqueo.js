@@ -251,6 +251,7 @@ function iniciarEntregaArqueo(bot) {
       console.log(`Arqueo de cobros: ${r.entregados} entregado/s, ${r.sinLibro} sin libro, ${r.error} con error (de ${r.total}).`);
     } catch (e) {
       console.error('Error en la entrega de arqueos:', e);
+      require('./notificar').avisarProblema({ proceso: 'arqueo de MP/Talo (08:00)', que: 'El barrido de arqueo falló.', detalle: e && e.message, nivel: '❌' }).catch(() => {});
     }
     setTimeout(correr, msHastaProxima());
   };

@@ -133,6 +133,7 @@ function iniciarAvisoLibro(bot) {
       console.log(`Carga ${r.jornada}: ${r.cargado ? 'completa' : `faltan ${r.faltan.join(', ')} (avisé a ${r.avisados} admin/s)`}.`);
     } catch (e) {
       console.error('Error en el aviso del libro diario:', e);
+      require('./notificar').avisarProblema({ proceso: 'aviso de documentos faltantes (21:30)', que: 'No pude chequear qué documentos del día faltan (libro/MP/Talo).', detalle: e && e.message, nivel: '❌' }).catch(() => {});
     }
     setTimeout(correr, msHastaProxima());
   };

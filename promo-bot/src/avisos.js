@@ -118,6 +118,7 @@ function iniciarAvisos(bot) {
       console.log(`Avisos de vencimiento: por vencer ${r.porVencer}, vencidos ${r.vencido}.`);
     } catch (e) {
       console.error('Error en avisos de vencimiento:', e);
+      require('./notificar').avisarProblema({ proceso: 'avisos de vencimiento', que: 'No pude chequear los vencimientos del día.', detalle: e && e.message, nivel: '❌' }).catch(() => {});
     }
     setTimeout(correr, msHastaProxima());
   };

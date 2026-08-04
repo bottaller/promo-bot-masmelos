@@ -66,6 +66,7 @@ function iniciarAvisoMpSemanal(bot) {
       console.log(`Resumen MP semanal (${r.desde}→${r.hasta}): ${r.ok} ok, ${r.conDif} con dif, ${r.sinCorrer} sin correr → ${r.destinatarios} destinatarios.`);
     } catch (e) {
       console.error('Error en el resumen MP semanal:', e);
+      require('./notificar').avisarProblema({ proceso: 'resumen semanal de MP/Talo (lunes 08:00)', que: 'No pude armar o mandar el resumen semanal.', detalle: e && e.message, nivel: '❌' }).catch(() => {});
     }
     setTimeout(correr, msHastaProximoLunes());
   };
