@@ -261,10 +261,10 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       // la plantilla y "FINAL") — sin este tope, un precio grande (que ya no comparte ancho con
       // los centavos, así que puede crecer más que antes) empujaba los centavos hasta pisar el
       // logo de arriba.
-      // 0.20 (antes 0.38, luego 0.32): medido contra "FINAL" -- con 0.32 los centavos daban
-      // altoPx:135 contra los altoPx:78 de "FINAL", 73% más alto que el propio "FINAL" al lado,
-      // se veía desproporcionado. 0.20 los deja cerca del tamaño de "FINAL".
-      const tamanioDecimales = Math.min(tamanioPrecio * 0.20, techoDecPx * 0.85);
+      // 0.26 (antes 0.38, luego 0.32 -muy grande-, luego 0.20 -quedó chico, en especial con
+      // ceros/dígitos redondos como "00" que se ven más achicados que "11" al mismo tamaño-):
+      // punto medio, un poco más grande que "FINAL" sin volver a la desproporción original.
+      const tamanioDecimales = Math.min(tamanioPrecio * 0.26, techoDecPx * 0.85);
       hijos.push({
         type: 'div',
         props: {
