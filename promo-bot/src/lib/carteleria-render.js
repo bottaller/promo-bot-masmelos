@@ -17,10 +17,21 @@ const ESCALA_CIGUENA = 2;
 const RUTA_FUENTE = path.join(
   __dirname, '..', '..', 'node_modules', '@fontsource', 'anton', 'files', 'anton-latin-400-normal.woff'
 );
+// Precio de Cartel/Cigüeña (solo ahí, ver USA_FUENTE_PRECIO_FINA más abajo): tipografía más
+// fina en grosor que Anton, a pedido — se probó contra Bebas Neue y Oswald a la misma altura
+// calibrada, Oswald SemiBold (600) fue la elegida.
+const RUTA_FUENTE_PRECIO_FINA = path.join(
+  __dirname, '..', '..', 'node_modules', '@fontsource', 'oswald', 'files', 'oswald-latin-600-normal.woff'
+);
 let fuenteCache = null;
 function fuente() {
   if (!fuenteCache) fuenteCache = fs.readFileSync(RUTA_FUENTE);
   return fuenteCache;
+}
+let fuentePrecioFinaCache = null;
+function fuentePrecioFina() {
+  if (!fuentePrecioFinaCache) fuentePrecioFinaCache = fs.readFileSync(RUTA_FUENTE_PRECIO_FINA);
+  return fuentePrecioFinaCache;
 }
 
 // Fuente ya parseada, para medir ancho real de texto (satori no expone una API de
@@ -32,6 +43,14 @@ function fuenteParseada() {
     fuenteParseadaCache = opentype.parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   }
   return fuenteParseadaCache;
+}
+let fuenteParseadaPrecioFinaCache = null;
+function fuenteParseadaPrecioFina() {
+  if (!fuenteParseadaPrecioFinaCache) {
+    const buf = fuentePrecioFina();
+    fuenteParseadaPrecioFinaCache = opentype.parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+  }
+  return fuenteParseadaPrecioFinaCache;
 }
 
 // Reparte `texto` en 2 líneas BALANCEADAS (no amontona todo en la línea 1 dejando
@@ -191,15 +210,21 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // cifras medía 628px, se estiraba hasta y:0.724 y casi tocaba la caja del nombre (arranca en
     // y:0.745) — bajado a 1.05, que deja el de 3 cifras en y≈0.68, con aire de sobra.
     const capAltura = rectPrecio.height * 1.05;
-    const font = fuenteParseada();
-    // Tracking negativo (letras más juntas): medido contra carteles reales de referencia, el
-    // precio ahí es notablemente más alto que lo que da nuestra fuente a ancho real SIN tracking
-    // — la altura de un glifo no depende del tracking, solo el ancho, así que achicar el espacio
-    // entre caracteres deja meter una fuente bastante más grande en el mismo casillero. -0.09 se
-    // veía prolijo en el ancho total pero hacía que pares de dígitos como "3"+"4" o "4"+"7" se
-    // tocaran entre sí (dependiendo de la forma de cada par, no todos los pares dejan el mismo
-    // huequito) — bajado de nuevo a pedido (-0.025→-0.01) para más aire todavía entre dígitos.
-    const TRACKING = -0.01;
+    // Cartel/Cigüeña usa una tipografía más fina en grosor que Anton para el precio (a pedido,
+    // probada contra Bebas Neue y Oswald a la misma altura calibrada -- Oswald SemiBold ganó).
+    // A4 sigue con Anton -- nunca se probó/calibró este cambio contra esas plantillas.
+    const usaFuentePrecioFina = tipoGrafica === 'cartel_simple' || tipoGrafica === 'ciguena';
+    const fontFamilyPrecio = usaFuentePrecioFina ? 'PrecioFina' : 'Anton';
+    const font = usaFuentePrecioFina ? fuenteParseadaPrecioFina() : fuenteParseada();
+    // Tracking negativo (letras más juntas): medido contra carteles reales de referencia con
+    // Anton, el precio ahí es notablemente más alto que lo que da esa fuente a ancho real SIN
+    // tracking — la altura de un glifo no depende del tracking, solo el ancho, así que achicar el
+    // espacio entre caracteres deja meter una fuente bastante más grande en el mismo casillero.
+    // -0.09 se veía prolijo en el ancho total pero hacía que pares de dígitos como "3"+"4" o
+    // "4"+"7" se tocaran entre sí (dependiendo de la forma de cada par, no todos los pares dejan
+    // el mismo huequito) — bajado de nuevo a pedido (-0.025→-0.01) para más aire. Oswald (Cartel/
+    // Cigüeña) ya viene con espaciado prolijo de fábrica, no hace falta tracking negativo ahí.
+    const TRACKING = usaFuentePrecioFina ? 0 : -0.01;
     // El tope de ANCHO se calcula con un mínimo de 4 cifras (no las que tenga "entero" de
     // verdad) — confirmado que el de 4 cifras quedó perfecto: si un precio de 3 cifras (con más
     // ancho disponible por dígito) calculara su propio tope, el tipo saldría notablemente más
@@ -225,6 +250,17 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     const usarCentradoCorto = entero.length < digitosParaAncho;
     const leftPrecio = usarCentradoCorto ? 0.0688 * anchoFinal : rectPrecio.left;
     const anchoPrecioBox = usarCentradoCorto ? (0.6894 - 0.0688) * anchoFinal : rectPrecio.width;
+    // Oswald deja un margen interno (ascent) arriba del glifo más grande que Anton, y encima no
+    // es parejo entre dígitos: los redondos ("0","3","6","8","9") tienen un resalto óptico de
+    // fábrica por encima de la altura real de mayúscula, "1","4","7" no (quedan a la altura de
+    // mayúscula pura, igual que la "F" de FINAL). Calibrado contra "4"/"7" (no contra el string
+    // completo, que queda "tirado para arriba" por el resalto de los redondos) -- offset medido:
+    // 0.0694 de la altura del canvas, a este tamaño de fuente. Techo y alto SOLO se corrigen acá
+    // (con Oswald); con Anton (A4) el rect de la plantilla ya viene calibrado tal cual.
+    const FINAL_TOP_CARTEL = 0.2430;
+    const OFFSET_LEADING_OSWALD = 0.0694;
+    const topPrecio = usaFuentePrecioFina ? (FINAL_TOP_CARTEL - OFFSET_LEADING_OSWALD) * altoFinal : rectPrecio.top;
+    const altoPrecioBox = usaFuentePrecioFina ? rectPrecio.height + (rectPrecio.top - topPrecio) : rectPrecio.height;
     // Anclado ARRIBA (flex-start, no centrado) — a pedido: el techo tiene que quedar siempre en
     // el mismo lugar (justo sobre "FINAL", ver CAMPOS_CARTEL_PRECIO), y el número crece para
     // abajo. Dentro del rango de diseño (3 a 5 cifras) el tope de altura (capAltura) es casi
@@ -235,14 +271,14 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       type: 'div',
       props: {
         style: {
-          position: 'absolute', left: leftPrecio, top: rectPrecio.top, width: anchoPrecioBox, height: rectPrecio.height,
+          position: 'absolute', left: leftPrecio, top: topPrecio, width: anchoPrecioBox, height: altoPrecioBox,
           display: 'flex', flexDirection: 'column', justifyContent: 'flex-start',
           alignItems: usarCentradoCorto || justify(plantilla.campos.precio.align) === 'center' ? 'center' : 'flex-start',
           overflow: 'hidden',
         },
         children: {
           type: 'div',
-          props: { style: { fontFamily: 'Anton', fontSize: tamanioPrecio, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioPrecio * TRACKING }, children: entero },
+          props: { style: { fontFamily: fontFamilyPrecio, fontSize: tamanioPrecio, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioPrecio * TRACKING }, children: entero },
         },
       },
     });
@@ -261,10 +297,10 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       // la plantilla y "FINAL") — sin este tope, un precio grande (que ya no comparte ancho con
       // los centavos, así que puede crecer más que antes) empujaba los centavos hasta pisar el
       // logo de arriba.
-      // 0.26 (antes 0.38, luego 0.32 -muy grande-, luego 0.20 -quedó chico, en especial con
-      // ceros/dígitos redondos como "00" que se ven más achicados que "11" al mismo tamaño-):
-      // punto medio, un poco más grande que "FINAL" sin volver a la desproporción original.
-      const tamanioDecimales = Math.min(tamanioPrecio * 0.26, techoDecPx * 0.85);
+      // 0.255 (recorrido con Oswald: 0.26→0.34 -muy grande-→0.30 -seguía grande-→0.27 -todavía-
+      // →0.24 -un poco de más chico-→0.255, punto medio entre esos dos últimos, confirmado).
+      // Este campo solo existe en Cartel/Cigüeña, así que siempre usa la fuente fina (Oswald).
+      const tamanioDecimales = Math.min(tamanioPrecio * 0.255, techoDecPx * 0.85);
       hijos.push({
         type: 'div',
         props: {
@@ -274,7 +310,7 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
           },
           children: {
             type: 'div',
-            props: { style: { fontFamily: 'Anton', fontSize: tamanioDecimales, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioDecimales * TRACKING }, children: decimales },
+            props: { style: { fontFamily: 'PrecioFina', fontSize: tamanioDecimales, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioDecimales * TRACKING }, children: decimales },
           },
         },
       });
@@ -487,7 +523,14 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
 
   const svg = await satori(
     { type: 'div', props: { style: { width: anchoFinal, height: altoFinal, display: 'flex', position: 'relative' }, children: hijos } },
-    { width: anchoFinal, height: altoFinal, fonts: [{ name: 'Anton', data: fuente(), weight: 400, style: 'normal' }] }
+    {
+      width: anchoFinal,
+      height: altoFinal,
+      fonts: [
+        { name: 'Anton', data: fuente(), weight: 400, style: 'normal' },
+        { name: 'PrecioFina', data: fuentePrecioFina(), weight: 600, style: 'normal' },
+      ],
+    }
   );
 
   return sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toBuffer();
