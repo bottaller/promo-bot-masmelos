@@ -115,7 +115,12 @@ const CAMPOS_CARTEL_PRECIO = {
   // propio casillero fijo, apilados arriba de "FINAL" (ver `decimales` más abajo), no en la
   // misma fila. Puede superponerse con la foto de producto (que arranca en x:0.65) para precios
   // largos; el diseño real tampoco lo evita (la foto ahí queda más a la derecha).
-  precio: { x: 0.06, y: 0.16, ancho: 0.63, alto: 0.54, align: 'left' },
+  // Ancla ARRIBA (no centrado — ver generarCartel) en vez de estar centrado en un casillero
+  // alto: a pedido, el techo queda fijo justo sobre "FINAL" (y:0.245, "FINAL" arranca en
+  // y:0.243) y el número entero crece SOLO para abajo con precios de menos dígitos (rango de
+  // diseño: 3 a 5 cifras) — hasta el punto medio entre el número y "*CON LA MEJOR POLÍTICA
+  // COMERCIAL" (y≈0.65).
+  precio: { x: 0.06, y: 0.245, ancho: 0.63, alto: 0.48, align: 'left' },
   // Casillero de los centavos ("11", "88") — NO van pegados a la derecha de los dígitos
   // enteros: medido por píxeles contra los carteles de referencia, van en su propia columna,
   // centrados EXACTO sobre "FINAL" (que arranca en x:0.6894 y termina en x:0.7919 — centro

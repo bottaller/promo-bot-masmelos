@@ -185,7 +185,11 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // más chico dejaba SIEMPRE el mismo tamaño de fuente sin importar el largo del precio,
     // chico y lejos del "$"/"FINAL" fijos. El tope por ancho de abajo ya evita que un precio
     // largo choque con el "FINAL" fijo, así que no hace falta un segundo tope de altura.
-    const capAltura = rectPrecio.height * 0.85;
+    // 1.05 (no 0.85): medido para que, con el techo fijo en y:0.245 (ver CAMPOS_CARTEL_PRECIO),
+    // un precio de 3 a 5 cifras (todas terminan en la misma altura, el tope de ancho no las
+    // topea en ese rango) llegue hasta el punto medio pedido entre el número y "*CON LA MEJOR
+    // POLÍTICA COMERCIAL" (y:0.65).
+    const capAltura = rectPrecio.height * 1.15;
     const font = fuenteParseada();
     const anchoEnteroPorUnidad = font.getAdvanceWidth(entero, 1);
     // Tracking negativo (letras más juntas): medido contra carteles reales de referencia, el
@@ -202,16 +206,18 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     const anchoPorUnidadDeTamanio = anchoEnteroPorUnidad + gapsEntero * TRACKING;
     const capAncho = rectPrecio.width / anchoPorUnidadDeTamanio;
     const tamanioPrecio = Math.min(capAltura, capAncho);
-    // Un precio largo (ej. "1.500" vs "999") achica tamanioPrecio para no desbordar — si el
-    // bloque quedara anclado arriba (flex-start), un precio más chico dejaría un hueco vacío
-    // debajo y se vería "flotando" desalineado del "$" fijo de la plantilla. Por eso se centra
-    // el bloque completo verticalmente (contenedor externo).
+    // Anclado ARRIBA (flex-start, no centrado) — a pedido: el techo tiene que quedar siempre en
+    // el mismo lugar (justo sobre "FINAL", ver CAMPOS_CARTEL_PRECIO), y el número crece para
+    // abajo. Dentro del rango de diseño (3 a 5 cifras) el tope de altura (capAltura) es casi
+    // siempre el que manda sobre el de ancho, así que en la práctica el alto queda parejo para
+    // cualquier cantidad de dígitos en ese rango — no hace falta centrar para evitar que quede
+    // "flotando" más arriba.
     hijos.push({
       type: 'div',
       props: {
         style: {
           position: 'absolute', left: rectPrecio.left, top: rectPrecio.top, width: rectPrecio.width, height: rectPrecio.height,
-          display: 'flex', flexDirection: 'column', justifyContent: 'center',
+          display: 'flex', flexDirection: 'column', justifyContent: 'flex-start',
           alignItems: justify(plantilla.campos.precio.align) === 'center' ? 'center' : 'flex-start',
           overflow: 'hidden',
         },
