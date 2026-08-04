@@ -139,13 +139,13 @@ const CAMPOS_CARTEL_PRECIO = {
   // (ahí arranca el pie de página negro, medido exacto), este es el límite físico del arte
   // actual — para llegar al tamaño de los carteles de referencia (que tienen el pie de página
   // más abajo) haría falta un archivo de arte nuevo con la franja blanca más alta.
-  // Casillero corrido a la izquierda (antes x:0.14, centro efectivo x:0.555 — quedaba a la
-  // derecha del centro real del cartel) — medido contra los carteles reales de referencia:
-  // el centro del bloque de nombre está en x≈0.49 (linea1 Manaos 0.484, linea1 Daqui 0.498),
-  // casi el centro real del cartel, no corrido a la derecha. CADA línea se sigue centrando
-  // adentro de este casillero (no pegada a su borde izquierdo, ver más abajo).
-  nombreLinea1: { x: 0.075, y: 0.745, ancho: 0.83, alto: 0.09, align: 'center' },
-  nombreLinea2: { x: 0.075, y: 0.85, ancho: 0.83, alto: 0.09, align: 'center' },
+  // Centrado en el medio de la MITAD IZQUIERDA del cartel (x:0 a x:0.5, centro efectivo x:0.25),
+  // no en el medio de todo el cartel (a pedido explícito: la mitad derecha de la franja blanca
+  // la ocupa la foto de producto). Las 2 líneas se siguen centrando cada una por separado
+  // adentro de este casillero (ver más abajo), pero ahora comparten el centro de la mitad
+  // izquierda en vez del centro de todo el cartel.
+  nombreLinea1: { x: 0, y: 0.745, ancho: 0.5, alto: 0.09, align: 'center' },
+  nombreLinea2: { x: 0, y: 0.85, ancho: 0.5, alto: 0.09, align: 'center' },
   colorNombre: '#1a1a1a', // barra blanca de fondo (no hay caja oscura)
   colorFondoNombre: '#ffffff',
   colorDivisorNombre: 'rgba(0,0,0,0.18)',
