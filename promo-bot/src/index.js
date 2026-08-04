@@ -21,7 +21,7 @@ const { iniciarAvisoMpSemanal } = require('./aviso-mp-semanal');
 const { iniciarEntregaCierres } = require('./entrega-cierres');
 const { registrarAccionesCalidad } = require('./acciones-calidad');
 const { registrarAccionesDeposito } = require('./acciones-deposito');
-const { iniciarEntregaArqueo } = require('./entrega-arqueo');
+const { iniciarEntregaArqueo, iniciarEntregaTaloApi } = require('./entrega-arqueo');
 const { anunciarDeploy } = require('./aviso-deploy');
 const { iniciarChequeoDemoraAjustes } = require('./ajustes-demora');
 
@@ -166,6 +166,7 @@ bot.catch((err, ctx) => {
     iniciarAvisoMpSemanal(bot); // lunes 8:00 ART: resumen semanal MP + Talo a admins + Caja Central
     iniciarEntregaCierres(bot); // 08:00 ART: concilia los cierres pendientes y entrega el reporte
     iniciarEntregaArqueo(bot); // 08:00 ART: arquea MP/Talo del día y manda los reportes a Tesorería + Caja Central
+    iniciarEntregaTaloApi(bot); // 21:00 ART: baja Talo del día por API y lo arquea solo; avisa a los admins si falla
     iniciarChequeoDemoraAjustes(bot); // cada 1h: avisa al dueño si un ajuste verificado lleva +36hs sin confirmar
     await publicarComandos(bot); // publica el menú "/" de Telegram (antes de arrancar el polling)
     // OJO: bot.launch() NO resuelve — startPolling corre el loop de polling para siempre. Por eso
