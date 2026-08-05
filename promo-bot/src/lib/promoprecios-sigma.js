@@ -8,20 +8,51 @@
 //   - Con impuesto interno: ((precio_accion - impuesto_interno) / 1.21) + impuesto_interno
 // El resultado se TRUNCA (no se redondea) a 5 decimales.
 //
-// Formato: mismo esqueleto que el .txt de ejemplo que ya usa Sigma (26 columnas separadas por
-// TAB, encabezado FCODIGO..FSUCURS). Se completan FCODIGO (padded a 13 caracteres, alineado a
-// la derecha), FVIGDES (hoy), FVIGHAS (vencimiento de ESE producto — la promo dura hasta que
-// vence), FPRECIO (calculado), FDESCUE/FDESMAX (0) y FORDMAN (95). El resto queda vacío, igual
-// que en el ejemplo.
+// Formato: 31 columnas separadas por TAB — medido contra la pantalla real de Sigma ("Opciones de
+// importación", panel Columna -> Campo), NO por posición fija de un archivo de ejemplo viejo (esa
+// versión tenía 26 columnas, con FCODIGO primero — está mal, Sigma la mapeaba corrida). El orden
+// real es FORDMAN primero, FCODIGO segundo, y hay 8 columnas sin campo asignado intercaladas
+// (Cod.Referencia, Cod.Basket, Q.Bonif., Puntos, 3 "Codigo" sueltas, Cant.mínima en Bultos,
+// Canal) que hay que dejar vacías para que el resto caiga en la posición correcta — Sigma arma
+// las columnas por POSICIÓN, no por el nombre que tenga el encabezado.
 const { fechaHoyArgISO } = require('./fechas');
 
 const IVA = 1.21;
 const FORDMAN = '95';
 
+// Columna -> campo interno que llena esa posición, o null si Sigma no la usa acá (va vacía).
 const COLUMNAS = [
-  'FCODIGO', 'FCODCLI', 'FRUBART', 'FLISPRE', 'FGRUCLI', 'FVIGDES', 'FVIGHAS', 'FDESCUE', 'FDESMAX',
-  'FPRECIO', 'FMODULO', 'FCANMIN', 'FCANMAX', 'FPROVED', 'FDESACT', 'FGRUART', 'FRUBCLI', 'FCONVEN',
-  'FVENDED', 'FEMPRES', 'FDIAVIS', 'FMONEDA', 'FPOLBUL', 'FORDMAN', 'FSINDES', 'FSUCURS',
+  'FORDMAN', // 1  Orden
+  'FCODIGO', // 2  Cod.Art
+  null,      // 3  Cod.Referencia
+  null,      // 4  Cod.Basket
+  'FRUBART', // 5  Cod.
+  'FLISPRE', // 6  Lista
+  'FGRUCLI', // 7  Codigo
+  'FVIGDES', // 8  Desde
+  'FVIGHAS', // 9  Hasta
+  'FDESCUE', // 10 Desc.
+  'FDESMAX', // 11 Desc.Max
+  null,      // 12 Q.Bonif.
+  'FPRECIO', // 13 Precio
+  null,      // 14 Puntos
+  'FMODULO', // 15 Modulo
+  null,      // 16 Codigo
+  'FCANMIN', // 17 Q. Min.
+  'FCANMAX', // 18 Q. Max.
+  null,      // 19 Codigo
+  'FGRUART', // 20 Codigo
+  'FRUBCLI', // 21 Codigo
+  'FCONVEN', // 22 Cond.Venta
+  'FVENDED', // 23 Vendedor
+  'FEMPRES', // 24 Empresa
+  'FDIAVIS', // 25 Dia
+  'FMONEDA', // 26 Moneda
+  'FPOLBUL', // 27 Pol. por Bulto
+  'FSINDES', // 28 sDes
+  'FSUCURS', // 29 Suc.
+  null,      // 30 Cant.mínima en Bultos
+  null,      // 31 Canal
 ];
 
 // Trunca (no redondea) a 5 decimales. Ej: 413.214876... -> 413.21487.
@@ -44,7 +75,7 @@ function fechaSigma(iso) {
   return `${d}/${m}/${y}`;
 }
 
-// codigo -> 13 caracteres, alineado a la derecha (mismo padding que el .txt de ejemplo de Sigma).
+// codigo -> 13 caracteres, alineado a la derecha (mismo padding que ya usa Sigma para este campo).
 function codigoPadded(codigo) {
   return String(codigo).padStart(13, ' ');
 }
@@ -59,21 +90,21 @@ function generarTxtSigma(productos, mapaImpuestos) {
   if (filas.length === 0) return null;
 
   const hoy = fechaSigma(fechaHoyArgISO());
-  const lineas = [COLUMNAS.join('\t')];
+  const lineas = [COLUMNAS.map((c) => c || '').join('\t')];
 
   for (const p of filas) {
     const impuestoInterno = mapaImpuestos.get(p.codigo) || null;
     const precio = calcularPrecioSigma(p.accionATomar, impuestoInterno);
     const campos = {
+      FORDMAN,
       FCODIGO: codigoPadded(p.codigo),
       FVIGDES: hoy,
       FVIGHAS: fechaSigma(p.vencimiento),
       FDESCUE: '0',
       FDESMAX: '0',
       FPRECIO: precio.toFixed(5),
-      FORDMAN,
     };
-    lineas.push(COLUMNAS.map((c) => campos[c] ?? '').join('\t'));
+    lineas.push(COLUMNAS.map((c) => (c ? (campos[c] ?? '') : '')).join('\t'));
   }
 
   return lineas.join('\r\n') + '\r\n';
