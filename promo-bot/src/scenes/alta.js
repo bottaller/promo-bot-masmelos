@@ -1,6 +1,6 @@
 const { Scenes } = require('telegraf');
 const { buscarArticulos } = require('../db/articulos');
-const { crearAlta, historialProducto } = require('../db/compras');
+const { crearAlta, historialProducto, buscarAltasParaReponer, sumarCantidadAlta } = require('../db/compras');
 const { respuesta, esCancelar, parseUnidades, parsePrecio, opciones, preguntar } = require('../lib/wizard');
 const { parseVencimiento, formatoVencimiento, diasHasta } = require('../lib/fechas');
 
@@ -95,7 +95,37 @@ const altaWizard = new Scenes.WizardScene(
       await ctx.reply(`Ojo: esa fecha ya pasó hace ${-dias} día(s). Si te equivocaste, escribila de nuevo (DD/MM/AAAA).`);
       return;
     }
-    ctx.wizard.state.data.vencimiento = formatoVencimiento(fecha); // normalizada a DD/MM/AAAA
+    const d = ctx.wizard.state.data;
+    const vencimiento = formatoVencimiento(fecha); // normalizada a DD/MM/AAAA
+    d.vencimiento = vencimiento;
+
+    // Mismo producto + misma fecha de vencimiento ya en promoción ABIERTA: puede ser el mismo
+    // lote que ya se cargó antes (correspondería /reposicion, no otra alta) o un tipeo repetido
+    // por error — avisamos ANTES de seguir, en vez de dejar que se cree una alta calcada sin
+    // querer (ver el mismo chequeo que ya usa /reposicion, db/compras.js#buscarAltasParaReponer).
+    const duplicados = await buscarAltasParaReponer({
+      articuloCodigo: d.articuloCodigo || null,
+      producto: d.producto,
+      vencimiento,
+    });
+    if (duplicados.length > 0) {
+      // Limpio: si el producto se eligió de una lista (paso 2), wizard.state.opciones sigue
+      // seteado con ESA lista vieja — el paso 11 usa la misma propiedad para "elegir cuál de los
+      // duplicados", así que si no se limpia acá confunde una cosa con la otra.
+      delete ctx.wizard.state.opciones;
+      d.duplicados = duplicados;
+      const lista = duplicados
+        .map((a) => `• ${a.cantidad} unidades (cargó ${a.usuario_nombre || '-'})`)
+        .join('\n');
+      await preguntar(
+        ctx,
+        `⚠️ Ya hay ${duplicados.length > 1 ? 'promociones ABIERTAS' : 'una promoción ABIERTA'} de "${d.producto}" con vencimiento ${vencimiento}:\n\n${lista}\n\n` +
+        '¿Es el mismo lote que ya está cargado (sumo esta cantidad a esa) o te equivocaste?',
+        opciones([['➕ Es el mismo, sumar cantidad', 'reponer'], ['❌ Me equivoqué, cancelar carga', 'cancelar_carga']])
+      );
+      return ctx.wizard.selectStep(11);
+    }
+
     await ctx.reply(`Vence en ${dias} día(s).\n\n¿Cantidad que se pasa a promoción?`);
     return ctx.wizard.next();
   },
@@ -213,6 +243,92 @@ const altaWizard = new Scenes.WizardScene(
       `Historial: este producto lleva ${hist.veces} alta(s) en promoción, ${hist.unidades} unidades en total. ` +
       'Tenelo en cuenta al recomprar.'
     );
+    return ctx.scene.leave();
+  },
+  // --- A partir de acá, solo se llega saltando desde el paso 5 (vencimiento) cuando ya hay una
+  // promoción abierta del mismo producto+vencimiento — ver buscarAltasParaReponer más arriba.
+  // Van al final (no insertados en el medio) para no tener que renumerar los selectStep() de
+  // arriba. Mismo patrón que /reposicion (scenes/reposicion.js): si hay una sola coincidencia se
+  // salta directo a pedir la cantidad; si hay varias, se elige cuál antes.
+  //
+  // 11: reponer/cancelar (o elegir cuál, si había más de una coincidencia)
+  async (ctx) => {
+    const d = ctx.wizard.state.data;
+    if (ctx.wizard.state.opciones) {
+      const r = await respuesta(ctx);
+      if (esCancelar(r)) return cancelar(ctx);
+      if (!r) { await ctx.reply('Escribí el número de la lista (o "cancelar").'); return; }
+      const n = Number(r);
+      const ops = ctx.wizard.state.opciones;
+      if (!Number.isInteger(n) || n < 1 || n > ops.length) {
+        await ctx.reply('Elegí un número válido de la lista.');
+        return;
+      }
+      delete ctx.wizard.state.opciones;
+      d.altaParaReponer = ops[n - 1];
+      await ctx.reply(`¿Cuántas unidades más se agregan? (actualmente ${d.altaParaReponer.cantidad})`);
+      return ctx.wizard.next();
+    }
+
+    const r = await respuesta(ctx);
+    if (r === null) return; // botón viejo / doble-tap
+    if (esCancelar(r) || r === 'cancelar_carga') return cancelar(ctx);
+    if (r !== 'reponer') { await ctx.reply('Elegí una opción.'); return; }
+
+    const duplicados = d.duplicados;
+    if (duplicados.length === 1) {
+      d.altaParaReponer = duplicados[0];
+      await ctx.reply(`¿Cuántas unidades más se agregan? (actualmente ${duplicados[0].cantidad})`);
+      return ctx.wizard.next();
+    }
+    ctx.wizard.state.opciones = duplicados;
+    const lista = duplicados.map((a, i) => `${i + 1}) ${a.cantidad} unidades (cargó ${a.usuario_nombre || '-'})`).join('\n');
+    await ctx.reply(`Hay ${duplicados.length} promociones abiertas que matchean:\n\n${lista}\n\nRespondé con el número.`);
+  },
+  // 12: cantidad adicional -> confirmar (botones inline)
+  async (ctx) => {
+    const r = await respuesta(ctx);
+    if (esCancelar(r)) return cancelar(ctx);
+    const cantidad = parseUnidades(r);
+    if (cantidad === null || cantidad <= 0) {
+      await ctx.reply('Ingresá una cantidad válida en unidades enteras (ej: 500).');
+      return;
+    }
+    const d = ctx.wizard.state.data;
+    d.cantidadAdicional = cantidad;
+    const alta = d.altaParaReponer;
+    const total = Number(alta.cantidad) + cantidad;
+    await preguntar(
+      ctx,
+      'Confirmá la reposición (en vez de una alta nueva):\n\n' +
+      `Producto: ${alta.producto}\n` +
+      `Actualmente en promoción: ${alta.cantidad}\n` +
+      `Se agregan: ${cantidad}\n` +
+      `Total quedaría: ${total}`,
+      opciones([['✅ Confirmar', 'si'], ['❌ Cancelar', 'no']])
+    );
+    return ctx.wizard.next();
+  },
+  // 13: confirmar -> sumar cantidad a la alta existente (no crea una alta nueva)
+  async (ctx) => {
+    const raw = await respuesta(ctx);
+    if (raw === null) return; // botón viejo / doble-tap / no-texto: el paso sigue esperando
+    const r = raw.toLowerCase();
+    if (r !== 'si' && r !== 'sí') {
+      await ctx.reply('Carga cancelada.');
+      return ctx.scene.leave();
+    }
+    if (ctx.wizard.state.guardando) return; // evita doble-tap: ya se está guardando
+    ctx.wizard.state.guardando = true;
+    const d = ctx.wizard.state.data;
+    const alta = d.altaParaReponer;
+
+    const nuevoTotal = await sumarCantidadAlta({ altaId: alta.id, cantidadAdicional: d.cantidadAdicional });
+    if (nuevoTotal === null) {
+      await ctx.reply('Esa promoción se cerró justo antes de sumar (alguien hizo /baja mientras tanto). No se pudo reponer.');
+      return ctx.scene.leave();
+    }
+    await ctx.reply(`Reposición registrada. Ahora hay ${nuevoTotal} unidades en promoción de este producto.`);
     return ctx.scene.leave();
   }
 );

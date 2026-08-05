@@ -11,7 +11,6 @@ const ajusteWizard = require('../../scenes/ajuste');
 const { promoPreciosWizard, promoPreciosPruebaWizard } = require('../../scenes/promoprecios');
 const validarPromoPreciosWizard = require('../../scenes/validar-promoprecios');
 const revisarImagenWizard = require('../../scenes/revisar-imagen');
-const auditoriaAlturaWizard = require('../../scenes/auditoria-altura');
 const { requiereArea, requiereDueno } = require('../../middleware/authz');
 const { altasEnOferta } = require('../../db/compras');
 const { construirExcelControl } = require('../../lib/control-excel');
@@ -27,7 +26,6 @@ const comandos = [
   { comando: 'control', descripcion: 'Excel de lo que está en oferta, por vencimiento' },
   { comando: 'ajuste', descripcion: 'Subir el archivo de ajuste para que sea revisado' },
   { comando: 'promoprecios', descripcion: 'Subir el archivo final de promociones y precios' },
-  { comando: 'auditoria_altura', descripcion: 'Auditar mercadería en altura: pallet, pasillo y producto escaneado' },
 ];
 
 // /promoprecios_prueba no se lista en `comandos` (solo el dueño la usa, ver requiereDueno) — no
@@ -55,13 +53,12 @@ function registrar(bot) {
   bot.command('ajuste', requiereArea(CODIGO), (ctx) => ctx.scene.enter('ajuste-wizard'));
   bot.command('promoprecios', requiereArea(CODIGO), (ctx) => ctx.scene.enter('promoprecios-wizard'));
   bot.command('promoprecios_prueba', requiereDueno(), (ctx) => ctx.scene.enter('promoprecios-prueba-wizard'));
-  bot.command('auditoria_altura', requiereArea(CODIGO), (ctx) => ctx.scene.enter('auditoria-altura-wizard'));
 }
 
 module.exports = {
   codigo: CODIGO,
   nombre: 'Calidad',
-  scenes: [altaWizard, reposicionWizard, cambioPromocionWizard, bajaWizard, ajusteWizard, promoPreciosWizard, promoPreciosPruebaWizard, validarPromoPreciosWizard, revisarImagenWizard, auditoriaAlturaWizard],
+  scenes: [altaWizard, reposicionWizard, cambioPromocionWizard, bajaWizard, ajusteWizard, promoPreciosWizard, promoPreciosPruebaWizard, validarPromoPreciosWizard, revisarImagenWizard],
   comandos,
   registrar,
 };
