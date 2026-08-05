@@ -1,20 +1,46 @@
 // Wizard: se entra al tocar "✅ Validar" en el archivo de /promoprecios (ver
 // src/acciones-calidad.js). Intenta leer el archivo y detectar los productos marcados con "x"
-// en la columna "Imagen" (lib/promoprecios-excel.js) — si los reconoce, genera el cartel
-// automático de cada uno (misma lógica que /carteleria, plantilla a4_color + corto_vencimiento,
-// ver lib/carteleria-generar.js) y se lo manda a Marketing para que lo verifique, sin preguntar
-// nada. Si el archivo no tiene ese formato (versión vieja de la planilla, u otra cosa), cae al
-// flujo manual de siempre: preguntar cuántas imágenes tiene que hacer Marketing a mano.
-// Compras recibe el archivo crudo con los precios en los dos casos, sin cambios.
+// en la columna "Imagen" (lib/promoprecios-excel.js) — si los reconoce:
+//   1. Genera y le manda al DUEÑO el .txt de "precio al piso" para Sigma (lib/promoprecios-sigma.js).
+//   2. Genera el cartel automático de cada producto (misma lógica que /carteleria, plantilla
+//      a4_color + corto_vencimiento, ver lib/carteleria-generar.js) y se lo manda AL DUEÑO
+//      directo para que lo valide (ver carteleria-mensajes.js) — ya no pasa por Marketing ni
+//      por Compras; Marketing solo entra al final, para imprimir todo ya validado (ver
+//      acciones-deposito.js / lib/promoprecios-mensajes.js).
+// Si el archivo no tiene ese formato (versión vieja de la planilla, u otra cosa), cae al flujo
+// manual de siempre: preguntar cuántas imágenes tiene que hacer Marketing a mano (ese camino
+// SÍ sigue avisándole a Compras el archivo crudo, sin cambios).
 const { Scenes } = require('telegraf');
 const {
   promoPreciosPorId, validarPromoPrecios, marcarMarketingCompletado,
 } = require('../db/promoprecios');
 const { crearCarteleria } = require('../db/carteleria');
 const { telegramIdsPorRol } = require('../db/usuarios');
+const { mapaImpuestosInternos } = require('../db/impuestos-internos');
 const { generarYNotificarMarketing } = require('../lib/carteleria-generar');
 const { parsearProductosConImagen } = require('../lib/promoprecios-excel');
+const { generarTxtSigma } = require('../lib/promoprecios-sigma');
+const { fechaHoyArgISO } = require('../lib/fechas');
 const { respuesta, esCancelar, parseUnidades } = require('../lib/wizard');
+
+// Genera el .txt de Sigma y se lo manda al dueño (quien está validando el archivo en este
+// wizard). No es fatal si falla o si no hay nada para generar (archivo viejo sin la columna
+// "ACCION A TOMAR", o ningún producto con ese dato completo) — las imágenes se generan igual.
+async function mandarTxtSigma(ctx, productos, esPrueba) {
+  try {
+    const mapaImpuestos = await mapaImpuestosInternos();
+    const txt = generarTxtSigma(productos, mapaImpuestos);
+    if (!txt) return;
+    const prefijo = esPrueba ? '🧪 PRUEBA — ' : '';
+    await ctx.replyWithDocument(
+      { source: Buffer.from(txt, 'utf8'), filename: `precio_al_piso_${fechaHoyArgISO()}.txt` },
+      { caption: `${prefijo}💲 .txt listo para cargar en Sigma.` }
+    );
+  } catch (e) {
+    console.error('No pude generar el .txt de Sigma:', e.message);
+    await ctx.reply('⚠️ No pude generar el .txt de Sigma (revisá que /actimpint esté cargado). Sigo con las imágenes igual.');
+  }
+}
 
 const TIPO_GRAFICA = 'a4_color';
 const TIPO_PRECIO = 'corto_vencimiento';
@@ -64,10 +90,8 @@ async function repartirManual(ctx, promo) {
 }
 
 // Flujo nuevo: por cada producto marcado con "x" en Imagen, generar el cartel automático y
-// mandárselo a Marketing para que lo verifique (en vez de pedirle que lo arme a mano).
+// mandárselo AL DUEÑO directo para que lo valide (Compras ya no entra en este circuito).
 async function repartirConDisenos(ctx, promo, productos) {
-  const avisadosCompras = await avisarComprasArchivo(ctx, promo);
-
   let generados = 0;
   for (const p of productos) {
     try {
@@ -85,12 +109,11 @@ async function repartirConDisenos(ctx, promo, productos) {
     } catch (e) { console.error(`No pude generar el diseño para "${p.detalle}":`, e.message); }
   }
 
-  // Ya se entregó (generado) todo lo que había que entregar de este ciclo — así, si Compras pide
-  // "revisar" alguno de estos diseños más adelante (ya aprobados por Marketing y en su circuito),
-  // /imagenes entra directo en modo corrección para Marketing, en vez de pedirle una entrega inicial.
+  // Ya se generaron (y mandaron a validar) todas las imágenes de este ciclo — así, si más
+  // adelante hace falta corregir alguna, /imagenes entra directo en modo corrección.
   await marcarMarketingCompletado(promo.id);
 
-  return { avisadosCompras, generados };
+  return { generados };
 }
 
 const validarPromoPreciosWizard = new Scenes.WizardScene(
@@ -117,15 +140,16 @@ const validarPromoPreciosWizard = new Scenes.WizardScene(
       if (!promo) { await ctx.reply('Ese archivo ya estaba validado.'); return ctx.scene.leave(); }
 
       if (productos.length === 0) {
-        const avisadosCompras = await avisarComprasArchivo(ctx, promo);
         await marcarMarketingCompletado(promo.id);
-        await ctx.reply(`Listo. Este archivo no marcó ningún producto con imagen — avisé a Compras (${avisadosCompras} persona(s)), no hace falta Marketing.`);
+        await ctx.reply('Listo. Este archivo no marcó ningún producto con imagen — no hace falta generar nada.');
         return ctx.scene.leave();
       }
 
-      const { avisadosCompras, generados } = await repartirConDisenos(ctx, promo, productos);
+      await mandarTxtSigma(ctx, productos, promo.es_prueba);
+
+      const { generados } = await repartirConDisenos(ctx, promo, productos);
       await ctx.reply(
-        `Listo. Encontré ${productos.length} producto(s) marcados con imagen — generé ${generados} diseño(s) y se los mandé a Marketing para que los verifique. Avisé a Compras (${avisadosCompras} persona(s)).`
+        `Listo. Encontré ${productos.length} producto(s) marcados con imagen — generé ${generados} diseño(s) para que los valides vos.`
       );
       return ctx.scene.leave();
     }

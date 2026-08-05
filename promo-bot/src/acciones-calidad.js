@@ -6,10 +6,9 @@ const { telegramIdsPorRol } = require('./db/usuarios');
 const { marcarAjusteVerificado, marcarAjusteRealizado } = require('./db/ajustes');
 const {
   marcarComprasArchivoOk, validarImagenCompras, validarImagenAdmin,
-  todasLasImagenesEnviadas, marcarAvisoImpresionEnviado, marcarImpresoEntregado,
-  promoPreciosPorId,
+  marcarImpresoEntregado, promoPreciosPorId,
 } = require('./db/promoprecios');
-const { mandarleImagenAlDueno, avisarImpresionAMarketing } = require('./lib/promoprecios-mensajes');
+const { mandarleImagenAlDueno, finalizarCicloSiCorresponde } = require('./lib/promoprecios-mensajes');
 
 async function avisarle(bot, telegramId, texto) {
   try { await bot.telegram.sendMessage(telegramId, texto); } catch (e) { console.error(`No pude avisarle a ${telegramId}:`, e.message); }
@@ -139,7 +138,9 @@ function registrarAccionesCalidad(bot) {
     await ctx.scene.enter('revisar-imagen-wizard');
   });
 
-  // --- /promoprecios: el dueño valida UNA imagen -> se reenvía a Ventas, Depósito y Calidad ---
+  // --- /promoprecios (flujo manual viejo): el dueño valida UNA imagen ya aprobada por Compras.
+  // Ya no se reenvía sola a Ventas/Depósito/Calidad acá — se cuenta como lista, y cuando estén
+  // TODAS las del ciclo, finalizarCicloSiCorresponde manda el lote junto y avisa a Marketing. ---
   bot.action(/^promo_img_admin_ok:(\d+)$/, async (ctx) => {
     if (!esDueno(ctx.from.id)) {
       await ctx.answerCbQuery('Esto es solo para el dueño del bot.', { show_alert: true });
@@ -150,39 +151,15 @@ function registrarAccionesCalidad(bot) {
     if (!imagen) { await ctx.reply('Esa imagen ya no estaba pendiente de tu validación.'); return; }
     try { await ctx.editMessageReplyMarkup(); } catch (e) { /* mensaje viejo */ }
 
-    // En un ciclo de /promoprecios_prueba esto NUNCA sale para Ventas/Depósito/Calidad reales —
-    // vuelve solo a quien lo probó, para completar el circuito de prueba sin avisarle a nadie más.
     const promo = await promoPreciosPorId(imagen.promoprecio_id);
     const esPrueba = !!(promo && promo.es_prueba);
-    const prefijo = esPrueba ? '🧪 PRUEBA — ' : '';
+    await ctx.reply(`Validado. Imagen #${imagen.orden} lista.`);
 
-    let enviados = 0;
-    if (esPrueba) {
-      try {
-        await bot.telegram.sendPhoto(promo.usuario_telegram_id, imagen.file_id, { caption: `${prefijo}Reenvío a Ventas/Depósito/Calidad` });
-        enviados++;
-      } catch (e) { console.error(`No pude mandarle la imagen de prueba a ${promo.usuario_telegram_id}:`, e.message); }
-    } else {
-      for (const rol of ['ventas', 'deposito', 'calidad']) {
-        for (const tid of await telegramIdsPorRol(rol)) {
-          try {
-            await bot.telegram.sendPhoto(tid, imagen.file_id);
-            enviados++;
-          } catch (e) { console.error(`No pude mandarle la imagen a ${tid}:`, e.message); }
-        }
-      }
-    }
-    await ctx.reply(`Validado. Imagen #${imagen.orden} reenviada a Ventas, Depósito y Calidad (${enviados} persona(s)).`);
-
-    // Si esta era la última imagen que faltaba validar, avisarle a Marketing que imprima todo.
-    // Guarda atómica (marcarAvisoImpresionEnviado) para no duplicar el aviso si dos validaciones
-    // casi simultáneas ven "ya no queda nada pendiente".
-    if (await todasLasImagenesEnviadas(imagen.promoprecio_id)) {
-      if (await marcarAvisoImpresionEnviado(imagen.promoprecio_id)) {
-        const destinatariosImpresion = esPrueba ? [promo.usuario_telegram_id] : undefined;
-        const avisadosImpresion = await avisarImpresionAMarketing(bot.telegram, imagen.promoprecio_id, { destinatarios: destinatariosImpresion, esPrueba });
-        await ctx.reply(`🖨️ Le avisé a Marketing que imprima todo (${avisadosImpresion} persona(s)).`);
-      }
+    const { disparado, avisadosVDC, avisadosImpresion } = await finalizarCicloSiCorresponde(bot.telegram, imagen.promoprecio_id, {
+      esPrueba, usuarioTelegramId: promo && promo.usuario_telegram_id,
+    });
+    if (disparado) {
+      await ctx.reply(`✅ Ya están todas — mandé el lote a Ventas/Depósito/Calidad (${avisadosVDC} persona(s)) y le avisé a Marketing que imprima todo (${avisadosImpresion} persona(s)).`);
     }
   });
 

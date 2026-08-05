@@ -27,8 +27,11 @@ function detectarColumnas(filas) {
     const iDetalle = header.indexOf('detalle');
     const iImagen = header.indexOf('imagen');
     const iPrecio = header.findIndex((h) => h.includes('precio') && h.includes('final'));
+    // Columna I ("ACCION A TOMAR"): precio de origen para el .txt de Sigma (lib/promoprecios-sigma.js)
+    // — distinta de "precio final" de acá arriba, que es la que se usa para el cartel.
+    const iAccion = header.findIndex((h) => h.includes('accion') && h.includes('tomar'));
     if (iVencimiento >= 0 && iCodigo >= 0 && iDetalle >= 0 && iImagen >= 0 && iPrecio >= 0) {
-      return { hIdx: i, iVencimiento, iCodigo, iDetalle, iImagen, iPrecio };
+      return { hIdx: i, iVencimiento, iCodigo, iDetalle, iImagen, iPrecio, iAccion };
     }
   }
   return null;
@@ -89,7 +92,12 @@ function parsearProductosConImagen(buffer) {
       const precio = celdaAPrecio(fila[cols.iPrecio]);
       if (!codigo || !detalle || !vencimiento || precio === null) continue; // fila incompleta, no se puede generar el cartel
 
-      productos.push({ codigo, detalle, vencimiento, precio });
+      // accionATomar: precio de origen para el .txt de Sigma — null si el archivo no tiene esa
+      // columna (versión vieja) o la fila no la completó; en ese caso no se genera esa fila en
+      // el .txt (ver lib/promoprecios-sigma.js), pero el cartel se genera igual.
+      const accionATomar = cols.iAccion >= 0 ? celdaAPrecio(fila[cols.iAccion]) : null;
+
+      productos.push({ codigo, detalle, vencimiento, precio, accionATomar });
     }
     return productos;
   }

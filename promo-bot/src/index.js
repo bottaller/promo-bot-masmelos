@@ -56,6 +56,7 @@ bot.use(stage.middleware());
 const COMANDOS_ADMIN = [
   { comando: 'usuarios', descripcion: 'Gestionar accesos' },
   { comando: 'actartic', descripcion: 'Actualizar maestro de artículos' },
+  { comando: 'actimpint', descripcion: 'Actualizar impuestos internos (para el .txt de Sigma)' },
   { comando: 'avisos', descripcion: 'Chequear vencimientos ahora' },
 ];
 
