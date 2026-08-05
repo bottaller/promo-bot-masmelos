@@ -303,18 +303,22 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       ? FINAL_TOP_CARTEL * altoFinal - OFFSET_LEADING_RATIO_OSWALD * tamanioPrecio + (resalteMaxUnidades / 1000) * tamanioPrecio
       : rectPrecio.top;
     const altoPrecioBox = usaFuentePrecioFina ? rectPrecio.height + (rectPrecio.top - topPrecio) : rectPrecio.height;
-    // Anclado ARRIBA (flex-start, no centrado) — a pedido: el techo tiene que quedar siempre en
-    // el mismo lugar (justo sobre "FINAL", ver CAMPOS_CARTEL_PRECIO), y el número crece para
-    // abajo. Dentro del rango de diseño (3 a 5 cifras) el tope de altura (capAltura) es casi
-    // siempre el que manda sobre el de ancho, así que en la práctica el alto queda parejo para
-    // cualquier cantidad de dígitos en ese rango — no hace falta centrar VERTICALMENTE para
-    // evitar que quede "flotando" más arriba (el centrado de acá arriba es solo horizontal).
+    // Cartel/Cigüeña: anclado ARRIBA (flex-start, no centrado) — a pedido, el techo tiene que
+    // quedar siempre en el mismo lugar (justo sobre "FINAL", ver CAMPOS_CARTEL_PRECIO), y el
+    // número crece para abajo. Dentro del rango de diseño (3 a 5 cifras) el tope de altura
+    // (capAltura) es casi siempre el que manda sobre el de ancho, así que en la práctica el alto
+    // queda parejo para cualquier cantidad de dígitos en ese rango.
+    // A4: centrado en altura dentro de la píldora roja (a pedido -- quedaba pegado arriba,
+    // "12456" con 5 cifras se notaba más al no llegar al tope de altura como los de menos
+    // cifras). Distinto de Cartel/Cigüeña porque ahí no hay ningún "FINAL" al que alinear el
+    // techo -- la píldora es un elemento chico y autocontenido, no una franja grande del cartel.
+    const justifyContentPrecio = usaFuentePrecioFina ? 'flex-start' : 'center';
     hijos.push({
       type: 'div',
       props: {
         style: {
           position: 'absolute', left: leftPrecio, top: topPrecio, width: anchoPrecioBox, height: altoPrecioBox,
-          display: 'flex', flexDirection: 'column', justifyContent: 'flex-start',
+          display: 'flex', flexDirection: 'column', justifyContent: justifyContentPrecio,
           alignItems: usarCentradoCorto || justify(plantilla.campos.precio.align) === 'center' ? 'center' : 'flex-start',
           overflow: 'hidden',
         },

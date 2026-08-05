@@ -67,9 +67,11 @@ const CAMPOS_A4_PRECIO = {
 // caja oscura de nombre, disclaimer con borde fijo al pie.
 const CAMPOS_A4_CORTO_VENCIMIENTO = {
   // Medido por píxeles contra el rojo real de la píldora en el arte (a4_corto_vencimiento.jpg):
-  // x:0.284-0.630, y:0.245-0.328 (alto real ≈0.083) — el precio usaba solo un 66% del alto
-  // disponible (alto:0.055) y arrancaba centrado más abajo de la píldora real, quedando chico.
-  precio: { x: 0.32, y: 0.248, ancho: 0.20, alto: 0.075, align: 'left' },
+  // x:0.284-0.630, y:0.2450-0.3281 (alto real 0.0831). y/alto ajustados a esos valores exactos
+  // (antes 0.248/0.075, quedaba un poco más chico y arrancando más abajo que la píldora real) --
+  // a pedido, el número tiene que quedar centrado en altura dentro del rojo, no pegado arriba
+  // (ver `justifyContent` en generarCartel, centrado acá a diferencia de Cartel/Cigüeña).
+  precio: { x: 0.32, y: 0.2450, ancho: 0.20, alto: 0.0831, align: 'left' },
   // A pedido, el precio se centra entre donde termina el "$" y donde arranca "FINAL" (ambos
   // fijos en la pastilla del arte) -- medido por píxeles contra a4_corto_vencimiento.jpg en
   // blanco: "$" termina en x:0.3218, "FINAL" arranca en x:0.5402.
