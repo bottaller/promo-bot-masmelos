@@ -2,9 +2,9 @@
 // notificación proactiva — Marketing no tiene ninguna escena activa cuando lo toca.
 // Se registra una sola vez en src/index.js, ANTES del catch-all de callbacks sueltos.
 const { marcarPedidoConfirmado, marcarVerificado, elegirDisenoCandidato, descartarDisenosCandidatos, guardarDiseno } = require('./db/carteleria');
-const { agregarImagenPromo } = require('./db/promoprecios');
+const { agregarImagenPromo, marcarImagenEnviadaDirecta, promoPreciosPorId } = require('./db/promoprecios');
 const { avisarAMarketingFinal, avisarVerificacionMarketing } = require('./lib/carteleria-mensajes');
-const { entregarImagenACompras } = require('./lib/promoprecios-mensajes');
+const { finalizarCicloSiCorresponde } = require('./lib/promoprecios-mensajes');
 const { generarCartel } = require('./lib/carteleria-render');
 const { esDueno } = require('./lib/owner');
 
@@ -48,20 +48,28 @@ function registrarAccionesDeposito(bot) {
     try { await ctx.editMessageReplyMarkup(); } catch (e) { /* mensaje viejo */ }
     await ctx.reply('Verificado. Gracias.');
 
-    // Diseño generado automáticamente por /promoprecios (ver scenes/validar-promoprecios.js) en
-    // vez de un pedido normal de /carteleria: no va a imprimir/pedir a la gráfica -> entra
-    // directo al circuito de Compras que ya existe para las imágenes de promoprecios
-    // (Validar/Revisar), y de ahí sigue la ruta de siempre (dueño, Ventas/Depósito/Calidad).
+    // Diseño generado automáticamente por /promoprecios (ver scenes/validar-promoprecios.js):
+    // esto YA ES la validación del dueño (no pasa por Marketing ni por Compras) — se cuenta
+    // como lista, y cuando estén TODAS las del ciclo, se manda el lote junto a
+    // Ventas/Depósito/Calidad y se avisa a Marketing para que imprima (finalizarCicloSiCorresponde).
     if (carteleria.promoprecio_id) {
       const fileId = carteleria.diseno_file_id || carteleria.foto_file_id;
       try {
         const imagen = await agregarImagenPromo({ promoprecioId: carteleria.promoprecio_id, fileId });
-        const destinatarios = carteleria.es_prueba ? [carteleria.usuario_telegram_id] : undefined;
-        const avisadosCompras = await entregarImagenACompras(bot.telegram, imagen, { destinatarios, esPrueba: carteleria.es_prueba });
-        await ctx.reply(`Diseño aprobado. Lo mandé a Compras para que lo valide (${avisadosCompras} persona(s)).`);
+        await marcarImagenEnviadaDirecta(imagen.id);
+        await ctx.reply(`Diseño aprobado. Imagen #${imagen.orden} lista.`);
+
+        const promo = await promoPreciosPorId(carteleria.promoprecio_id);
+        const esPrueba = !!(promo && promo.es_prueba);
+        const { disparado, avisadosVDC, avisadosImpresion } = await finalizarCicloSiCorresponde(bot.telegram, carteleria.promoprecio_id, {
+          esPrueba, usuarioTelegramId: promo && promo.usuario_telegram_id,
+        });
+        if (disparado) {
+          await ctx.reply(`✅ Ya están todas — mandé el lote a Ventas/Depósito/Calidad (${avisadosVDC} persona(s)) y le avisé a Marketing que imprima todo (${avisadosImpresion} persona(s)).`);
+        }
       } catch (e) {
-        console.error('No pude mandar el diseño aprobado de promoprecios a Compras:', e.message);
-        await ctx.reply('Verificado, pero no pude mandarlo a Compras. Avisale al admin.');
+        console.error('No pude cerrar el diseño aprobado de promoprecios:', e.message);
+        await ctx.reply('Verificado, pero hubo un error. Avisale al admin.');
       }
       return;
     }
