@@ -3,8 +3,9 @@ const { Telegraf, Scenes, session } = require('telegraf');
 
 const { auth } = require('./middleware/auth');
 const { tieneAccesoTotal, AREAS_SIN_BYPASS_SISTEMAS } = require('./middleware/authz');
-const { setBot } = require('./notificar');
+const { setBot, avisarProblema } = require('./notificar');
 const { listarUsuarios } = require('./db/usuarios');
+const { funcionalesFaltantes } = require('./lib/chequear-env');
 
 const calidad = require('./areas/calidad');
 const compras = require('./areas/compras');
@@ -13,6 +14,7 @@ const cajaCentral = require('./areas/cajacentral');
 const carritoWeb = require('./areas/carritoweb');
 const deposito = require('./areas/deposito');
 const marketing = require('./areas/marketing');
+const ventas = require('./areas/ventas');
 const admin = require('./admin');
 const { iniciarAvisos } = require('./avisos');
 const { iniciarAvisoLibro } = require('./aviso-libro');
@@ -20,12 +22,12 @@ const { iniciarAvisoMpSemanal } = require('./aviso-mp-semanal');
 const { iniciarEntregaCierres } = require('./entrega-cierres');
 const { registrarAccionesCalidad } = require('./acciones-calidad');
 const { registrarAccionesDeposito } = require('./acciones-deposito');
-const { iniciarEntregaArqueo } = require('./entrega-arqueo');
+const { iniciarEntregaArqueo, iniciarEntregaTaloApi } = require('./entrega-arqueo');
 const { anunciarDeploy } = require('./aviso-deploy');
 const { iniciarChequeoDemoraAjustes } = require('./ajustes-demora');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
-const areas = [calidad, compras, tesoreria, cajaCentral, carritoWeb, deposito, marketing];
+const areas = [calidad, compras, tesoreria, cajaCentral, carritoWeb, deposito, marketing, ventas];
 
 // Variables imprescindibles para arrancar.
 const requeridas = ['BOT_TOKEN', 'DATABASE_URL'];
@@ -165,12 +167,24 @@ bot.catch((err, ctx) => {
     iniciarAvisoMpSemanal(bot); // lunes 8:00 ART: resumen semanal MP + Talo a admins + Caja Central
     iniciarEntregaCierres(bot); // 08:00 ART: concilia los cierres pendientes y entrega el reporte
     iniciarEntregaArqueo(bot); // 08:00 ART: arquea MP/Talo del día y manda los reportes a Tesorería + Caja Central
+    iniciarEntregaTaloApi(bot); // 21:00 ART: baja Talo del día por API y lo arquea solo; avisa a los admins si falla
     iniciarChequeoDemoraAjustes(bot); // cada 1h: avisa al dueño si un ajuste verificado lleva +36hs sin confirmar
     await publicarComandos(bot); // publica el menú "/" de Telegram (antes de arrancar el polling)
     // OJO: bot.launch() NO resuelve — startPolling corre el loop de polling para siempre. Por eso
     // TODO lo que tenga que pasar al arrancar (aviso de deploy, log) va ANTES; launch() queda último
     // y mantiene vivo el proceso. (sendMessage no necesita el polling, así que el aviso funciona acá.)
     await anunciarDeploy(bot); // avisa a los admins "Deploy terminado: commit X por Y" si es un commit nuevo
+    // Chequeo de envs: si falta alguna variable FUNCIONAL, avisar a los admins qué feature quedó
+    // apagado. No corta el arranque (las CRÍTICAS ya cortaron arriba con process.exit).
+    const envFaltan = funcionalesFaltantes();
+    if (envFaltan.length) {
+      await avisarProblema({
+        proceso: 'arranque del bot',
+        que: `Faltan ${envFaltan.length} variable(s) de entorno; hay features deshabilitados:`,
+        detalle: envFaltan.map((v) => `• ${v.nombre} → ${v.rompe}`).join('\n'),
+        sugerencia: 'Cargá las que falten en las Variables de Railway y redeployá.',
+      });
+    }
     console.log('Bot de Más Melos corriendo. Áreas:', areas.map((a) => a.codigo).join(', '));
     await bot.launch();
   } catch (err) {
@@ -178,6 +192,19 @@ bot.catch((err, ctx) => {
     console.error(err);
   }
 })();
+
+// Red de seguridad: cualquier error que se escape de los try/catch (una promesa sin catch, una
+// excepción no atrapada) se loguea y se avisa a los admins. NO se hace process.exit: la mayoría de
+// estos en un bot no son fatales, y matar el proceso cortaría el bot para todos; Railway lo reinicia
+// solo si el proceso muere de verdad.
+process.on('unhandledRejection', (motivo) => {
+  const detalle = motivo && motivo.stack ? motivo.stack : String(motivo);
+  avisarProblema({ proceso: 'el bot (promesa sin catch)', que: 'Una promesa falló sin manejo de error.', detalle, nivel: '❌' }).catch(() => {});
+});
+process.on('uncaughtException', (err) => {
+  const detalle = err && err.stack ? err.stack : String(err);
+  avisarProblema({ proceso: 'el bot (excepción no atrapada)', que: 'Saltó una excepción que nadie atrapó.', detalle, nivel: '❌' }).catch(() => {});
+});
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

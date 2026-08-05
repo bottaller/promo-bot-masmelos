@@ -33,6 +33,23 @@ function requiereArea(codigo) {
   };
 }
 
+// Como requiereArea, pero deja pasar si el usuario pertenece a CUALQUIERA de las áreas de la lista
+// (o tiene acceso total, con el mismo criterio de bypass de "sistemas" por área). Para comandos
+// compartidos por más de un área (ej. /falta lo usan Ventas y Depósito).
+function requiereAlgunaArea(codigos) {
+  return async (ctx, next) => {
+    const u = ctx.state.usuario;
+    const ok = !!u && codigos.some((codigo) => {
+      const bypass = u.es_admin || (
+        !AREAS_SIN_BYPASS_SISTEMAS.includes(codigo) && u.areas && u.areas.includes('sistemas')
+      );
+      return bypass || (u.areas && u.areas.includes(codigo));
+    });
+    if (ok) return next();
+    await ctx.reply('No tenés acceso a este comando.');
+  };
+}
+
 // Deja pasar solo si el usuario es admin DE VERDAD (no alcanza con "sistemas"). Para las acciones
 // más sensibles: hacer/sacar admin a alguien, y todo lo de Tesorería que era admin-only.
 function requiereAdmin() {
@@ -62,4 +79,4 @@ function requiereDueno() {
   };
 }
 
-module.exports = { requiereArea, requiereAdmin, requiereAdminOSistemas, requiereDueno, tieneAccesoTotal, AREAS_SIN_BYPASS_SISTEMAS };
+module.exports = { requiereArea, requiereAlgunaArea, requiereAdmin, requiereAdminOSistemas, requiereDueno, tieneAccesoTotal, AREAS_SIN_BYPASS_SISTEMAS };

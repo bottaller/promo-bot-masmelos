@@ -12,11 +12,23 @@ const { porCodigo } = require('./lib/plataformas');
 const { arquearDia } = require('./lib/arqueo');
 const { guardarMpConciliacion } = require('./db/mp-conciliacion');
 const { telegramIdsPorRol, telegramIdsAdmins } = require('./db/usuarios');
-const { formatoVencimiento, fechaISO } = require('./lib/fechas');
+const { formatoVencimiento, fechaISO, fechaHoyArgISO } = require('./lib/fechas');
+const { bajarExtracto } = require('./lib/talo-api');
 
 // 08:00 en Argentina (UTC-3) = 11:00 UTC. Mismo default que la entrega de cierres.
 const HORA_UTC_RAW = Number(process.env.ARQUEO_HORA_UTC);
 const HORA_UTC = (Number.isInteger(HORA_UTC_RAW) && HORA_UTC_RAW >= 0 && HORA_UTC_RAW <= 23) ? HORA_UTC_RAW : 11;
+
+// 21:00 en Argentina (UTC-3) = 00:00 UTC. El barrido de Talo por API va a la NOCHE (no a la mañana
+// como el de arriba): a las 21:00 el día ya cerró y la API tiene el movimiento COMPLETO — a media
+// tarde faltaría la cola (lo comprobamos: el Excel del panel bajado 16:00 perdía el resto del día).
+// Configurable con TALO_ARQUEO_HORA_UTC.
+const TALO_HORA_UTC_RAW = Number(process.env.TALO_ARQUEO_HORA_UTC);
+const TALO_HORA_UTC = (Number.isInteger(TALO_HORA_UTC_RAW) && TALO_HORA_UTC_RAW >= 0 && TALO_HORA_UTC_RAW <= 23) ? TALO_HORA_UTC_RAW : 0;
+
+const escapeHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const isoADate = (iso) => { const [y, m, d] = String(iso).split('-').map(Number); return new Date(y, m - 1, d); };
+const isoALinda = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 
 // Grupos que reciben el arqueo: Tesorería + Caja Central (sin repetir). Decisión del dueño: el
 // cierre va a admins, pero el arqueo va a los dos grupos operativos.
@@ -134,6 +146,93 @@ async function entregarArqueosPendientes(telegram, { empresa = 'HONRE' } = {}) {
   return resumen;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Barrido de Talo por API (21:00): baja el extracto del DÍA solo, sin subirlo a mano, y lo arquea.
+// Si algo falla, avisa a los ADMINS (decisión del dueño: que se pueda revisar a mano). Va aparte
+// del barrido de arriba (que sigue procesando lo que se sube con /carga) para no tocar el flujo de
+// MP; por ahora Talo es la única plataforma que se baja sola.
+// ---------------------------------------------------------------------------------------------
+async function entregarTaloDelDia(telegram, { empresa = 'HONRE', fecha = null } = {}) {
+  const admins = (await telegramIdsAdmins()).map(String);
+  const avisarAdmins = (msg) => enviarTexto(telegram, admins, msg);
+  try {
+    if (!process.env.TALO_USER_ID || !process.env.TALO_CLIENT_ID || !process.env.TALO_CLIENT_SECRET) {
+      console.log('Arqueo Talo API: sin credenciales TALO_* configuradas; no corro.');
+      return { corrio: false, motivo: 'sin_credenciales' };
+    }
+    const talo = porCodigo('talo');
+    if (!talo) { await avisarAdmins('⚠️ Arqueo Talo: no encuentro la plataforma "talo" en el registro. Avisá al admin.'); return { corrio: false, motivo: 'sin_plataforma' }; }
+
+    const dia = fecha || fechaHoyArgISO(); // 'AAAA-MM-DD', hoy en Argentina
+    const linda = isoALinda(dia);
+
+    // 1) Bajar el extracto de Talo del día por API.
+    let liq;
+    try {
+      liq = await bajarExtracto({ desde: dia });
+    } catch (e) {
+      await avisarAdmins(`⚠️ <b>Arqueo Talo del ${linda}</b>: no pude bajar el extracto por API — ${escapeHtml(e.message)}\n\nBajalo a mano del panel y subilo con /carga.`);
+      return { corrio: false, motivo: 'api' };
+    }
+    if (!liq.operaciones.length) {
+      await avisarAdmins(`ℹ️ <b>Arqueo Talo del ${linda}</b>: la API no devolvió ningún movimiento. ¿Fue un día sin cobros por Talo?`);
+      return { corrio: false, motivo: 'sin_movimientos' };
+    }
+
+    // 2) Libro del día (el mismo que usa el resto del arqueo).
+    const lib = await conseguirLibro({ modo: 'cubre', fecha: isoADate(dia), empresa });
+    if (!lib.ok) {
+      await avisarAdmins(`📚 <b>Arqueo Talo del ${linda}</b>: bajé ${liq.operaciones.length} movimiento(s) de Talo pero falta el libro del día. Cargalo con /libro y lo arqueo.`);
+      return { corrio: false, motivo: 'sin_libro' };
+    }
+    const buf = await bufferLibro(lib.meta, { empresa });
+    if (!buf.ok) {
+      await avisarAdmins(`📚 <b>Arqueo Talo del ${linda}</b>: tengo el libro registrado pero no pude leer el archivo. Avisá al admin.`);
+      return { corrio: false, motivo: 'libro_ilegible' };
+    }
+
+    // 3) Arquear (solo Talo, contra su cuenta).
+    const arq = await arquearDia({ libroBuffer: buf.buffer, libroMeta: lib.meta, liquidaciones: [{ plataforma: talo, liq }], dia });
+    if (!arq.ok) {
+      await avisarAdmins(`⚠️ <b>Arqueo Talo del ${linda}</b>: ${escapeHtml(arq.error)}`);
+      return { corrio: false, motivo: 'arqueo' };
+    }
+
+    // 4) Guardar el resultado (lo consume el resumen semanal). Un fallo de guardado no frena la entrega.
+    for (const g of arq.paraGuardar) {
+      try { await guardarMpConciliacion({ fecha: g.fecha, plataforma: g.plataforma, resultado: g.resultado, fuente: 'talo-api', usuarioId: null }); }
+      catch (e) { console.error(`Arqueo Talo API: no pude guardar ${g.plataforma} del ${dia}:`, e.message); }
+    }
+
+    // 5) Entregar a los grupos (Tesorería + Caja Central; si no hay ninguno, a los admins).
+    let dest = await destinatarios();
+    if (!dest.length) dest = admins;
+    const enviados = await enviarTexto(telegram, dest, `📊 <b>Arqueo de cobros Talo del ${linda}</b> <i>(bajado por API)</i>\n\n${arq.texto}`);
+    for (const pdf of arq.pdfs) await enviarPdf(telegram, dest, pdf);
+
+    if (enviados === 0) {
+      await avisarAdmins(`⚠️ Arqueo Talo del ${linda}: lo concilié pero no le llegó a nadie de Tesorería/Caja Central. Revisá los grupos.`);
+      return { corrio: false, motivo: 'sin_destinatarios' };
+    }
+    console.log(`Arqueo Talo API del ${dia}: entregado a ${enviados} destinatario(s).`);
+    return { corrio: true, enviados, dia };
+  } catch (e) {
+    // Cualquier error inesperado -> aviso a los admins (lo pidió el dueño), y queda logueado.
+    console.error('Arqueo Talo API: error inesperado:', e);
+    try { await avisarAdmins(`❌ <b>El arqueo automático de Talo (21:00) falló</b>: ${escapeHtml(e.message)}\n\nRevisalo cuando puedas.`); } catch (_) { /* ya está logueado */ }
+    return { corrio: false, motivo: 'error' };
+  }
+}
+
+// ms hasta la próxima vez que sean las `horaUtc`:00 UTC (para agendar un barrido diario a esa hora).
+function msHastaLasUtc(horaUtc) {
+  const ahora = Date.now();
+  const d = new Date();
+  let prox = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), horaUtc, 0, 0);
+  if (prox <= ahora) prox += 24 * 3600 * 1000;
+  return prox - ahora;
+}
+
 function msHastaProxima() {
   const ahora = Date.now();
   const d = new Date();
@@ -152,6 +251,7 @@ function iniciarEntregaArqueo(bot) {
       console.log(`Arqueo de cobros: ${r.entregados} entregado/s, ${r.sinLibro} sin libro, ${r.error} con error (de ${r.total}).`);
     } catch (e) {
       console.error('Error en la entrega de arqueos:', e);
+      require('./notificar').avisarProblema({ proceso: 'arqueo de MP/Talo (08:00)', que: 'El barrido de arqueo falló.', detalle: e && e.message, nivel: '❌' }).catch(() => {});
     }
     setTimeout(correr, msHastaProxima());
   };
@@ -160,4 +260,22 @@ function iniciarEntregaArqueo(bot) {
   setTimeout(correr, ms);
 }
 
-module.exports = { entregarArqueosPendientes, iniciarEntregaArqueo };
+// Igual que el barrido de arriba pero a las 21:00 y SOLO para Talo por API. Sin corrida al arrancar
+// (los deploys de Railway son frecuentes; disparar a media mañana mandaría un reporte a destiempo);
+// la falla, si la hay, ya la avisa entregarTaloDelDia a los admins.
+function iniciarEntregaTaloApi(bot) {
+  const correr = async () => {
+    try {
+      const r = await entregarTaloDelDia(bot.telegram);
+      console.log(`Arqueo Talo API (21:00): ${r.corrio ? `entregado (${r.enviados} dest.)` : `no corrió (${r.motivo})`}.`);
+    } catch (e) {
+      console.error('Error en la entrega del arqueo Talo API:', e);
+    }
+    setTimeout(correr, msHastaLasUtc(TALO_HORA_UTC));
+  };
+  const ms = msHastaLasUtc(TALO_HORA_UTC);
+  console.log(`Entrega de arqueo Talo (API) programada: próxima corrida en ~${Math.round(ms / 3600000)}h.`);
+  setTimeout(correr, ms);
+}
+
+module.exports = { entregarArqueosPendientes, iniciarEntregaArqueo, entregarTaloDelDia, iniciarEntregaTaloApi };

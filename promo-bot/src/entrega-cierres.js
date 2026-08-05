@@ -97,6 +97,7 @@ function iniciarEntregaCierres(bot) {
       console.log(`Entrega de cierres: ${r.entregados} entregado/s, ${r.sinLibro} sin libro, ${r.base} base (de ${r.total}).`);
     } catch (e) {
       console.error('Error en la entrega de cierres:', e);
+      require('./notificar').avisarProblema({ proceso: 'entrega de cierres (08:00)', que: 'No pude conciliar o entregar los cierres del día.', detalle: e && e.message, nivel: '❌' }).catch(() => {});
     }
     setTimeout(correr, msHastaProxima());
   };
