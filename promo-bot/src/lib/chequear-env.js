@@ -17,7 +17,6 @@ const FUNCIONALES = [
   { nombre: 'TALO_USER_ID', rompe: 'no se baja Talo por API (arqueo Talo de las 21:00)' },
   { nombre: 'TALO_CLIENT_ID', rompe: 'no se baja Talo por API (arqueo Talo de las 21:00)' },
   { nombre: 'TALO_CLIENT_SECRET', rompe: 'no se baja Talo por API (arqueo Talo de las 21:00)' },
-  { nombre: 'ANTHROPIC_API_KEY', rompe: '/carteleria no genera el diseño (cae al flujo viejo, foto cruda)' },
   { nombre: 'SUPABASE_STORAGE_URL', rompe: '/carteleria no encuentra las fotos del catálogo de producto' },
   { nombre: 'GRAFICA_WHATSAPP_NUMBER', rompe: '/carteleria no arma el link de WhatsApp a la gráfica' },
 ];
