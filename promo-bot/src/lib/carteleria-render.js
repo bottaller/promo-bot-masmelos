@@ -271,7 +271,12 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // y donde arranca "FINAL" (medido por píxeles contra el arte en blanco: "$" termina en
     // x:0.0688, "FINAL" arranca en x:0.6894 -- ambos fijos en la plantilla), en vez de dejar todo
     // el sobrante del lado derecho.
-    const usarCentradoCorto = entero.length < digitosParaAncho;
+    // OJO: x:0.0688/x:0.6894 son posiciones del "$"/"FINAL" de Cartel/Cigüeña -- NO tienen
+    // sentido en A4 (otra plantilla, "$" en otro lado, otra escala de canvas). Antes esto se
+    // aplicaba siempre que hubiera menos de 4 cifras, sin importar la plantilla, y en A4
+    // (usada por /promoprecios) el precio terminaba encimado con el "$" de esa plantilla. Ahora
+    // solo se activa junto con la fuente fina, que es exclusiva de Cartel/Cigüeña.
+    const usarCentradoCorto = usaFuentePrecioFina && entero.length < digitosParaAncho;
     const leftPrecio = usarCentradoCorto ? 0.0688 * anchoFinal : rectPrecio.left;
     const anchoPrecioBox = usarCentradoCorto ? (0.6894 - 0.0688) * anchoFinal : rectPrecio.width;
     // Oswald deja un margen interno (ascent) arriba del glifo más grande que Anton, y encima no
