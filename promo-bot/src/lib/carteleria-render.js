@@ -476,7 +476,17 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     // carteleria-catalogo.js) — a pesar de que "image/webp" aparece en su bundle, no hay
     // decoder real: el <img> se ignora en silencio, sin tirar error. Normalizamos siempre a
     // PNG con sharp antes de pasarlo, sea cual sea el formato de entrada.
-    const productoPngBuffer = await sharp(imagenProductoBuffer).png().toBuffer();
+    //
+    // .trim(): muchas fotos del catálogo (subidas "sin fondo", ver carteleria-catalogo.js) no
+    // vienen recortadas al contenido real — el archivo trae de fondo transparente/blanco de
+    // sobra en algún borde (ej. código 012092: canvas 500x430, pero el producto solo ocupa los
+    // primeros ~140px de alto). objectFit:'contain' centra el CANVAS entero en el hueco, así
+    // que si el archivo trae ese margen de más, el producto visible queda descentrado (bien
+    // arriba, bien a la izquierda, etc.) aunque el cálculo del hueco esté perfecto. Recortar el
+    // margen "aburrido" (color uniforme, incluye transparente) antes de centrar arregla esto
+    // para cualquier foto del catálogo, no solo esta — es un problema de la foto, no de la
+    // plantilla.
+    const productoPngBuffer = await sharp(imagenProductoBuffer).trim().png().toBuffer();
     const productoBase64 = productoPngBuffer.toString('base64');
     hijos.push({
       type: 'img',
