@@ -265,15 +265,18 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
     const margenAncho = usaFuentePrecioFina ? 1.031 : 0.96;
     const capAncho = (rectPrecio.width * margenAncho) / anchoPorUnidadDeTamanio;
     const tamanioPrecio = Math.min(capAltura, capAncho);
-    // Con 4+ cifras el precio ya ocupa casi todo rectPrecio (queda igual, ancla a la izquierda
-    // como siempre). Con 3 cifras (mismo tamaño de letra que el de 4, ver arriba) sobra ancho a
-    // la derecha -- a pedido, ese precio se centra en la franja real entre donde termina el "$"
-    // y donde arranca "FINAL" (medido por píxeles contra el arte en blanco: "$" termina en
-    // x:0.0688, "FINAL" arranca en x:0.6894 -- ambos fijos en la plantilla), en vez de dejar todo
-    // el sobrante del lado derecho.
-    const usarCentradoCorto = entero.length < digitosParaAncho;
-    const leftPrecio = usarCentradoCorto ? 0.0688 * anchoFinal : rectPrecio.left;
-    const anchoPrecioBox = usarCentradoCorto ? (0.6894 - 0.0688) * anchoFinal : rectPrecio.width;
+    // Centrado entre "$" y "FINAL" -- cada plantilla define SU PROPIA posición de esos dos
+    // elementos fijos (`precioCentradoEntre`, ver carteleria-plantillas.js); usar una posición
+    // hardcodeada acá adentro fue justamente el bug que hizo que el precio de A4 (usada por
+    // /promoprecios) terminara encimado con su "$" -- esas coordenadas eran las de Cartel/
+    // Cigüeña, otra plantilla con el "$" en otro lado y otra escala de canvas. En Cartel/
+    // Cigüeña centra solo si el precio es corto (con 4+ cifras ya ocupa casi toda la franja,
+    // ancla a la izquierda como siempre); en A4 el casillero ya es angosto, pensado para 4
+    // cifras, así que centra siempre (`siempre: true`, ver la plantilla).
+    const centrado = plantilla.campos.precioCentradoEntre;
+    const usarCentradoCorto = !!centrado && (centrado.siempre || entero.length < digitosParaAncho);
+    const leftPrecio = usarCentradoCorto ? centrado.izq * anchoFinal : rectPrecio.left;
+    const anchoPrecioBox = usarCentradoCorto ? (centrado.der - centrado.izq) * anchoFinal : rectPrecio.width;
     // Oswald deja un margen interno (ascent) arriba del glifo más grande que Anton, y encima no
     // es parejo entre dígitos: medido con font.charToGlyph(d).getMetrics() (bounding box real de
     // cada glifo, unitsPerEm=1000) -- "1","4","5","7" quedan exactos a la altura real de
@@ -300,18 +303,22 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       ? FINAL_TOP_CARTEL * altoFinal - OFFSET_LEADING_RATIO_OSWALD * tamanioPrecio + (resalteMaxUnidades / 1000) * tamanioPrecio
       : rectPrecio.top;
     const altoPrecioBox = usaFuentePrecioFina ? rectPrecio.height + (rectPrecio.top - topPrecio) : rectPrecio.height;
-    // Anclado ARRIBA (flex-start, no centrado) — a pedido: el techo tiene que quedar siempre en
-    // el mismo lugar (justo sobre "FINAL", ver CAMPOS_CARTEL_PRECIO), y el número crece para
-    // abajo. Dentro del rango de diseño (3 a 5 cifras) el tope de altura (capAltura) es casi
-    // siempre el que manda sobre el de ancho, así que en la práctica el alto queda parejo para
-    // cualquier cantidad de dígitos en ese rango — no hace falta centrar VERTICALMENTE para
-    // evitar que quede "flotando" más arriba (el centrado de acá arriba es solo horizontal).
+    // Cartel/Cigüeña: anclado ARRIBA (flex-start, no centrado) — a pedido, el techo tiene que
+    // quedar siempre en el mismo lugar (justo sobre "FINAL", ver CAMPOS_CARTEL_PRECIO), y el
+    // número crece para abajo. Dentro del rango de diseño (3 a 5 cifras) el tope de altura
+    // (capAltura) es casi siempre el que manda sobre el de ancho, así que en la práctica el alto
+    // queda parejo para cualquier cantidad de dígitos en ese rango.
+    // A4: centrado en altura dentro de la píldora roja (a pedido -- quedaba pegado arriba,
+    // "12456" con 5 cifras se notaba más al no llegar al tope de altura como los de menos
+    // cifras). Distinto de Cartel/Cigüeña porque ahí no hay ningún "FINAL" al que alinear el
+    // techo -- la píldora es un elemento chico y autocontenido, no una franja grande del cartel.
+    const justifyContentPrecio = usaFuentePrecioFina ? 'flex-start' : 'center';
     hijos.push({
       type: 'div',
       props: {
         style: {
           position: 'absolute', left: leftPrecio, top: topPrecio, width: anchoPrecioBox, height: altoPrecioBox,
-          display: 'flex', flexDirection: 'column', justifyContent: 'flex-start',
+          display: 'flex', flexDirection: 'column', justifyContent: justifyContentPrecio,
           alignItems: usarCentradoCorto || justify(plantilla.campos.precio.align) === 'center' ? 'center' : 'flex-start',
           overflow: 'hidden',
         },
@@ -332,14 +339,18 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       const leftDec = campoDec.x * anchoFinal;
       const anchoDec = campoDec.ancho * anchoFinal;
       const techoDecPx = campoDec.techoY * altoFinal;
-      // Tope: no puede ser más alto que el propio "techo" (el hueco entre el borde de arriba de
-      // la plantilla y "FINAL") — sin este tope, un precio grande (que ya no comparte ancho con
-      // los centavos, así que puede crecer más que antes) empujaba los centavos hasta pisar el
-      // logo de arriba.
-      // 0.255 (recorrido con Oswald: 0.26→0.34 -muy grande-→0.30 -seguía grande-→0.27 -todavía-
-      // →0.24 -un poco de más chico-→0.255, punto medio entre esos dos últimos, confirmado).
-      // Este campo solo existe en Cartel/Cigüeña, así que siempre usa la fuente fina (Oswald).
-      const tamanioDecimales = Math.min(tamanioPrecio * 0.280, techoDecPx * 0.85);
+      // Tope: no puede ser más alto que el propio "techo" -- el hueco entre "FINAL" y
+      // `techoMinY` (el borde de arriba de la PASTILLA, no del canvas entero) — sin este tope,
+      // un precio grande (que ya no comparte ancho con los centavos, así que puede crecer más
+      // que antes) empujaba los centavos hasta pisar lo que haya arriba de la pastilla (el logo
+      // en Cartel/Cigüeña, "ACÁ SÍ HAY MÁS" en A4). `techoMinY` es 0 si no se especifica (Cartel/
+      // Cigüeña: aire hasta el borde del canvas, no hace falta ponerlo).
+      const techoMinDecPx = (campoDec.techoMinY || 0) * altoFinal;
+      // `factor` es propio de CADA plantilla (ver carteleria-plantillas.js) -- no compartir un
+      // solo número entre Cartel/Cigüeña y A4: en Cartel/Cigüeña el factor es el que manda (el
+      // tope por altura casi nunca se alcanza), pero en A4 el tope real da mucho más margen que
+      // el factor, así que necesitan valores bien distintos para verse proporcionados cada una.
+      const tamanioDecimales = Math.min(tamanioPrecio * campoDec.factor, (techoDecPx - techoMinDecPx) * 0.85);
       hijos.push({
         type: 'div',
         props: {
@@ -349,7 +360,7 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
           },
           children: {
             type: 'div',
-            props: { style: { fontFamily: 'PrecioFina', fontSize: tamanioDecimales, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioDecimales * TRACKING }, children: decimales },
+            props: { style: { fontFamily: fontFamilyPrecio, fontSize: tamanioDecimales, color: colorPrecio, lineHeight: 1, letterSpacing: tamanioDecimales * TRACKING }, children: decimales },
           },
         },
       });

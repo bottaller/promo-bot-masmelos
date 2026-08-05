@@ -69,6 +69,8 @@ async function repartirConDisenos(ctx, promo, productos) {
   const avisadosCompras = await avisarComprasArchivo(ctx, promo);
 
   let generados = 0;
+  const fallidos = []; // { detalle, error } — para que el dueño vea CUÁL producto falló y por qué,
+  // no solo que "generé menos de los que había" (antes esto solo quedaba en el log del servidor).
   for (const p of productos) {
     try {
       const id = await crearCarteleria({
@@ -82,7 +84,10 @@ async function repartirConDisenos(ctx, promo, productos) {
         producto: p.detalle, precio: p.precio, vencimiento: p.vencimiento, articuloCodigo: p.codigo,
       });
       generados++;
-    } catch (e) { console.error(`No pude generar el diseño para "${p.detalle}":`, e.message); }
+    } catch (e) {
+      console.error(`No pude generar el diseño para "${p.detalle}":`, e.message);
+      fallidos.push({ detalle: p.detalle, error: e.message });
+    }
   }
 
   // Ya se entregó (generado) todo lo que había que entregar de este ciclo — así, si Compras pide
@@ -90,7 +95,7 @@ async function repartirConDisenos(ctx, promo, productos) {
   // /imagenes entra directo en modo corrección para Marketing, en vez de pedirle una entrega inicial.
   await marcarMarketingCompletado(promo.id);
 
-  return { avisadosCompras, generados };
+  return { avisadosCompras, generados, fallidos };
 }
 
 const validarPromoPreciosWizard = new Scenes.WizardScene(
@@ -123,10 +128,13 @@ const validarPromoPreciosWizard = new Scenes.WizardScene(
         return ctx.scene.leave();
       }
 
-      const { avisadosCompras, generados } = await repartirConDisenos(ctx, promo, productos);
-      await ctx.reply(
-        `Listo. Encontré ${productos.length} producto(s) marcados con imagen — generé ${generados} diseño(s) y se los mandé a Marketing para que los verifique. Avisé a Compras (${avisadosCompras} persona(s)).`
-      );
+      const { avisadosCompras, generados, fallidos } = await repartirConDisenos(ctx, promo, productos);
+      let mensaje = `Listo. Encontré ${productos.length} producto(s) marcados con imagen — generé ${generados} diseño(s) y se los mandé a Marketing para que los verifique. Avisé a Compras (${avisadosCompras} persona(s)).`;
+      if (fallidos.length) {
+        mensaje += `\n\n⚠️ No pude generar ${fallidos.length}:\n`
+          + fallidos.map((f) => `• ${f.detalle}: ${f.error}`).join('\n');
+      }
+      await ctx.reply(mensaje);
       return ctx.scene.leave();
     }
 
