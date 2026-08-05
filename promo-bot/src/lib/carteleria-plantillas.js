@@ -70,6 +70,20 @@ const CAMPOS_A4_CORTO_VENCIMIENTO = {
   // x:0.284-0.630, y:0.245-0.328 (alto real ≈0.083) — el precio usaba solo un 66% del alto
   // disponible (alto:0.055) y arrancaba centrado más abajo de la píldora real, quedando chico.
   precio: { x: 0.32, y: 0.248, ancho: 0.20, alto: 0.075, align: 'left' },
+  // A pedido, el precio se centra entre donde termina el "$" y donde arranca "FINAL" (ambos
+  // fijos en la pastilla del arte) -- medido por píxeles contra a4_corto_vencimiento.jpg en
+  // blanco: "$" termina en x:0.3218, "FINAL" arranca en x:0.5402.
+  // `siempre: true` -- a diferencia de Cartel/Cigüeña, en A4 el precio se centra SIEMPRE, no
+  // solo cuando el precio es corto (el casillero acá ya es angosto, pensado para 4 cifras).
+  precioCentradoEntre: { izq: 0.3218, der: 0.5402, siempre: true },
+  // Centavos apilados arriba de "FINAL", igual que en Cartel/Cigüeña (a pedido) -- pero acá la
+  // pastilla es mucho más baja (arranca en y:0.2450, contra el techo de "FINAL" en y:0.2956:
+  // solo 0.0506 de aire, contra el resto del alto del cartel que da Cartel/Cigüeña), así que
+  // `techoMinY` le pone un piso al hueco disponible (ver generarCartel) -- sin esto, el cálculo
+  // asume que hay aire hasta el borde de arriba del CANVAS entero (y:0), que acá se comería el
+  // logo "MASMELOS" de arriba. Centrado sobre "FINAL" (arranca en x:0.5402, termina en x:0.6172
+  // -- centro 0.5787).
+  decimales: { x: 0.5337, ancho: 0.09, techoY: 0.2956, techoMinY: 0.2450, align: 'center' },
   // Medido por píxeles contra el tramo HORIZONTAL de la línea puntero fija (arranca en
   // x:0.084 y dobla en x:0.2325, a y≈0.418): el campo viejo (x:0.02) arrancaba 6-7% del ancho
   // a la IZQUIERDA de donde empieza la línea, así que el texto "VTO: ..." quedaba flotando
@@ -122,6 +136,11 @@ const CAMPOS_CARTEL_PRECIO = {
   // con precios de menos dígitos (rango de diseño: 3 a 5 cifras) — hasta el punto medio entre
   // el número y "*CON LA MEJOR POLÍTICA COMERCIAL" (y≈0.65).
   precio: { x: 0.06, y: 0.212, ancho: 0.63, alto: 0.513, align: 'left' },
+  // Con 4+ cifras el precio ya ocupa casi toda esta franja (se deja anclado a la izquierda, ver
+  // generarCartel). Con menos cifras sobra ancho -- a pedido, se centra entre donde termina el
+  // "$" y donde arranca "FINAL" (medido por píxeles contra el arte en blanco: "$" termina en
+  // x:0.0688, "FINAL" arranca en x:0.6894).
+  precioCentradoEntre: { izq: 0.0688, der: 0.6894 },
   // Casillero de los centavos ("11", "88") — NO van pegados a la derecha de los dígitos
   // enteros: medido por píxeles contra los carteles de referencia, van en su propia columna,
   // centrados EXACTO sobre "FINAL" (que arranca en x:0.6894 y termina en x:0.7919 — centro
