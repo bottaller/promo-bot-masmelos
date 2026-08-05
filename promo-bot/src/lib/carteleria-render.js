@@ -342,11 +342,11 @@ async function generarCartel({ tipoGrafica, tipoPrecio, producto, precio, vencim
       // en Cartel/Cigüeña, "ACÁ SÍ HAY MÁS" en A4). `techoMinY` es 0 si no se especifica (Cartel/
       // Cigüeña: aire hasta el borde del canvas, no hace falta ponerlo).
       const techoMinDecPx = (campoDec.techoMinY || 0) * altoFinal;
-      // 0.280 (Cartel/Cigüeña, recorrido con Oswald: 0.26→0.34 -muy grande-→0.30 -seguía
-      // grande-→0.27 -todavía-→0.24 -un poco de más chico-→0.255→0.280, confirmado). En A4
-      // (Anton, pastilla mucho más baja) no hay referencia calibrada todavía -- mismo punto de
-      // partida, se ajusta si hace falta.
-      const tamanioDecimales = Math.min(tamanioPrecio * 0.280, (techoDecPx - techoMinDecPx) * 0.85);
+      // `factor` es propio de CADA plantilla (ver carteleria-plantillas.js) -- no compartir un
+      // solo número entre Cartel/Cigüeña y A4: en Cartel/Cigüeña el factor es el que manda (el
+      // tope por altura casi nunca se alcanza), pero en A4 el tope real da mucho más margen que
+      // el factor, así que necesitan valores bien distintos para verse proporcionados cada una.
+      const tamanioDecimales = Math.min(tamanioPrecio * campoDec.factor, (techoDecPx - techoMinDecPx) * 0.85);
       hijos.push({
         type: 'div',
         props: {

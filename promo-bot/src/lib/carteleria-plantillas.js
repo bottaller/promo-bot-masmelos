@@ -83,7 +83,10 @@ const CAMPOS_A4_CORTO_VENCIMIENTO = {
   // asume que hay aire hasta el borde de arriba del CANVAS entero (y:0), que acá se comería el
   // logo "MASMELOS" de arriba. Centrado sobre "FINAL" (arranca en x:0.5402, termina en x:0.6172
   // -- centro 0.5787).
-  decimales: { x: 0.5337, ancho: 0.09, techoY: 0.2956, techoMinY: 0.2450, align: 'center' },
+  // factor: 0.55 (antes 0.280, compartido sin querer con Cartel/Cigüeña -- quedaban chicos acá,
+  // subido bastante porque el tope real (headroom entre "FINAL" y techoMinY) da mucho más
+  // margen que ese factor, a diferencia de Cartel/Cigüeña donde el factor SÍ es el que manda).
+  decimales: { x: 0.5337, ancho: 0.09, techoY: 0.2956, techoMinY: 0.2450, align: 'center', factor: 0.55 },
   // Medido por píxeles contra el tramo HORIZONTAL de la línea puntero fija (arranca en
   // x:0.084 y dobla en x:0.2325, a y≈0.418): el campo viejo (x:0.02) arrancaba 6-7% del ancho
   // a la IZQUIERDA de donde empieza la línea, así que el texto "VTO: ..." quedaba flotando
@@ -147,7 +150,8 @@ const CAMPOS_CARTEL_PRECIO = {
   // x:0.74065, de ahí x = centro - ancho/2 = 0.6557) y apilados arriba, con el borde de abajo
   // un poco más cerca de "FINAL" que antes (techoY 0.213→0.225, a pedido, "FINAL" arranca en
   // y:0.243, sigue quedando aire entre los dos).
-  decimales: { x: 0.6557, ancho: 0.17, techoY: 0.225, align: 'center' },
+  // factor: 0.280, confirmado -- ver el historial de ajuste en el comentario de generarCartel.
+  decimales: { x: 0.6557, ancho: 0.17, techoY: 0.225, align: 'center', factor: 0.280 },
   // Corrido más a la derecha (antes x:0.35) y agrandada — con la foto de producto renderizada
   // DESPUÉS de la caja del nombre (ver generarCartel en carteleria-render.js), no importa que
   // pise la franja blanca ni la línea divisoria: queda arriba de todo eso, igual que en el diseño
