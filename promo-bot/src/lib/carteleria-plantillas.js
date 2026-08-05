@@ -67,9 +67,28 @@ const CAMPOS_A4_PRECIO = {
 // caja oscura de nombre, disclaimer con borde fijo al pie.
 const CAMPOS_A4_CORTO_VENCIMIENTO = {
   // Medido por píxeles contra el rojo real de la píldora en el arte (a4_corto_vencimiento.jpg):
-  // x:0.284-0.630, y:0.245-0.328 (alto real ≈0.083) — el precio usaba solo un 66% del alto
-  // disponible (alto:0.055) y arrancaba centrado más abajo de la píldora real, quedando chico.
-  precio: { x: 0.32, y: 0.248, ancho: 0.20, alto: 0.075, align: 'left' },
+  // x:0.284-0.630, y:0.2450-0.3281 (alto real 0.0831). y/alto ajustados a esos valores exactos
+  // (antes 0.248/0.075, quedaba un poco más chico y arrancando más abajo que la píldora real) --
+  // a pedido, el número tiene que quedar centrado en altura dentro del rojo, no pegado arriba
+  // (ver `justifyContent` en generarCartel, centrado acá a diferencia de Cartel/Cigüeña).
+  precio: { x: 0.32, y: 0.2450, ancho: 0.20, alto: 0.0831, align: 'left' },
+  // A pedido, el precio se centra entre donde termina el "$" y donde arranca "FINAL" (ambos
+  // fijos en la pastilla del arte) -- medido por píxeles contra a4_corto_vencimiento.jpg en
+  // blanco: "$" termina en x:0.3218, "FINAL" arranca en x:0.5402.
+  // `siempre: true` -- a diferencia de Cartel/Cigüeña, en A4 el precio se centra SIEMPRE, no
+  // solo cuando el precio es corto (el casillero acá ya es angosto, pensado para 4 cifras).
+  precioCentradoEntre: { izq: 0.3218, der: 0.5402, siempre: true },
+  // Centavos apilados arriba de "FINAL", igual que en Cartel/Cigüeña (a pedido) -- pero acá la
+  // pastilla es mucho más baja (arranca en y:0.2450, contra el techo de "FINAL" en y:0.2956:
+  // solo 0.0506 de aire, contra el resto del alto del cartel que da Cartel/Cigüeña), así que
+  // `techoMinY` le pone un piso al hueco disponible (ver generarCartel) -- sin esto, el cálculo
+  // asume que hay aire hasta el borde de arriba del CANVAS entero (y:0), que acá se comería el
+  // logo "MASMELOS" de arriba. Centrado sobre "FINAL" (arranca en x:0.5402, termina en x:0.6172
+  // -- centro 0.5787).
+  // factor: 0.55 (antes 0.280, compartido sin querer con Cartel/Cigüeña -- quedaban chicos acá,
+  // subido bastante porque el tope real (headroom entre "FINAL" y techoMinY) da mucho más
+  // margen que ese factor, a diferencia de Cartel/Cigüeña donde el factor SÍ es el que manda).
+  decimales: { x: 0.5337, ancho: 0.09, techoY: 0.2956, techoMinY: 0.2450, align: 'center', factor: 0.55 },
   // Medido por píxeles contra el tramo HORIZONTAL de la línea puntero fija (arranca en
   // x:0.084 y dobla en x:0.2325, a y≈0.418): el campo viejo (x:0.02) arrancaba 6-7% del ancho
   // a la IZQUIERDA de donde empieza la línea, así que el texto "VTO: ..." quedaba flotando
@@ -109,13 +128,32 @@ const CAMPOS_A4_NUEVO_INGRESO = {
 // izquierda, "FINAL" fijo arriba a la derecha, precio grande en el campo amarillo, hueco de
 // foto de producto a la derecha, barra blanca de nombre abajo, footer negro con disclaimer fijo.
 const CAMPOS_CARTEL_PRECIO = {
-  // Agrandado (antes x:0.10,y:0.20,ancho:0.55,alto:0.30): con el tamaño de fuente calculado por
-  // ancho REAL (ver carteleria-render.js) el precio quedaba chico porque el casillero viejo lo
-  // topeaba — medido por píxeles contra el arte (cartel_precio_piso.jpg): el "$" fijo termina en
-  // x:0.069 y "FINAL" fijo arranca en x:0.689, así que hay lugar hasta x≈0.60 sin pisar ninguno
-  // de los dos ni invadir la zona de la foto de producto (que ahora arranca en x:0.58).
-  // Un poco más grande todavía: ancho:0.53→0.545 (un punto más de tamaño de fuente).
-  precio: { x: 0.075, y: 0.16, ancho: 0.545, alto: 0.54, align: 'left' },
+  // Medido por píxeles contra carteles reales de referencia (no contra el arte en blanco):
+  // el precio ("7347"/"1014") arranca en x≈0.056 (pegado al "$", que termina en x:0.069) y
+  // llega hasta x≈0.62-0.63 — los CENTAVOS no van pegados al final de esos dígitos: van en su
+  // propio casillero fijo, apilados arriba de "FINAL" (ver `decimales` más abajo), no en la
+  // misma fila. Puede superponerse con la foto de producto (que arranca en x:0.65) para precios
+  // largos; el diseño real tampoco lo evita (la foto ahí queda más a la derecha).
+  // Ancla ARRIBA (no centrado — ver generarCartel) en vez de estar centrado en un casillero
+  // alto: a pedido, la parte VISIBLE del dígito (no el rect — la fuente deja un margen interno
+  // arriba del glifo, medido: ~0.023 a este tamaño) tiene que arrancar exacto donde arranca
+  // "FINAL" (y:0.243) — de ahí y:0.22 (0.243 - 0.023). El número entero crece SOLO para abajo
+  // con precios de menos dígitos (rango de diseño: 3 a 5 cifras) — hasta el punto medio entre
+  // el número y "*CON LA MEJOR POLÍTICA COMERCIAL" (y≈0.65).
+  precio: { x: 0.06, y: 0.212, ancho: 0.63, alto: 0.513, align: 'left' },
+  // Con 4+ cifras el precio ya ocupa casi toda esta franja (se deja anclado a la izquierda, ver
+  // generarCartel). Con menos cifras sobra ancho -- a pedido, se centra entre donde termina el
+  // "$" y donde arranca "FINAL" (medido por píxeles contra el arte en blanco: "$" termina en
+  // x:0.0688, "FINAL" arranca en x:0.6894).
+  precioCentradoEntre: { izq: 0.0688, der: 0.6894 },
+  // Casillero de los centavos ("11", "88") — NO van pegados a la derecha de los dígitos
+  // enteros: medido por píxeles contra los carteles de referencia, van en su propia columna,
+  // centrados EXACTO sobre "FINAL" (que arranca en x:0.6894 y termina en x:0.7919 — centro
+  // x:0.74065, de ahí x = centro - ancho/2 = 0.6557) y apilados arriba, con el borde de abajo
+  // un poco más cerca de "FINAL" que antes (techoY 0.213→0.225, a pedido, "FINAL" arranca en
+  // y:0.243, sigue quedando aire entre los dos).
+  // factor: 0.280, confirmado -- ver el historial de ajuste en el comentario de generarCartel.
+  decimales: { x: 0.6557, ancho: 0.17, techoY: 0.225, align: 'center', factor: 0.280 },
   // Corrido más a la derecha (antes x:0.35) y agrandada — con la foto de producto renderizada
   // DESPUÉS de la caja del nombre (ver generarCartel en carteleria-render.js), no importa que
   // pise la franja blanca ni la línea divisoria: queda arriba de todo eso, igual que en el diseño
@@ -127,8 +165,17 @@ const CAMPOS_CARTEL_PRECIO = {
   // Último ajuste: un poco más arriba (y:0.48→0.45→0.42) — a la derecha ya no hay más lugar,
   // x:0.65 con este ancho ya llega justo al borde derecho de la plantilla (x+ancho=1.0).
   imagenProducto: { x: 0.65, y: 0.42, ancho: 0.35, alto: 0.405 },
-  nombreLinea1: { x: 0.03, y: 0.755, ancho: 0.94, alto: 0.06, align: 'center' },
-  nombreLinea2: { x: 0.03, y: 0.825, ancho: 0.94, alto: 0.06, align: 'center' },
+  // Agrandado al máximo seguro (antes alto:0.075/0.075, y:0.745/0.845) — medido por píxeles
+  // contra el arte (cartel_precio_piso.jpg): la franja blanca real va de y:0.743 a y:0.9456
+  // (ahí arranca el pie de página negro, medido exacto), este es el límite físico del arte
+  // actual — para llegar al tamaño de los carteles de referencia (que tienen el pie de página
+  // más abajo) haría falta un archivo de arte nuevo con la franja blanca más alta.
+  // Centrado entre el borde izquierdo (x:0) y donde arranca la foto de producto (x:0.65, ver
+  // `imagenProducto` arriba) — centro efectivo x:0.325 — a pedido explícito, no en la mitad
+  // fija del cartel. Las 2 líneas se siguen centrando cada una por separado adentro de este
+  // casillero (ver más abajo), compartiendo este mismo centro.
+  nombreLinea1: { x: 0, y: 0.745, ancho: 0.65, alto: 0.09, align: 'center' },
+  nombreLinea2: { x: 0, y: 0.85, ancho: 0.65, alto: 0.09, align: 'center' },
   colorNombre: '#1a1a1a', // barra blanca de fondo (no hay caja oscura)
   colorFondoNombre: '#ffffff',
   colorDivisorNombre: 'rgba(0,0,0,0.18)',

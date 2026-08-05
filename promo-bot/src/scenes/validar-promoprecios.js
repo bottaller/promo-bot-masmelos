@@ -93,6 +93,8 @@ async function repartirManual(ctx, promo) {
 // mandárselo AL DUEÑO directo para que lo valide (Compras ya no entra en este circuito).
 async function repartirConDisenos(ctx, promo, productos) {
   let generados = 0;
+  const fallidos = []; // { detalle, error } — para que el dueño vea CUÁL producto falló y por qué,
+  // no solo que "generé menos de los que había" (antes esto solo quedaba en el log del servidor).
   for (const p of productos) {
     try {
       const id = await crearCarteleria({
@@ -106,14 +108,17 @@ async function repartirConDisenos(ctx, promo, productos) {
         producto: p.detalle, precio: p.precio, vencimiento: p.vencimiento, articuloCodigo: p.codigo,
       });
       generados++;
-    } catch (e) { console.error(`No pude generar el diseño para "${p.detalle}":`, e.message); }
+    } catch (e) {
+      console.error(`No pude generar el diseño para "${p.detalle}":`, e.message);
+      fallidos.push({ detalle: p.detalle, error: e.message });
+    }
   }
 
   // Ya se generaron (y mandaron a validar) todas las imágenes de este ciclo — así, si más
   // adelante hace falta corregir alguna, /imagenes entra directo en modo corrección.
   await marcarMarketingCompletado(promo.id);
 
-  return { generados };
+  return { generados, fallidos };
 }
 
 const validarPromoPreciosWizard = new Scenes.WizardScene(
@@ -147,10 +152,13 @@ const validarPromoPreciosWizard = new Scenes.WizardScene(
 
       await mandarTxtSigma(ctx, productos, promo.es_prueba);
 
-      const { generados } = await repartirConDisenos(ctx, promo, productos);
-      await ctx.reply(
-        `Listo. Encontré ${productos.length} producto(s) marcados con imagen — generé ${generados} diseño(s) para que los valides vos.`
-      );
+      const { generados, fallidos } = await repartirConDisenos(ctx, promo, productos);
+      let mensaje = `Listo. Encontré ${productos.length} producto(s) marcados con imagen — generé ${generados} diseño(s) para que los valides vos.`;
+      if (fallidos.length) {
+        mensaje += `\n\n⚠️ No pude generar ${fallidos.length}:\n`
+          + fallidos.map((f) => `• ${f.detalle}: ${f.error}`).join('\n');
+      }
+      await ctx.reply(mensaje);
       return ctx.scene.leave();
     }
 

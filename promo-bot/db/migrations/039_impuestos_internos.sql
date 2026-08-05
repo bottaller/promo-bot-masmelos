@@ -1,5 +1,5 @@
 -- ============================================================
--- Migración 038 — Maestro de impuestos internos (export de Sigma, columna "Imp.Interno"),
+-- Migración 039 — Maestro de impuestos internos (export de Sigma, columna "Imp.Interno"),
 -- para calcular el precio neto que se sube al .txt de "precio al piso" de Sigma
 -- (ver lib/promoprecios-sigma.js). Se reemplaza entero cada vez que se sube un Excel
 -- nuevo con /actimpint — mismo patrón que bot.articulos (/actartic).

@@ -1,7 +1,12 @@
 // Parser del archivo de /promoprecios (Calidad): detecta, por NOMBRE de encabezado (no por
 // posición fija — mismo criterio que lib/articulos-excel.js), las filas marcadas con "x" en la
 // columna "Imagen" y devuelve lo necesario para generarles el cartel automático (ver
-// lib/carteleria-generar.js): código, detalle, vencimiento y precio.
+// lib/carteleria-generar.js) y el .txt de Sigma (lib/promoprecios-sigma.js): código, detalle,
+// vencimiento y precio.
+//
+// El precio (del cartel Y del .txt de Sigma) sale de "ACCION A TOMAR" (la decisión tomada para
+// ese producto), NO de "precio de venta final lista 2" — esa es solo la referencia del precio
+// actual/de lista, no el que hay que imprimir/cargar.
 //
 // Si el archivo no tiene esas columnas (formato viejo, o cualquier otra cosa) tira una excepción
 // a propósito — el caller (scenes/validar-promoprecios.js) lo interpreta como "no reconocido" y
@@ -26,12 +31,9 @@ function detectarColumnas(filas) {
     const iCodigo = header.indexOf('codigo');
     const iDetalle = header.indexOf('detalle');
     const iImagen = header.indexOf('imagen');
-    const iPrecio = header.findIndex((h) => h.includes('precio') && h.includes('final'));
-    // Columna I ("ACCION A TOMAR"): precio de origen para el .txt de Sigma (lib/promoprecios-sigma.js)
-    // — distinta de "precio final" de acá arriba, que es la que se usa para el cartel.
-    const iAccion = header.findIndex((h) => h.includes('accion') && h.includes('tomar'));
+    const iPrecio = header.findIndex((h) => h.includes('accion') && h.includes('tomar'));
     if (iVencimiento >= 0 && iCodigo >= 0 && iDetalle >= 0 && iImagen >= 0 && iPrecio >= 0) {
-      return { hIdx: i, iVencimiento, iCodigo, iDetalle, iImagen, iPrecio, iAccion };
+      return { hIdx: i, iVencimiento, iCodigo, iDetalle, iImagen, iPrecio };
     }
   }
   return null;
@@ -67,9 +69,12 @@ function celdaAPrecio(celda) {
   return Number.isFinite(n) ? n : null;
 }
 
-// Devuelve [{ codigo, detalle, vencimiento:'YYYY-MM-DD', precio }] de las filas marcadas con
-// "x" en Imagen (puede ser un array vacío, si el archivo se reconoce pero nadie marcó nada).
-// Tira Error si ninguna hoja tiene las columnas esperadas.
+// Devuelve [{ codigo, detalle, vencimiento:'YYYY-MM-DD', precio, accionATomar }] de las filas
+// marcadas con "x" en Imagen (puede ser un array vacío, si el archivo se reconoce pero nadie
+// marcó nada). `accionATomar` es el mismo valor que `precio` (ambos salen de "ACCION A TOMAR")
+// — queda como campo separado para que lib/promoprecios-sigma.js no dependa de que el cartel
+// siga usando esa misma columna si el día de mañana cambia. Tira Error si ninguna hoja tiene
+// las columnas esperadas.
 function parsearProductosConImagen(buffer) {
   const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
 
@@ -92,17 +97,12 @@ function parsearProductosConImagen(buffer) {
       const precio = celdaAPrecio(fila[cols.iPrecio]);
       if (!codigo || !detalle || !vencimiento || precio === null) continue; // fila incompleta, no se puede generar el cartel
 
-      // accionATomar: precio de origen para el .txt de Sigma — null si el archivo no tiene esa
-      // columna (versión vieja) o la fila no la completó; en ese caso no se genera esa fila en
-      // el .txt (ver lib/promoprecios-sigma.js), pero el cartel se genera igual.
-      const accionATomar = cols.iAccion >= 0 ? celdaAPrecio(fila[cols.iAccion]) : null;
-
-      productos.push({ codigo, detalle, vencimiento, precio, accionATomar });
+      productos.push({ codigo, detalle, vencimiento, precio, accionATomar: precio });
     }
     return productos;
   }
 
-  throw new Error('No encontré las columnas esperadas (vencimiento, codigo, detalle, precio final, Imagen) en ninguna hoja del archivo.');
+  throw new Error('No encontré las columnas esperadas (vencimiento, codigo, detalle, ACCION A TOMAR, Imagen) en ninguna hoja del archivo.');
 }
 
 module.exports = { parsearProductosConImagen };
