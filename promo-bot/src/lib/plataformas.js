@@ -90,6 +90,11 @@ const PLATAFORMAS = [
     deltaSospechosoSeg: 90 * 60,
     referencia: (o) => o.titular || '',
     reconoce: (encabezados) => encabezados.includes('recibido') && encabezados.includes('estado'),
+    // Talo se baja SOLA por API a las 21:00 (entrega-arqueo.js::entregarTaloDelDia). Por eso el
+    // recordatorio de "faltan documentos" (aviso-libro.js) NO la reclama: si la bajada falla, ese
+    // barrido ya avisa a los admins. (Igual se puede subir con /carga como fallback: eso lo arquea
+    // el barrido de las 08:00.)
+    bajaPorApi: true,
   },
 ];
 

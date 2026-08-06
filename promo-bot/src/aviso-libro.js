@@ -55,7 +55,10 @@ async function revisarLibroDelDia(telegram, { empresa = 'HONRE' } = {}) {
 
   const faltan = [];
   if (!tieneLibro) faltan.push('el libro');
-  for (const p of PLATAFORMAS) if (!pendientes.includes(p.codigo)) faltan.push(p.nombre);
+  // Las plataformas que se bajan SOLAS por API (Talo) no se reclaman: no hay que subirlas a mano, y
+  // si la bajada automática falla, ese barrido ya avisa a los admins por su cuenta. Acá solo van las
+  // que dependen de una carga manual (MP).
+  for (const p of PLATAFORMAS) if (!p.bajaPorApi && !pendientes.includes(p.codigo)) faltan.push(p.nombre);
 
   if (!faltan.length) return { jornada: hoyISO, cargado: true, avisados: 0, faltan: [] };
   if (ultimaJornadaAvisada === hoyISO) return { jornada: hoyISO, cargado: false, avisados: 0, faltan };
