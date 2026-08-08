@@ -10,9 +10,9 @@ const { diasPendientes, liquidacionesDeDia, borrarLiquidacionesDe } = require('.
 const { conseguirLibro, bufferLibro } = require('./lib/libro-fuente');
 const { porCodigo } = require('./lib/plataformas');
 const { arquearDia } = require('./lib/arqueo');
-const { guardarMpConciliacion } = require('./db/mp-conciliacion');
+const { guardarMpConciliacion, hayConciliacion } = require('./db/mp-conciliacion');
 const { telegramIdsPorRol, telegramIdsAdmins } = require('./db/usuarios');
-const { formatoVencimiento, fechaISO, fechaHoyArgISO } = require('./lib/fechas');
+const { formatoVencimiento, fechaISO, fechaHoyArgISO, sumarDias } = require('./lib/fechas');
 const { bajarExtracto } = require('./lib/talo-api');
 
 // 08:00 en Argentina (UTC-3) = 11:00 UTC. Mismo default que la entrega de cierres.
@@ -224,6 +224,36 @@ async function entregarTaloDelDia(telegram, { empresa = 'HONRE', fecha = null } 
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Red de respaldo del arqueo de Talo. El barrido de las 21:00 hace UN SOLO intento: si a esa hora
+// el libro del día todavía no estaba cargado (p. ej. se cargó a las 22:00) o el bot estaba
+// reiniciándose, Talo de ese día queda sin arquear y NO se reintenta —el barrido de las 08:00 solo
+// procesa lo que se sube a mano con /carga, y Talo ya no se sube a mano—. Esta corrida, enganchada
+// al barrido de las 08:00 (cuando el libro seguro ya está), detecta el hueco y lo arquea. Si aún no
+// se puede (sigue sin libro, API caída), entregarTaloDelDia ya le avisa a los admins para que lo
+// suban a mano. Idempotente: si el día ya tiene conciliación guardada NO hace nada, así no
+// re-entrega lo que el barrido de las 21:00 ya mandó.
+async function recuperarTaloRezagado(telegram, {
+  empresa = 'HONRE',
+  hoyIso = fechaHoyArgISO(), // 'AAAA-MM-DD' de hoy en Argentina (fechaHoyArg() devuelve string DD/MM, no Date)
+  hayConciliacionFn = hayConciliacion, // inyectables para los tests (sin base ni Telegram)
+  entregarFn = entregarTaloDelDia,
+} = {}) {
+  const [y, m, d] = hoyIso.split('-').map(Number);
+  const ayer = fechaISO(sumarDias(new Date(y, m - 1, d), -1)); // el día que acaba de cerrar (ISO 'AAAA-MM-DD')
+  try {
+    if (await hayConciliacionFn({ fecha: ayer, plataforma: 'talo', empresa })) {
+      return { recuperado: false, motivo: 'ya_estaba', dia: ayer };
+    }
+    console.log(`Arqueo Talo: el ${ayer} no quedó arqueado anoche; reintento ahora (red de respaldo 08:00).`);
+    const r = await entregarFn(telegram, { empresa, fecha: ayer });
+    return { recuperado: !!r.corrio, motivo: r.corrio ? 'recuperado' : (r.motivo || 'no_pudo'), dia: ayer };
+  } catch (e) {
+    console.error(`Arqueo Talo: falló la recuperación del ${ayer}:`, e.message);
+    return { recuperado: false, motivo: 'error', dia: ayer };
+  }
+}
+
 // ms hasta la próxima vez que sean las `horaUtc`:00 UTC (para agendar un barrido diario a esa hora).
 function msHastaLasUtc(horaUtc) {
   const ahora = Date.now();
@@ -253,6 +283,16 @@ function iniciarEntregaArqueo(bot) {
       console.error('Error en la entrega de arqueos:', e);
       require('./notificar').avisarProblema({ proceso: 'arqueo de MP/Talo (08:00)', que: 'El barrido de arqueo falló.', detalle: e && e.message, nivel: '❌' }).catch(() => {});
     }
+    // Red de respaldo de Talo: si el barrido de las 21:00 no dejó arqueado el día de ayer (libro
+    // cargado tarde, o el bot reiniciado a esa hora), reintentarlo ahora que el libro seguro está.
+    try {
+      const t = await recuperarTaloRezagado(bot.telegram);
+      if (t.motivo !== 'ya_estaba') {
+        console.log(`Arqueo Talo (respaldo 08:00): ${t.dia} -> ${t.recuperado ? 'recuperado' : `no se pudo (${t.motivo})`}.`);
+      }
+    } catch (e) {
+      console.error('Arqueo Talo (respaldo 08:00): error inesperado:', e.message);
+    }
     setTimeout(correr, msHastaProxima());
   };
   const ms = msHastaProxima();
@@ -278,4 +318,4 @@ function iniciarEntregaTaloApi(bot) {
   setTimeout(correr, ms);
 }
 
-module.exports = { entregarArqueosPendientes, iniciarEntregaArqueo, entregarTaloDelDia, iniciarEntregaTaloApi };
+module.exports = { entregarArqueosPendientes, iniciarEntregaArqueo, entregarTaloDelDia, recuperarTaloRezagado, iniciarEntregaTaloApi };
