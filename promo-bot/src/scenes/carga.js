@@ -193,12 +193,19 @@ const cargaWizard = new Scenes.WizardScene(
     const lista = ['• <b>Libro diario</b> (Diario de movimientos de Sigma)']
       .concat(plataformasManuales().map((p) => `• <b>${p.nombre}</b> (liquidación del panel)`))
       .join('\n');
-    // Plataformas que se bajan solas por API (hoy Talo): se avisa que NO hay que subirlas.
+    // Plataformas que se bajan solas por API (hoy Talo): se avisa que NO hay que subirlas. Todo
+    // pluralizado por si mañana hay más de una plataforma automática (2+ → "A, B y C se descargan…").
     const auto = PLATAFORMAS.filter((p) => p.bajaPorApi).map((p) => p.nombre);
-    const notaAuto = auto.length
-      ? `🤖 <b>${auto.join(' y ')}</b> se descarga${auto.length > 1 ? 'n' : ''} sola${auto.length > 1 ? 's' : ''} por API a las 21:00 — ` +
-        `no hace falta subirla${auto.length > 1 ? 's' : ''} a mano (si algún día te la pido porque falló, la podés mandar acá igual).\n\n`
-      : '';
+    let notaAuto = '';
+    if (auto.length) {
+      const varios = auto.length > 1;
+      const nombres = varios ? `${auto.slice(0, -1).join(', ')} y ${auto[auto.length - 1]}` : auto[0];
+      const la = varios ? 'las' : 'la';
+      notaAuto =
+        `🤖 <b>${nombres}</b> se descarga${varios ? 'n' : ''} sola${varios ? 's' : ''} por API a las 21:00 — ` +
+        `no hace falta subirla${varios ? 's' : ''} a mano ` +
+        `(si algún día te ${la} pido porque ${varios ? 'fallaron' : 'falló'}, ${la} podés mandar acá igual).\n\n`;
+    }
     await ctx.reply(
       '📥 <b>Carga del día</b>.\n\n' +
       `Mandame los documentos del día (uno o varios, en cualquier orden):\n${lista}\n\n` +
