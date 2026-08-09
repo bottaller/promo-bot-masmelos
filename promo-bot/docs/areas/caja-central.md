@@ -20,8 +20,8 @@ que se entregan los reportes del arqueo, vía `telegramIdsPorRol('cajacentral')`
 No hay nada que apretar. El flujo es:
 
 1. **De noche — `/carga` (admin, área Tesorería).** El admin sube los documentos del día: el **libro
-   diario** de Sigma y las **liquidaciones** de Mercado Pago y Talo. El bot reconoce cada archivo
-   solo. Las liquidaciones quedan **en espera** (`bot.liquidaciones_pendientes`, migración **022**);
+   diario** de Sigma y la **liquidación** de Mercado Pago (Talo se baja sola por API a las 21:00).
+   El bot reconoce cada archivo solo. Las liquidaciones quedan **en espera** (`bot.liquidaciones_pendientes`, migración **022**);
    el libro se archiva. Ver [tesoreria.md](tesoreria.md).
 2. **21:30 ART (`src/aviso-libro.js`).** Si a esa hora falta alguno de los documentos del día (el
    libro o alguna liquidación), el bot les reclama **a los admins** qué falta.

@@ -1,8 +1,8 @@
 // Área Tesorería — control, seguridad y auditoría de la caja/bancos.
-//  /carga         — (admin) carga NOCTURNA de los documentos del día: el libro diario + las
-//                   liquidaciones de las plataformas (MP, Talo). El libro se archiva; las
-//                   liquidaciones quedan para el arqueo de las 08:00 (ver entrega-arqueo.js).
-//                   Reemplazó a /libro, sumándole las liquidaciones.
+//  /carga         — (admin) carga NOCTURNA de los documentos del día: el libro diario + la
+//                   liquidación de MP. El libro se archiva; la liquidación queda para el arqueo
+//                   de las 08:00 (ver entrega-arqueo.js). Talo NO se pide acá: se baja sola por
+//                   API a las 21:00 (fallback manual si falla). Reemplazó a /libro.
 //  /flujos        — Excel de Sigma → HTML del flujo del dinero (motor Python).
 //  /cierre        — cierre DIARIO en dos tiempos: el tesorero manda SOLO los saldos y queda
 //                   pendiente; a las 08:00 el barrido lo concilia contra el libro cargado de
@@ -24,7 +24,7 @@ const semanalWizard = crearControlPeriodo('semanal');
 const mensualWizard = crearControlPeriodo('mensual');
 
 const comandos = [
-  { comando: 'carga', descripcion: 'Cargar los documentos del día: el libro + las liquidaciones de MP y Talo (los reconozco solos)', admin: true },
+  { comando: 'carga', descripcion: 'Cargar los documentos del día: el libro + la liquidación de MP (los reconozco solos; Talo se baja sola)', admin: true },
   { comando: 'flujos', descripcion: 'Flujo del dinero (mandás el Excel de Sigma, te devuelve el dashboard)' },
   { comando: 'cierre', descripcion: 'Cierre diario: mandás los saldos y el reporte te llega a la mañana con el libro cargado' },
   { comando: 'semanal', descripcion: 'Control semanal (mandás el libro de la semana; los saldos ya los tengo)' },

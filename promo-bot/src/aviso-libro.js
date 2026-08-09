@@ -5,7 +5,7 @@
 // con qué trabajar.
 const { cubreFecha } = require('./db/libro');
 const { plataformasPendientesDe } = require('./db/liquidaciones-pendientes');
-const { PLATAFORMAS } = require('./lib/plataformas');
+const { plataformasManuales } = require('./lib/plataformas');
 const { telegramIdsAdmins } = require('./db/usuarios');
 const { fechaHoyArgISO, parseVencimiento } = require('./lib/fechas');
 
@@ -55,10 +55,9 @@ async function revisarLibroDelDia(telegram, { empresa = 'HONRE' } = {}) {
 
   const faltan = [];
   if (!tieneLibro) faltan.push('el libro');
-  // Las plataformas que se bajan SOLAS por API (Talo) no se reclaman: no hay que subirlas a mano, y
-  // si la bajada automática falla, ese barrido ya avisa a los admins por su cuenta. Acá solo van las
-  // que dependen de una carga manual (MP).
-  for (const p of PLATAFORMAS) if (!p.bajaPorApi && !pendientes.includes(p.codigo)) faltan.push(p.nombre);
+  // Solo se reclaman las plataformas de carga MANUAL (plataformasManuales): las que se bajan solas
+  // por API (Talo) no van acá —no hay que subirlas y, si la bajada falla, ese barrido ya avisa—.
+  for (const p of plataformasManuales()) if (!pendientes.includes(p.codigo)) faltan.push(p.nombre);
 
   if (!faltan.length) return { jornada: hoyISO, cargado: true, avisados: 0, faltan: [] };
   if (ultimaJornadaAvisada === hoyISO) return { jornada: hoyISO, cargado: false, avisados: 0, faltan };
