@@ -53,6 +53,16 @@ async function enviarPdf(telegram, destinatarios, pdf) {
   }
 }
 
+// Una pendiente manual de una plataforma que se baja por API (Talo) es REDUNDANTE si ese día ya se
+// arqueó (barrido de las 21:00 o la recuperación de las 08:00): no hay que re-arquearla ni
+// re-entregarla a los grupos, solo limpiarla. Si la API falló y NO hay conciliación guardada,
+// devuelve false y la pendiente se procesa normal (el fallback manual haciendo su trabajo).
+// hayConciliacionFn es inyectable para los tests (sin base). Ver el bug de "doble entrega".
+async function pendienteYaArqueadaPorApi(plataforma, { fecha, empresa = 'HONRE' }, hayConciliacionFn = hayConciliacion) {
+  if (!plataforma || !plataforma.bajaPorApi) return false;
+  return !!(await hayConciliacionFn({ fecha, plataforma: plataforma.codigo, empresa }));
+}
+
 // Procesa la espera una vez. Devuelve un resumen para el log.
 async function entregarArqueosPendientes(telegram, { empresa = 'HONRE' } = {}) {
   const dias = await diasPendientes({ empresa });
@@ -88,9 +98,16 @@ async function entregarArqueosPendientes(telegram, { empresa = 'HONRE' } = {}) {
       const filas = await liquidacionesDeDia({ fecha: d.fecha, empresa });
       const liquidaciones = [];
       const fallidas = [];
+      const yaArqueadas = []; // pendientes manuales de plataformas por API cuyo día ya se arqueó: se limpian sin re-entregar
       for (const f of filas) {
         const plataforma = porCodigo(f.plataforma);
         if (!plataforma) { console.error(`Arqueo: plataforma desconocida "${f.plataforma}" el ${fechaISO(d.fecha)}.`); fallidas.push(f.plataforma); continue; }
+        // Talo (bajaPorApi) subida a mano como fallback pero cuyo día YA se arqueó por API: no se
+        // re-arquea ni se re-entrega (si no, Tesorería/Caja Central reciben el arqueo dos veces).
+        if (await pendienteYaArqueadaPorApi(plataforma, { fecha: d.fecha, empresa })) {
+          yaArqueadas.push(plataforma.codigo);
+          continue;
+        }
         try {
           liquidaciones.push({ plataforma, liq: plataforma.parsear(f.archivo) });
         } catch (e) {
@@ -98,13 +115,19 @@ async function entregarArqueosPendientes(telegram, { empresa = 'HONRE' } = {}) {
           fallidas.push(f.plataforma);
         }
       }
+      // Limpiar las pendientes redundantes (ya arqueadas por API), haya o no algo más que arquear.
+      if (yaArqueadas.length) {
+        await borrarLiquidacionesDe({ fecha: d.fecha, empresa, plataformas: yaArqueadas });
+        console.log(`Arqueo: ${fechaISO(d.fecha)} ${yaArqueadas.join(',')} ya arqueada(s) por API; limpio la pendiente manual sin re-entregar.`);
+      }
       // Lo que no se pudo leer queda PENDIENTE (no se borra) y se avisa a los admins para que lo resuban.
       if (fallidas.length) {
         await enviarTexto(telegram, admins,
           `⚠️ <b>Arqueo del ${formatoVencimiento(d.fecha)}</b>: no pude leer la liquidación de <b>${fallidas.join(', ')}</b>. ` +
           'Queda pendiente — revisá el archivo y volvé a subirla con /carga.');
       }
-      if (!liquidaciones.length) { resumen.error++; continue; } // nada arqueable; NO se borra nada
+      // Si no quedó nada nuevo que arquear: si solo había redundantes ya limpiadas, no es error.
+      if (!liquidaciones.length) { if (!yaArqueadas.length) resumen.error++; continue; }
 
       const arq = await arquearDia({ libroBuffer: buf.buffer, libroMeta: lib.meta, liquidaciones, dia: fechaISO(d.fecha) });
       if (!arq.ok) {
@@ -318,4 +341,4 @@ function iniciarEntregaTaloApi(bot) {
   setTimeout(correr, ms);
 }
 
-module.exports = { entregarArqueosPendientes, iniciarEntregaArqueo, entregarTaloDelDia, recuperarTaloRezagado, iniciarEntregaTaloApi };
+module.exports = { entregarArqueosPendientes, pendienteYaArqueadaPorApi, iniciarEntregaArqueo, entregarTaloDelDia, recuperarTaloRezagado, iniciarEntregaTaloApi };

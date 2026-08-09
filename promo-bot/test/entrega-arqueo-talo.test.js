@@ -13,7 +13,8 @@ const assert = require('assert');
 // camino testeado inyecta los deps, así que nunca se consulta la base ni Telegram de verdad.
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://x:x@localhost:5432/x';
 
-const { recuperarTaloRezagado } = require('../src/entrega-arqueo');
+const { recuperarTaloRezagado, pendienteYaArqueadaPorApi } = require('../src/entrega-arqueo');
+const { porCodigo } = require('../src/lib/plataformas');
 
 const HOY = '2026-08-08'; // hoy (ISO 'AAAA-MM-DD')
 const AYER = '2026-08-07';
@@ -99,6 +100,36 @@ async function main() {
       hayConciliacionFn: async ({ fecha }) => { fechaPedida = fecha; return true; },
     });
     assert.match(fechaPedida, /^\d{4}-\d{2}-\d{2}$/, '"ayer" tiene que ser un ISO AAAA-MM-DD');
+  });
+
+  // ---- Guarda anti "doble entrega" del barrido de las 08:00 (pendienteYaArqueadaPorApi) ----
+  // Bug: si Talo se sube a mano (fallback) Y la API la baja el mismo día, se arqueaba/entregaba dos
+  // veces. La guarda saltea la pendiente manual si ese día+plataforma ya tiene conciliación.
+  const talo = porCodigo('talo');
+  const mp = porCodigo('mp');
+
+  await t('guarda: Talo (API) con el día YA arqueado -> redundante (true)', async () => {
+    const r = await pendienteYaArqueadaPorApi(talo, { fecha: AYER }, async ({ plataforma }) => {
+      assert.strictEqual(plataforma, 'talo'); return true;
+    });
+    assert.strictEqual(r, true);
+  });
+
+  await t('guarda: Talo (API) SIN conciliación -> NO redundante (fallback manual legítimo)', async () => {
+    const r = await pendienteYaArqueadaPorApi(talo, { fecha: AYER }, async () => false);
+    assert.strictEqual(r, false);
+  });
+
+  await t('guarda: MP (manual) nunca es redundante y ni consulta la base', async () => {
+    let consultada = false;
+    const r = await pendienteYaArqueadaPorApi(mp, { fecha: AYER }, async () => { consultada = true; return true; });
+    assert.strictEqual(r, false);
+    assert.strictEqual(consultada, false, 'MP no es bajaPorApi: no debe consultar hayConciliacion');
+  });
+
+  await t('guarda: plataforma nula -> false (defensivo)', async () => {
+    const r = await pendienteYaArqueadaPorApi(null, { fecha: AYER }, async () => true);
+    assert.strictEqual(r, false);
   });
 
   console.log(`\n${pass} tests OK`);
