@@ -1,8 +1,9 @@
 // Wizard /carga (admin): la carga NOCTURNA de los documentos del día. Reemplaza a /libro y le
 // suma las liquidaciones de las plataformas de cobro. El admin manda, en cualquier orden:
 //   - el LIBRO DIARIO (Diario de Sigma)     → se archiva permanente (lo usan cierre/mp/flujos),
-//   - la liquidación de MERCADO PAGO         → queda en espera para el arqueo de las 08:00,
-//   - la liquidación de TALO                 → ídem.
+//   - la liquidación de MERCADO PAGO         → queda en espera para el arqueo de las 08:00.
+// TALO NO se pide acá: se baja sola por API a las 21:00 (bajaPorApi), así que ni se reclama ni se
+// lista. Igual se puede subir a mano como fallback si la bajada falló (cae en la misma espera).
 // El bot RECONOCE cada archivo solo (no hay que decirle cuál es cuál). NO concilia en el momento:
 // a las 08:00 el barrido (entrega-arqueo.js) cruza las liquidaciones contra el libro y manda los
 // reportes a Tesorería + Caja Central. Acá solo se recibe, se guarda y se confirma qué falta.
@@ -11,7 +12,7 @@
 // cualquiera con dos exports distintos del mismo día.
 const { Scenes } = require('telegraf');
 const { esCancelar } = require('../lib/wizard');
-const { detectarPlataforma, PLATAFORMAS } = require('../lib/plataformas');
+const { detectarPlataforma, PLATAFORMAS, plataformasManuales } = require('../lib/plataformas');
 const { registrarLibro, LibroError } = require('../lib/registrar-libro');
 const { guardarLiquidacion, plataformasPendientesDe } = require('../db/liquidaciones-pendientes');
 const { avisarLibroResuelto } = require('../aviso-libro');
@@ -86,7 +87,9 @@ async function estadoDelDia(dia) {
   ]);
   const faltan = [];
   if (!tieneLibro) faltan.push('el libro');
-  for (const p of PLATAFORMAS) {
+  // Solo se reclaman las plataformas de carga MANUAL: Talo se baja sola por API (bajaPorApi) y no se
+  // reclama acá (igual que el aviso de las 21:30). Si igual se subió a mano, cae en `plataformas`.
+  for (const p of plataformasManuales()) {
     if (!plataformas.includes(p.codigo)) faltan.push(p.nombre);
   }
   return { tieneLibro, plataformas, faltan };
@@ -188,11 +191,18 @@ const cargaWizard = new Scenes.WizardScene(
   async (ctx) => {
     ctx.wizard.state.data = { dias: new Set(), huboLibro: false };
     const lista = ['• <b>Libro diario</b> (Diario de movimientos de Sigma)']
-      .concat(PLATAFORMAS.map((p) => `• <b>${p.nombre}</b> (liquidación del panel)`))
+      .concat(plataformasManuales().map((p) => `• <b>${p.nombre}</b> (liquidación del panel)`))
       .join('\n');
+    // Plataformas que se bajan solas por API (hoy Talo): se avisa que NO hay que subirlas.
+    const auto = PLATAFORMAS.filter((p) => p.bajaPorApi).map((p) => p.nombre);
+    const notaAuto = auto.length
+      ? `🤖 <b>${auto.join(' y ')}</b> se descarga${auto.length > 1 ? 'n' : ''} sola${auto.length > 1 ? 's' : ''} por API a las 21:00 — ` +
+        `no hace falta subirla${auto.length > 1 ? 's' : ''} a mano (si algún día te la pido porque falló, la podés mandar acá igual).\n\n`
+      : '';
     await ctx.reply(
       '📥 <b>Carga del día</b>.\n\n' +
       `Mandame los documentos del día (uno o varios, en cualquier orden):\n${lista}\n\n` +
+      notaAuto +
       '🔎 Reconozco cada archivo solo: no hace falta que me digas cuál es cuál.\n' +
       '🕗 El libro queda archivado; las liquidaciones se arquean solas a las 08:00 y el reporte ' +
       'les llega a Tesorería y Caja Central.\n\n' +

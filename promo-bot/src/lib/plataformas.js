@@ -102,6 +102,15 @@ function porCodigo(codigo) {
   return PLATAFORMAS.find((p) => p.codigo === codigo) || null;
 }
 
+// Plataformas que se cargan A MANO: su liquidación se sube con /carga y se reclama si falta (tanto
+// en /carga como en el aviso de las 21:30). Las que se bajan SOLAS por API (bajaPorApi, hoy Talo)
+// NO están acá: no hay que subirlas ni reclamarlas — el barrido las baja y arquea, y avisa si falla.
+// ÚNICA fuente de verdad del reparto manual/automático: antes estaba duplicado y se desincronizó
+// (/carga seguía pidiendo Talo aunque el aviso de las 21:30 ya no la reclamaba).
+function plataformasManuales() {
+  return PLATAFORMAS.filter((p) => !p.bajaPorApi);
+}
+
 // Saca acentos/mayúsculas para comparar encabezados sin depender del encoding.
 function clave(s) {
   return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -131,4 +140,4 @@ function detectarPlataforma(buffer) {
   return null;
 }
 
-module.exports = { PLATAFORMAS, porCodigo, detectarPlataforma };
+module.exports = { PLATAFORMAS, porCodigo, plataformasManuales, detectarPlataforma };
