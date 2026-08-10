@@ -258,23 +258,47 @@ async function entregarTaloDelDia(telegram, { empresa = 'HONRE', fecha = null } 
 // re-entrega lo que el barrido de las 21:00 ya mandó.
 async function recuperarTaloRezagado(telegram, {
   empresa = 'HONRE',
+  dia = null, // día a recuperar (ISO 'AAAA-MM-DD'); si no se pasa, es AYER (hoyIso - 1)
   hoyIso = fechaHoyArgISO(), // 'AAAA-MM-DD' de hoy en Argentina (fechaHoyArg() devuelve string DD/MM, no Date)
   hayConciliacionFn = hayConciliacion, // inyectables para los tests (sin base ni Telegram)
   entregarFn = entregarTaloDelDia,
 } = {}) {
-  const [y, m, d] = hoyIso.split('-').map(Number);
-  const ayer = fechaISO(sumarDias(new Date(y, m - 1, d), -1)); // el día que acaba de cerrar (ISO 'AAAA-MM-DD')
-  try {
-    if (await hayConciliacionFn({ fecha: ayer, plataforma: 'talo', empresa })) {
-      return { recuperado: false, motivo: 'ya_estaba', dia: ayer };
-    }
-    console.log(`Arqueo Talo: el ${ayer} no quedó arqueado anoche; reintento ahora (red de respaldo 08:00).`);
-    const r = await entregarFn(telegram, { empresa, fecha: ayer });
-    return { recuperado: !!r.corrio, motivo: r.corrio ? 'recuperado' : (r.motivo || 'no_pudo'), dia: ayer };
-  } catch (e) {
-    console.error(`Arqueo Talo: falló la recuperación del ${ayer}:`, e.message);
-    return { recuperado: false, motivo: 'error', dia: ayer };
+  if (!dia) {
+    const [y, m, d] = hoyIso.split('-').map(Number);
+    dia = fechaISO(sumarDias(new Date(y, m - 1, d), -1)); // el día que acaba de cerrar
   }
+  try {
+    if (await hayConciliacionFn({ fecha: dia, plataforma: 'talo', empresa })) {
+      return { recuperado: false, motivo: 'ya_estaba', dia };
+    }
+    console.log(`Arqueo Talo: el ${dia} no quedó arqueado; reintento ahora (red de respaldo 08:00).`);
+    const r = await entregarFn(telegram, { empresa, fecha: dia });
+    return { recuperado: !!r.corrio, motivo: r.corrio ? 'recuperado' : (r.motivo || 'no_pudo'), dia };
+  } catch (e) {
+    console.error(`Arqueo Talo: falló la recuperación del ${dia}:`, e.message);
+    return { recuperado: false, motivo: 'error', dia };
+  }
+}
+
+// Red de respaldo AMPLIADA: revisa los últimos `dias` días (no solo ayer). Cubre el caso de un libro
+// cargado con 2+ días de atraso —p.ej. el del fin de semana cargado el domingo/lunes—: cada día que
+// quedó sin arquear se recupera recién cuando su libro ya está. Idempotente por día (los que ya
+// tienen conciliación se saltean). Configurable con TALO_RECUPERAR_DIAS (default 3). Un resultado
+// por día. hayConciliacionFn/entregarFn se propagan para los tests.
+async function recuperarTaloRezagados(telegram, {
+  empresa = 'HONRE',
+  hoyIso = fechaHoyArgISO(),
+  dias = Number(process.env.TALO_RECUPERAR_DIAS) || 3,
+  hayConciliacionFn = hayConciliacion,
+  entregarFn = entregarTaloDelDia,
+} = {}) {
+  const [y, m, d] = hoyIso.split('-').map(Number);
+  const resultados = [];
+  for (let i = 1; i <= dias; i++) {
+    const dia = fechaISO(sumarDias(new Date(y, m - 1, d), -i));
+    resultados.push(await recuperarTaloRezagado(telegram, { empresa, dia, hayConciliacionFn, entregarFn }));
+  }
+  return resultados;
 }
 
 // ms hasta la próxima vez que sean las `horaUtc`:00 UTC (para agendar un barrido diario a esa hora).
@@ -306,12 +330,15 @@ function iniciarEntregaArqueo(bot) {
       console.error('Error en la entrega de arqueos:', e);
       require('./notificar').avisarProblema({ proceso: 'arqueo de MP/Talo (08:00)', que: 'El barrido de arqueo falló.', detalle: e && e.message, nivel: '❌' }).catch(() => {});
     }
-    // Red de respaldo de Talo: si el barrido de las 21:00 no dejó arqueado el día de ayer (libro
-    // cargado tarde, o el bot reiniciado a esa hora), reintentarlo ahora que el libro seguro está.
+    // Red de respaldo de Talo: si el barrido de las 21:00 no dejó arqueado alguno de los últimos
+    // días (libro cargado tarde —hasta el finde cargado el lunes—, o el bot reiniciado), reintentar
+    // ahora que el libro seguro está. Revisa varios días atrás, no solo ayer.
     try {
-      const t = await recuperarTaloRezagado(bot.telegram);
-      if (t.motivo !== 'ya_estaba') {
-        console.log(`Arqueo Talo (respaldo 08:00): ${t.dia} -> ${t.recuperado ? 'recuperado' : `no se pudo (${t.motivo})`}.`);
+      const rs = await recuperarTaloRezagados(bot.telegram);
+      for (const t of rs) {
+        if (t.motivo !== 'ya_estaba') {
+          console.log(`Arqueo Talo (respaldo 08:00): ${t.dia} -> ${t.recuperado ? 'recuperado' : `no se pudo (${t.motivo})`}.`);
+        }
       }
     } catch (e) {
       console.error('Arqueo Talo (respaldo 08:00): error inesperado:', e.message);
@@ -341,4 +368,4 @@ function iniciarEntregaTaloApi(bot) {
   setTimeout(correr, ms);
 }
 
-module.exports = { entregarArqueosPendientes, pendienteYaArqueadaPorApi, iniciarEntregaArqueo, entregarTaloDelDia, recuperarTaloRezagado, iniciarEntregaTaloApi };
+module.exports = { entregarArqueosPendientes, pendienteYaArqueadaPorApi, iniciarEntregaArqueo, entregarTaloDelDia, recuperarTaloRezagado, recuperarTaloRezagados, iniciarEntregaTaloApi };

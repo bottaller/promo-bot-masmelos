@@ -13,7 +13,7 @@ const assert = require('assert');
 // camino testeado inyecta los deps, así que nunca se consulta la base ni Telegram de verdad.
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://x:x@localhost:5432/x';
 
-const { recuperarTaloRezagado, pendienteYaArqueadaPorApi } = require('../src/entrega-arqueo');
+const { recuperarTaloRezagado, recuperarTaloRezagados, pendienteYaArqueadaPorApi } = require('../src/entrega-arqueo');
 const { porCodigo } = require('../src/lib/plataformas');
 
 const HOY = '2026-08-08'; // hoy (ISO 'AAAA-MM-DD')
@@ -130,6 +130,32 @@ async function main() {
   await t('guarda: plataforma nula -> false (defensivo)', async () => {
     const r = await pendienteYaArqueadaPorApi(null, { fecha: AYER }, async () => true);
     assert.strictEqual(r, false);
+  });
+
+  // ---- Red de respaldo AMPLIADA (recuperarTaloRezagados): mira varios días atrás ----
+  // Por qué: el libro del sábado se cargó el domingo (tarde), así que "ayer" solo no alcanzaba para
+  // recuperar el sábado. Ahora revisa los últimos N días.
+  await t('rezagados: revisa los últimos N días (dias=3 -> ayer, anteayer, trasanteayer)', async () => {
+    const vistos = [];
+    const rs = await recuperarTaloRezagados(telegramFake, {
+      hoyIso: '2026-08-11', dias: 3,
+      hayConciliacionFn: async ({ fecha }) => { vistos.push(fecha); return true; },
+    });
+    assert.deepStrictEqual(vistos, ['2026-08-10', '2026-08-09', '2026-08-08']);
+    assert.strictEqual(rs.length, 3);
+    assert.ok(rs.every((r) => r.motivo === 'ya_estaba'));
+  });
+
+  await t('rezagados: recupera los días sin arquear y saltea los que ya están', async () => {
+    const arqueados = new Set(['2026-08-07']); // el viernes ya está; sábado y domingo no
+    const recuperados = [];
+    const rs = await recuperarTaloRezagados(telegramFake, {
+      hoyIso: '2026-08-10', dias: 3, // revisa 09, 08, 07
+      hayConciliacionFn: async ({ fecha }) => arqueados.has(fecha),
+      entregarFn: async (_tg, { fecha }) => { recuperados.push(fecha); return { corrio: true }; },
+    });
+    assert.deepStrictEqual(recuperados.sort(), ['2026-08-08', '2026-08-09']); // recuperó sábado y domingo
+    assert.strictEqual(rs.find((r) => r.dia === '2026-08-07').motivo, 'ya_estaba'); // no tocó el viernes
   });
 
   console.log(`\n${pass} tests OK`);
