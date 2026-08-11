@@ -23,9 +23,13 @@ const CUENTAS_CONTROL = [
   { nombre: 'Caja Fuerte Moreno', saldoKeys: ['caja fuerte moreno'], libroIds: [111101003], moneda: 'ARS', deudora: true },
   { nombre: 'Santander',          saldoKeys: ['santander'],          libroIds: [111201014], moneda: 'ARS', deudora: true },
   { nombre: 'Supervielle',        saldoKeys: ['supervielle'],        libroIds: [111201015], moneda: 'ARS', deudora: true },
-  // Mercado Pago (Point) = MP + tarjetas que liquidan en MP. Visa Crédito (111301001) NO
-  // entra: es cuenta a cobrar (Visa liquida a ~18 días), la plata todavía no está en MP.
-  { nombre: 'Mercado Pago',       saldoKeys: ['mercadopago'],        libroIds: [422101014, 111301002, 111304001, 111305001, 111302002, 111303001], moneda: 'ARS', deudora: true },
+  // Mercado Pago (Point) = MP + TODAS las tarjetas que liquidan en MP, INCLUIDA Visa Crédito
+  // (111301001). Se sumó el 10/08/2026: los datos mostraron que la diferencia diaria de MP ≈ la
+  // Visa Crédito del día, y al agruparla MP cierra al peso (el acumulado 27/07–10/08 pasó de +$42M
+  // a ~0). Antes se excluía asumiendo que Visa liquida a ~18 días y "la plata no está todavía en
+  // MP"; en la práctica, con volumen ~parejo, lo que entra por Visa vieja ≈ lo que se factura por
+  // Visa nueva, así que agruparla es lo que hace cerrar la cuenta.
+  { nombre: 'Mercado Pago',       saldoKeys: ['mercadopago'],        libroIds: [422101014, 111301001, 111301002, 111304001, 111305001, 111302002, 111303001], moneda: 'ARS', deudora: true },
   // Talo = cuenta 42210108 "TALO HONRE S.A" (la misma contra la que arquea plataformas.js). Es
   // una plataforma de cobro nueva (primer saldo cargado el 23/07/2026): los cobros entran por el
   // Debe (deudora, como MP) y por ahora no tiene salidas. Su saldo es solo la cuenta 42210108,
