@@ -188,7 +188,7 @@ const cargaWizard = new Scenes.WizardScene(
   async (ctx) => {
     ctx.wizard.state.data = { dias: new Set(), huboLibro: false };
     const lista = ['• <b>Libro diario</b> (Diario de movimientos de Sigma)']
-      .concat(PLATAFORMAS.map((p) => `• <b>${p.nombre}</b> (liquidación del panel)`))
+      .concat(PLATAFORMAS.map((p) => `• <b>${p.nombre}</b> (${p.archivoEsperado})`))
       .join('\n');
     await ctx.reply(
       '📥 <b>Carga del día</b>.\n\n' +
