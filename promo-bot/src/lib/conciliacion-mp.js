@@ -205,6 +205,24 @@ const REGLAS_MP = {
   deltaSospechosoSeg: DELTA_SOSPECHOSO_SEG,
 };
 
+// Separa, de los movimientos de UNA cuenta, las transferencias INTERNAS (plata que entra pero no
+// por una venta: su asiento está en el resto del Diario y NO toca DEUDORES POR VENTA) de los
+// candidatos reales a cobro — misma lógica que usa conciliarMP internamente (ver `esTransferencia`
+// más abajo), expuesta aparte para quien necesite filtrar ANTES de llamar a conciliarMP (ej.
+// arqueo-banco.js: persiste el Mayor renglón por renglón y no puede pasar `otrasCuentas` en cada
+// re-apareo posterior, así que filtra las transferencias de una vez, al momento de guardar).
+// Sin `otrasCuentas` (el Mayor de una sola cuenta) no hay cómo distinguirlas: se devuelven todas
+// como candidatas, igual que el comportamiento de siempre de conciliarMP.
+function separarTransferenciasInternas(movimientos, otrasCuentas = []) {
+  const asientosEnDiario = new Set(otrasCuentas.map((r) => r.asiento));
+  const asientosDeVenta = new Set(otrasCuentas.filter((r) => CUENTA_VENTA.test(String(r.cuenta || ''))).map((r) => r.asiento));
+  const esTransferencia = (m) => m.debe > 0 && asientosEnDiario.has(m.asiento) && !asientosDeVenta.has(m.asiento);
+  return {
+    candidatos: movimientos.filter((m) => !esTransferencia(m)),
+    transferencias: movimientos.filter(esTransferencia),
+  };
+}
+
 function conciliarMP({ movimientos = [], operaciones = [], otrasCuentas = [], plataforma = null }) {
   const P = plataforma || REGLAS_MP;
   const deltaSospechoso = P.deltaSospechosoSeg || DELTA_SOSPECHOSO_SEG;
@@ -286,7 +304,7 @@ function conciliarMP({ movimientos = [], operaciones = [], otrasCuentas = [], pl
 }
 
 module.exports = {
-  conciliarMP, buscarContrapartidas, CUENTA_MP,
+  conciliarMP, buscarContrapartidas, separarTransferenciasInternas, CUENTA_MP,
   TOLERANCIA_REDONDEO, TOLERANCIA_CENTAVOS, DELTA_MAXIMO_SEG, DELTA_CENTAVOS_SEG,
   DELTA_SOSPECHOSO_SEG, CANAL_QR, TIPO_COBRO,
 };

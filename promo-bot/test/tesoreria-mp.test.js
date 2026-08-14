@@ -4,7 +4,7 @@
 const assert = require('assert');
 const XLSX = require('xlsx');
 const cajaCentral = require('../src/areas/cajacentral');
-const { conciliarMP, CUENTA_MP } = require('../src/lib/conciliacion-mp');
+const { conciliarMP, separarTransferenciasInternas, CUENTA_MP } = require('../src/lib/conciliacion-mp');
 const { parsearMayor, MayorError } = require('../src/lib/mayor-excel');
 const { parsearLiquidacion, LiquidacionError } = require('../src/lib/liquidacion-excel');
 const { formatearMP } = require('../src/lib/reporte-mp');
@@ -342,6 +342,31 @@ t('sin el Diario (solo el Mayor), un debe sigue siendo cobro aunque no se vea la
   const r = conciliarMP({ movimientos: [M(20000000, '2026-07-27 13:02:00', { asiento: 8307530 })], operaciones: [] });
   assert.strictEqual(r.soloSistema.length, 1);
   assert.strictEqual(r.resumen.totalSistema, 20000000);
+});
+
+console.log('separarTransferenciasInternas(): misma lógica, expuesta para filtrar ANTES de conciliarMP');
+t('separa la transferencia interna del cobro real, con el Diario completo', () => {
+  const transfer = [
+    { asiento: 8307530, cuenta_id: 42210108, cuenta: 'TALO HONRE S.A', concepto: 'Trf Talo - MP 27/7/2026',
+      comprobante: '', cliente: '', usuario: 'PABLO G', ingreso: '2026-07-27 13:02:00', debe: 0, haber: 20000000 },
+    { asiento: 8307442, cuenta_id: 112011001, cuenta: 'DEUDORES POR VENTA', concepto: 'Ventas a clientes',
+      comprobante: '', cliente: '', usuario: 'XIMENA', ingreso: '2026-07-27 11:59:00', debe: 0, haber: 217847 },
+  ];
+  const movimientos = [
+    M(20000000, '2026-07-27 13:02:00', { asiento: 8307530 }), // transferencia (Trf Talo -> MP)
+    M(217847, '2026-07-27 11:59:00', { asiento: 8307442 }),   // venta real
+  ];
+  const { candidatos, transferencias } = separarTransferenciasInternas(movimientos, transfer);
+  assert.strictEqual(transferencias.length, 1);
+  assert.strictEqual(transferencias[0].debe, 20000000);
+  assert.strictEqual(candidatos.length, 1);
+  assert.strictEqual(candidatos[0].debe, 217847);
+});
+t('sin otrasCuentas, no hay cómo distinguir: todo queda como candidato', () => {
+  const movimientos = [M(20000000, '2026-07-27 13:02:00', { asiento: 8307530 })];
+  const { candidatos, transferencias } = separarTransferenciasInternas(movimientos);
+  assert.strictEqual(candidatos.length, 1);
+  assert.strictEqual(transferencias.length, 0);
 });
 t('el mensaje muestra dónde apareció el importe', () => {
   const r = conciliarMP({
