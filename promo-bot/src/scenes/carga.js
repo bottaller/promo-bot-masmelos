@@ -179,6 +179,8 @@ const cargaWizard = new Scenes.WizardScene(
     const mios = documentosDe(usuario);
     if (!mios.length) { await ctx.reply('No tenés ningún documento para cargar.'); return ctx.scene.leave(); }
 
+    // Cada tipo de documento se presenta solo (ver lib/documentos-carga.js). Las liquidaciones
+    // salen una por plataforma con su `archivoEsperado`, que es lo que sumó el arqueo bancario.
     const lista = mios.flatMap((d) => d.etiquetas()).map((e) => `• ${e}`).join('\n');
 
     // Plataformas que se bajan solas por API (hoy Talo): se avisa que NO hay que subirlas. Solo si

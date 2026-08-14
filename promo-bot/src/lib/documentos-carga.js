@@ -13,7 +13,8 @@
 // esa persona puede. Así el de Retiros sube su planilla sin que se le abran el
 // libro diario ni las liquidaciones, que son data financiera. Y como el área está
 // declarada al lado del parser, agregar un documento sin protegerlo no se olvida.
-const { detectarPlataforma, PLATAFORMAS } = require('./plataformas');
+const { detectarPlataforma, plataformasManuales } = require('./plataformas');
+const { diaDeLiquidacion } = require('./arqueo');
 const { registrarLibro, LibroError } = require('./registrar-libro');
 const { guardarLiquidacion } = require('../db/liquidaciones-pendientes');
 const { parsearRetiros, esPlanillaRetiros, RetirosError } = require('./retiros-excel');
@@ -31,11 +32,6 @@ function isoALinda(iso) {
 function kb(bytes) {
   return `${Math.round((bytes || 0) / 1024)} KB`;
 }
-// Día que cubre la liquidación ('AAAA-MM-DD'), o null si abarca varios.
-function diaDeLiquidacion(liq) {
-  const dias = [...new Set((liq.operaciones || []).map((o) => (o.hora || '').slice(0, 10)).filter(Boolean))].sort();
-  return dias.length === 1 ? dias[0] : null;
-}
 
 // Error de negocio de un documento reconocido pero que no se puede procesar
 // (ej. una liquidación que abarca varios días). Se le muestra al usuario tal cual.
@@ -46,8 +42,10 @@ const DOCUMENTOS = [
   {
     codigo: 'liquidacion',
     nombre: 'Liquidación de plataforma',
-    // Se listan una por una en el mensaje de bienvenida.
-    etiquetas: () => PLATAFORMAS.filter((p) => !p.bajaPorApi).map((p) => `<b>${p.nombre}</b> (liquidación del panel)`),
+    // Se listan una por una en el mensaje de bienvenida, con el archivo que espera cada
+    // plataforma. Es una sola entrada del registro pero varias líneas en el menú: Mercado Pago,
+    // Santander y Supervielle llegan por acá.
+    etiquetas: () => plataformasManuales().map((p) => `<b>${p.nombre}</b> (${p.archivoEsperado})`),
     soloAdmin: true,
     nocturno: true,
     detectar: (buffer) => !!detectarPlataforma(buffer),

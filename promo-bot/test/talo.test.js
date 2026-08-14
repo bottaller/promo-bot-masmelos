@@ -71,10 +71,15 @@ t('fecha/hora ilegible NO se inventa: tira error', () => {
 console.log('plataformas: alcance y detección');
 const TALO = porCodigo('talo');
 const MP = porCodigo('mp');
-t('el registro tiene las dos, con su cuenta de Sigma', () => {
+t('PLATAFORMAS (circuito automático) tiene solo MP y Talo, con su cuenta de Sigma', () => {
   assert.strictEqual(PLATAFORMAS.length, 2);
   assert.strictEqual(MP.cuenta, 422101014);
   assert.strictEqual(TALO.cuenta, 42210108); // TALO HONRE S.A
+});
+t('los bancos NO están en PLATAFORMAS (no se piden en /carga ni arquean solos), pero porCodigo los encuentra igual', () => {
+  assert.strictEqual(PLATAFORMAS.some((p) => p.codigo === 'santander' || p.codigo === 'supervielle'), false);
+  assert.strictEqual(porCodigo('santander').cuenta, 111201014);
+  assert.strictEqual(porCodigo('supervielle').cuenta, 111201015);
 });
 t('Talo: entra RECIBIDO, queda fuera ENVIADO', () => {
   assert.strictEqual(TALO.enAlcance({ estado: 'RECIBIDO', bruto: 100 }), true);

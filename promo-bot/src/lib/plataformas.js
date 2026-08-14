@@ -1,13 +1,24 @@
-// Las plataformas de cobro que se arquean contra el libro (hoy: Mercado Pago y Talo).
+// Las plataformas de cobro que se arquean contra el libro.
 //
 // Cada una declara lo ÚNICO que la hace distinta: contra qué cuenta de Sigma asienta, cómo se
 // parsea su liquidación, qué operaciones entran en el arqueo, y cuánto tarda en asentarse. El
 // motor (conciliacion-mp.js) es agnóstico: apareo, tolerancias y rastreo valen para todas.
 //
+// DOS registros separados, a propósito:
+//   - PLATAFORMAS (Mercado Pago, Talo): el circuito AUTOMÁTICO — se cargan con /carga (o Talo,
+//     se baja sola por API) y arquean solas a las 08:00 contra Tesorería + Caja Central.
+//   - PLATAFORMAS_BANCOS (Santander, Supervielle): TODAVÍA una herramienta manual bajo demanda
+//     (/arqueobanco, rol "administración" — ver src/scenes/arqueo-banco.js). NO se piden en
+//     /carga, NO entran en el barrido de las 08:00 ni en bot.liquidaciones_pendientes: eso es
+//     un paso futuro, a propósito todavía no. Mismo motor (parsear/conciliarMP/arquearDia), solo
+//     que se dispara a pedido en vez de solo.
+//
 // Sumar una plataforma = agregar una entrada acá + su parser. Nada más.
 const { parsearLiquidacion, LiquidacionError } = require('./liquidacion-excel');
 const { parsearCollection, esCollection } = require('./collection-excel');
 const { parsearTalo, TaloError, ESTADO_COBRO } = require('./talo-excel');
+const { parsearSantander, SantanderError, categoriaExcluida: categoriaExcluidaSantander } = require('./santander-excel');
+const { parsearSupervielle, SupervielleError, categoriaExcluida: categoriaExcluidaSupervielle } = require('./supervielle-excel');
 
 // MP puede venir en DOS formatos: el "Collection" (Cobros, disponible el MISMO día — el que se usa
 // hoy) o el "settlement_v2" (a día vencido). Se detecta por los encabezados y se rutea al parser
@@ -49,6 +60,24 @@ function motivoFueraTalo(op) {
   if (op.estado && op.estado !== ESTADO_COBRO) return `Es "${op.estado}", no un cobro recibido`;
   if (op.bruto <= 0) return 'Importe cero o negativo: no es un cobro';
   return 'Fuera del alcance';
+}
+
+// --- Bancos (Santander / Supervielle) --------------------------------------
+// El extracto no distingue "cobro" de cualquier otra plata que entra: acá el alcance es
+// "todo Crédito que no sea un movimiento automático del banco sin asiento propio en Sigma"
+// (impuestos, comisiones, percepciones — ver categoriaExcluida en cada parser). Los Débito
+// (plata que sale) quedan fuera siempre: el motor solo mira el Debe del sistema.
+function enAlcanceBanco(op) {
+  return op.sentido === 'credito' && op.bruto > 0;
+}
+function motivoFueraBanco(categoriaExcluida) {
+  return (op) => {
+    if (op.sentido !== 'credito') return 'Egreso (Débito): no es un cobro';
+    return categoriaExcluida(op.concepto) || 'Fuera del alcance';
+  };
+}
+function enAlcanceBancoFiltrado(categoriaExcluida) {
+  return (op) => enAlcanceBanco(op) && !categoriaExcluida(op.concepto);
 }
 
 const PLATAFORMAS = [
@@ -98,8 +127,51 @@ const PLATAFORMAS = [
   },
 ];
 
+// Bancos: registro APARTE (ver nota arriba) — hoy solo los usa /arqueobanco (rol
+// "administración"), a demanda. NO entran en PLATAFORMAS: /carga, plataformasManuales() y el
+// barrido de las 08:00 (entrega-arqueo.js) no los ven ni los reclaman.
+const PLATAFORMAS_BANCOS = [
+  {
+    codigo: 'santander',
+    nombre: 'Santander',
+    corto: 'Santander',
+    cuenta: 111201014,
+    cuentaNombre: 'BCO. SANTANDER (HONRE) 144-002914',
+    archivoEsperado: 'extracto de movimientos (homebanking de Santander, exportado a Excel)',
+    alcanceTxt: 'cobros recibidos por transferencia',
+    parsear: parsearSantander,
+    Error: SantanderError,
+    enAlcance: enAlcanceBancoFiltrado(categoriaExcluidaSantander),
+    motivoFuera: motivoFueraBanco(categoriaExcluidaSantander),
+    // Sin hora en el extracto: la ventana de tiempo no aplica (ver conciliarMP: `sinHora`).
+    deltaSospechosoSeg: 24 * 3600,
+    referencia: (o) => o.referencia || o.concepto || '',
+    reconoce: (encabezados) => encabezados.includes('importe pesos') && encabezados.includes('saldo pesos'),
+  },
+  {
+    codigo: 'supervielle',
+    nombre: 'Supervielle',
+    corto: 'Supervielle',
+    cuenta: 111201015,
+    cuentaNombre: 'BCO. SUPERVIELLE CTA CTE HONRE',
+    archivoEsperado: 'extracto de movimientos (homebanking de Supervielle, exportado a Excel)',
+    alcanceTxt: 'cobros recibidos por transferencia',
+    parsear: parsearSupervielle,
+    Error: SupervielleError,
+    enAlcance: enAlcanceBancoFiltrado(categoriaExcluidaSupervielle),
+    motivoFuera: motivoFueraBanco(categoriaExcluidaSupervielle),
+    deltaSospechosoSeg: 24 * 3600,
+    referencia: (o) => o.referencia || o.concepto || '',
+    reconoce: (encabezados) => encabezados.includes('debito') && encabezados.includes('credito') && encabezados.includes('detalle'),
+  },
+];
+
+// Busca por código en los dos registros (automáticas + bancos): un solo punto de entrada para
+// quien ya sabe el código y no necesita distinguir de cuál registro viene.
 function porCodigo(codigo) {
-  return PLATAFORMAS.find((p) => p.codigo === codigo) || null;
+  return PLATAFORMAS.find((p) => p.codigo === codigo)
+    || PLATAFORMAS_BANCOS.find((p) => p.codigo === codigo)
+    || null;
 }
 
 // Plataformas que se cargan A MANO: su liquidación se sube con /carga y se reclama si falta (tanto
@@ -140,4 +212,30 @@ function detectarPlataforma(buffer) {
   return null;
 }
 
-module.exports = { PLATAFORMAS, porCodigo, plataformasManuales, detectarPlataforma };
+// Igual que detectarPlataforma, pero mirando SOLO el registro de bancos (Santander/Supervielle).
+// La usa /arqueobanco: no debe confundir un extracto bancario con una liquidación de MP/Talo
+// (no pasaría, los encabezados no se parecen) ni, sobre todo, hacer que un archivo de MP/Talo
+// caiga acá por error — cada `reconoce()` es específico de su propio archivo.
+function detectarPlataformaBanco(buffer) {
+  const XLSX = require('xlsx');
+  let filas;
+  try {
+    const wb = XLSX.read(buffer, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws || !ws['!ref']) return null;
+    filas = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
+  } catch (e) {
+    return null;
+  }
+  for (let i = 0; i < Math.min(filas.length, 20); i++) {
+    const enc = (filas[i] || []).map(clave);
+    if (!enc.length) continue;
+    const p = PLATAFORMAS_BANCOS.find((x) => x.reconoce(enc));
+    if (p) return p;
+  }
+  return null;
+}
+
+module.exports = {
+  PLATAFORMAS, PLATAFORMAS_BANCOS, porCodigo, plataformasManuales, detectarPlataforma, detectarPlataformaBanco,
+};
