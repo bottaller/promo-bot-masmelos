@@ -1,86 +1,72 @@
-// Wizard /carga (admin): la carga NOCTURNA de los documentos del día. Reemplaza a /libro y le
-// suma las liquidaciones de las plataformas de cobro. El admin manda, en cualquier orden:
-//   - el LIBRO DIARIO (Diario de Sigma)     → se archiva permanente (lo usan cierre/mp/flujos),
-//   - la liquidación de MERCADO PAGO         → queda en espera para el arqueo de las 08:00.
+// Wizard /carga: la puerta de entrada de TODOS los .xlsx que recibe el bot. El usuario manda los
+// archivos en cualquier orden y el bot reconoce cada uno solo (no hay que decirle cuál es cuál).
+//
+// Qué entra hoy (ver lib/documentos-carga.js, que es donde se declara cada tipo):
+//   - el LIBRO DIARIO (Diario de Sigma)  → se archiva permanente (lo usan cierre/mp/flujos),
+//   - la liquidación de MERCADO PAGO      → queda en espera para el arqueo de las 08:00,
+//   - la PLANILLA DE RETIROS              → alimenta la pantalla /tv_recepcion del sitio.
 // TALO NO se pide acá: se baja sola por API a las 21:00 (bajaPorApi), así que ni se reclama ni se
 // lista. Igual se puede subir a mano como fallback si la bajada falló (cae en la misma espera).
-// El bot RECONOCE cada archivo solo (no hay que decirle cuál es cuál). NO concilia en el momento:
-// a las 08:00 el barrido (entrega-arqueo.js) cruza las liquidaciones contra el libro y manda los
-// reportes a Tesorería + Caja Central. Acá solo se recibe, se guarda y se confirma qué falta.
 //
-// Admin-only a propósito (igual que /libro): es data financiera y el libro no lo debe pisar
-// cualquiera con dos exports distintos del mismo día.
+// DOS RITMOS DISTINTOS conviven en el mismo comando. El libro y las liquidaciones son la carga
+// NOCTURNA: no se concilia en el momento, a las 08:00 el barrido (entrega-arqueo.js) cruza todo y
+// manda los reportes. La planilla de retiros es lo contrario: se sube durante el día, varias veces.
+// Por eso el resumen final solo reclama lo nocturno si efectivamente se cargó algo nocturno — si
+// no, alguien que sube retiros a las 11 de la mañana se llevaría un "me falta el libro" que no
+// tiene nada que ver con lo que hizo.
+//
+// EL PERMISO ES POR DOCUMENTO, no por comando: entra cualquiera que pueda subir al menos un tipo,
+// y al reconocer el archivo se valida si esa persona puede. Así el área Retiros sube su planilla
+// sin que se le abran el libro ni las liquidaciones, que son data financiera.
 const { Scenes } = require('telegraf');
 const { esCancelar } = require('../lib/wizard');
-const { detectarPlataforma, PLATAFORMAS, plataformasManuales } = require('../lib/plataformas');
-const { registrarLibro, LibroError } = require('../lib/registrar-libro');
-const { guardarLiquidacion, plataformasPendientesDe } = require('../db/liquidaciones-pendientes');
+const { PLATAFORMAS, plataformasManuales } = require('../lib/plataformas');
+const { LibroError } = require('../lib/registrar-libro');
+const { plataformasPendientesDe } = require('../db/liquidaciones-pendientes');
 const { avisarLibroResuelto } = require('../aviso-libro');
 const { cubreFecha } = require('../db/libro');
-const { formatoVencimiento } = require('../lib/fechas');
+const {
+  DocumentoInvalido, puedeSubir, documentosDe, puedeUsarCarga, detectarDocumento, isoALinda,
+} = require('../lib/documentos-carga');
 
-function esAdmin(u) {
-  return !!(u && u.es_admin);
-}
 async function bajarDoc(ctx, doc) {
   const link = await ctx.telegram.getFileLink(doc.file_id);
   const resp = await fetch(link.href);
   return Buffer.from(await resp.arrayBuffer());
 }
-function kb(bytes) {
-  return `${Math.round((bytes || 0) / 1024)} KB`;
-}
-function isoADate(iso) {
-  const [y, m, d] = String(iso).split('-').map(Number);
-  return new Date(y, m - 1, d);
-}
-function isoALinda(iso) {
-  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
-}
-// Día que cubre la liquidación ('AAAA-MM-DD'), o null si abarca varios (no se puede archivar sola).
-function diaDeLiquidacion(liq) {
-  const dias = [...new Set((liq.operaciones || []).map((o) => (o.hora || '').slice(0, 10)).filter(Boolean))].sort();
-  return dias.length === 1 ? dias[0] : null;
-}
 
-// Rutea UN documento: detecta qué es y lo guarda donde va. NO tira por archivo inválido: devuelve
-// un objeto con el resultado para que el wizard arme el mensaje. `dias` acumula los días tocados.
-async function rutearDoc({ buffer, nombreArchivo, usuarioId }) {
-  // 1) ¿Es la liquidación de una plataforma? (se reconoce por los encabezados)
-  const plataforma = detectarPlataforma(buffer);
-  if (plataforma) {
-    let liq;
-    try {
-      liq = plataforma.parsear(buffer);
-    } catch (e) {
-      if (e instanceof plataforma.Error) return { tipo: 'invalido', msg: `${plataforma.nombre}: ${e.message}` };
-      throw e;
-    }
-    const dia = diaDeLiquidacion(liq);
-    if (!dia) {
-      return { tipo: 'invalido', msg: `Esa liquidación de ${plataforma.nombre} abarca varios días. Mandame una por día para poder arquearla contra su libro.` };
-    }
-    await guardarLiquidacion({
-      fecha: isoADate(dia), plataforma: plataforma.codigo, archivo: buffer,
-      nombreArchivo, nOperaciones: liq.operaciones.length, usuarioId,
-    });
-    return { tipo: 'liquidacion', plataforma, dia, n: liq.operaciones.length };
+// Rutea UN documento: detecta qué es, valida el permiso y lo guarda donde va. NO tira por archivo
+// inválido ni por falta de permiso: devuelve un objeto con el resultado para que el wizard arme el
+// mensaje.
+async function rutearDoc({ buffer, nombreArchivo, usuario }) {
+  const doc = detectarDocumento(buffer);
+  if (!doc) return { tipo: 'no_reconocido', msg: '' };
+
+  // El permiso se chequea DESPUÉS de saber qué es y ANTES de escribir nada: detectar solo lee
+  // encabezados, así que hasta acá no se tocó la base.
+  if (!puedeSubir(usuario, doc)) {
+    return {
+      tipo: 'sin_permiso',
+      msg: `🔒 Reconocí el archivo (${doc.nombre.toLowerCase()}), pero ese documento no lo subís vos. ` +
+           'Pedile a quien corresponda que lo cargue.',
+    };
   }
 
-  // 2) Si no es liquidación, tiene que ser el LIBRO (Diario de Sigma). registrarLibro valida el
-  //    formato: si no es un Diario válido, tira LibroError y lo tratamos como "no reconocido".
   try {
-    const res = await registrarLibro({ buffer, nombreArchivo, usuarioId });
-    return { tipo: 'libro', res };
+    const res = await doc.procesar({ buffer, nombreArchivo, usuarioId: usuario ? usuario.id : null });
+    return { tipo: 'ok', doc, ...res };
   } catch (e) {
+    // El libro es el catch-all: que no parsee significa que el archivo no era ninguno de los tipos.
     if (e instanceof LibroError) return { tipo: 'no_reconocido', msg: e.message };
+    if (e instanceof DocumentoInvalido) return { tipo: 'invalido', msg: e.message };
     throw e;
   }
 }
 
-// Estado del día para el resumen: qué hay y qué falta (libro + cada plataforma).
+// Estado del día para el resumen NOCTURNO: qué hay y qué falta (libro + cada plataforma).
 async function estadoDelDia(dia) {
-  const fecha = isoADate(dia);
+  const [y, m, d] = String(dia).split('-').map(Number);
+  const fecha = new Date(y, m - 1, d);
   const [tieneLibro, plataformas] = await Promise.all([
     cubreFecha({ fecha }).catch(() => false),
     plataformasPendientesDe({ fecha }).catch(() => []),
@@ -114,72 +100,69 @@ function encolar(ctx, tarea) {
 async function procesarDoc(ctx, doc, st) {
   try {
     const buffer = await bajarDoc(ctx, doc);
-    const u = ctx.state.usuario;
-    const r = await rutearDoc({ buffer, nombreArchivo: doc.file_name || 'archivo.xlsx', usuarioId: u ? u.id : null });
+    const usuario = ctx.state.usuario;
+    const r = await rutearDoc({ buffer, nombreArchivo: doc.file_name || 'archivo.xlsx', usuario });
 
-    if (r.tipo === 'no_reconocido' || r.tipo === 'invalido') {
+    if (r.tipo === 'no_reconocido') {
+      // Se enumera solo lo que ESTA persona puede subir: listarle documentos que no le
+      // corresponden es ruido y la manda a buscar un archivo que no tiene.
+      const mios = documentosDe(usuario).map((d) => d.nombre.toLowerCase());
       await ctx.reply(
-        (r.tipo === 'no_reconocido'
-          ? '🤔 No reconozco ese archivo. Esperaba el libro diario de Sigma o una liquidación de ' +
-            `${PLATAFORMAS.map((p) => p.nombre).join(' / ')}.\n\n`
-          : '') + r.msg
+        '🤔 No reconozco ese archivo.' +
+        (mios.length ? ` Esperaba: ${mios.join(', ')}.` : '') +
+        (r.msg ? `\n\n${r.msg}` : '')
       );
       return;
     }
-    if (r.tipo === 'liquidacion') {
-      st.dias.add(r.dia);
-      await ctx.reply(
-        `✅ <b>${r.plataforma.nombre}</b>: ${r.n} operación(es) del <b>${isoALinda(r.dia)}</b>, en espera para el arqueo de las 08:00.\n\n` +
-        'Mandame otro documento o escribí <b>listo</b>.',
-        { parse_mode: 'HTML' }
-      );
+    if (r.tipo === 'invalido' || r.tipo === 'sin_permiso') {
+      await ctx.reply(r.msg, { parse_mode: 'HTML' });
       return;
     }
 
-    // Libro cargado (registrarLibro devolvió el resumen). Se archiva y avisa como /libro.
-    const res = r.res;
-    st.huboLibro = true;
-    if (res.jornada) st.dias.add(res.jornada instanceof Date
-      ? `${res.jornada.getFullYear()}-${String(res.jornada.getMonth() + 1).padStart(2, '0')}-${String(res.jornada.getDate()).padStart(2, '0')}`
-      : String(res.jornada).slice(0, 10));
-    const rango = formatoVencimiento(res.desde) === formatoVencimiento(res.hasta)
-      ? formatoVencimiento(res.desde)
-      : `${formatoVencimiento(res.desde)} al ${formatoVencimiento(res.hasta)}`;
-    const partes = [
-      `✅ <b>Libro</b> cargado — jornada <b>${formatoVencimiento(res.jornada)}</b> (${res.filas} mov. · ${kb(buffer.length)}).`,
-      `📅 Trae del: ${rango}`,
-    ];
-    if (res.yaHabia) partes.push(`⚠️ Reemplacé el libro que ya estaba de esa jornada (tenía ${res.previo.filas} mov.).`);
-    if (res.huecos && res.huecos.length) {
-      partes.push(`📭 Días sin libro en la semana: <b>${res.huecos.map((iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`).join(', ')}</b> <i>(ignorá los feriados)</i>`);
-    }
-    partes.push('', 'Mandame otro documento o escribí <b>listo</b>.');
-    await ctx.reply(partes.join('\n'), { parse_mode: 'HTML' });
+    st.huboAlgo = true;
+    for (const dia of r.dias || []) (r.doc.nocturno ? st.diasNocturnos : st.diasRetiros).add(dia);
+    await ctx.reply(`${r.mensaje}\n\nMandame otro documento o escribí <b>listo</b>.`, { parse_mode: 'HTML' });
 
     // Como /libro: si había un aviso "falta el libro" pendiente, avisar al resto que ya está.
-    const u2 = ctx.state.usuario;
-    try {
-      await avisarLibroResuelto(ctx.telegram, {
-        subidoPorTxt: (u2 && u2.nombre) || (ctx.from && ctx.from.username ? '@' + ctx.from.username : ''),
-        subidoPorTelegramId: ctx.from && ctx.from.id,
-      });
-    } catch (e) { console.error('carga: avisarLibroResuelto falló (sigo):', e.message); }
+    if (r.huboLibro) {
+      st.huboLibro = true;
+      try {
+        await avisarLibroResuelto(ctx.telegram, {
+          subidoPorTxt: (usuario && usuario.nombre) || (ctx.from && ctx.from.username ? '@' + ctx.from.username : ''),
+          subidoPorTelegramId: ctx.from && ctx.from.id,
+        });
+      } catch (e) { console.error('carga: avisarLibroResuelto falló (sigo):', e.message); }
+    }
   } catch (e) {
     console.error('Error en /carga (documento):', e.message);
     await ctx.reply('Hubo un problema con ese archivo. Probá de nuevo o avisá al admin.');
   }
 }
 
-// Cierra la carga con el resumen del día (qué falta). Corre DESPUÉS de los documentos en vuelo
-// (va por la misma cola), así el estado que reporta ya incluye lo recién guardado.
+// Cierra la carga. Corre DESPUÉS de los documentos en vuelo (va por la misma cola), así el estado
+// que reporta ya incluye lo recién guardado.
+//
+// El reclamo de "me falta el libro / Mercado Pago" es de la carga NOCTURNA y solo sale si se cargó
+// algo nocturno. Quien sube la planilla de retiros a media mañana no tiene por qué llevarse un
+// pedido de documentos de Tesorería que ni siquiera puede subir.
 async function finalizar(ctx, st) {
-  if (!st.dias.size && !st.huboLibro) { await ctx.reply('Todavía no me mandaste ningún documento.'); return ctx.scene.leave(); }
-  const lineas = ['✅ <b>Listo por hoy.</b>'];
-  for (const dia of [...st.dias].sort()) {
-    const e = await estadoDelDia(dia);
-    lineas.push('', `📅 <b>${isoALinda(dia)}</b>:`);
-    if (!e.faltan.length) lineas.push('   Tengo todo (libro + liquidaciones). El arqueo sale a las 08:00. ✅');
-    else lineas.push(`   Me falta: <b>${e.faltan.join(', ')}</b>. Subilo y a las 08:00 arqueo lo que tenga.`);
+  if (!st.huboAlgo) { await ctx.reply('Todavía no me mandaste ningún documento.'); return ctx.scene.leave(); }
+
+  const lineas = [];
+  if (st.diasNocturnos.size) {
+    lineas.push('✅ <b>Listo por hoy.</b>');
+    for (const dia of [...st.diasNocturnos].sort()) {
+      const e = await estadoDelDia(dia);
+      lineas.push('', `📅 <b>${isoALinda(dia)}</b>:`);
+      if (!e.faltan.length) lineas.push('   Tengo todo (libro + liquidaciones). El arqueo sale a las 08:00. ✅');
+      else lineas.push(`   Me falta: <b>${e.faltan.join(', ')}</b>. Subilo y a las 08:00 arqueo lo que tenga.`);
+    }
+  }
+  if (st.diasRetiros.size) {
+    if (lineas.length) lineas.push('');
+    const dias = [...st.diasRetiros].sort().map(isoALinda).join(', ');
+    lineas.push(`📺 <b>Pantalla de recepción</b> actualizada con: ${dias}.`);
+    lineas.push('<i>Volvé a mandarme la planilla cada vez que la actualices y la pantalla se pone al día.</i>');
   }
   await ctx.reply(lineas.join('\n'), { parse_mode: 'HTML' });
   return ctx.scene.leave();
@@ -187,32 +170,49 @@ async function finalizar(ctx, st) {
 
 const cargaWizard = new Scenes.WizardScene(
   'carga-wizard',
-  // 0: explicar y pedir los documentos del día
+  // 0: explicar y pedir los documentos, listando solo lo que ESTA persona puede subir
   async (ctx) => {
-    ctx.wizard.state.data = { dias: new Set(), huboLibro: false };
-    const lista = ['• <b>Libro diario</b> (Diario de movimientos de Sigma)']
-      .concat(plataformasManuales().map((p) => `• <b>${p.nombre}</b> (liquidación del panel)`))
-      .join('\n');
-    // Plataformas que se bajan solas por API (hoy Talo): se avisa que NO hay que subirlas. Todo
-    // pluralizado por si mañana hay más de una plataforma automática (2+ → "A, B y C se descargan…").
-    const auto = PLATAFORMAS.filter((p) => p.bajaPorApi).map((p) => p.nombre);
+    ctx.wizard.state.data = {
+      diasNocturnos: new Set(), diasRetiros: new Set(), huboLibro: false, huboAlgo: false,
+    };
+    const usuario = ctx.state.usuario;
+    const mios = documentosDe(usuario);
+    if (!mios.length) { await ctx.reply('No tenés ningún documento para cargar.'); return ctx.scene.leave(); }
+
+    const lista = mios.flatMap((d) => d.etiquetas()).map((e) => `• ${e}`).join('\n');
+
+    // Plataformas que se bajan solas por API (hoy Talo): se avisa que NO hay que subirlas. Solo si
+    // esta persona sube liquidaciones — a quien carga retiros no le dice nada. Todo pluralizado por
+    // si mañana hay más de una plataforma automática ("A y B se descargan…").
     let notaAuto = '';
-    if (auto.length) {
-      const varios = auto.length > 1;
-      const nombres = varios ? `${auto.slice(0, -1).join(', ')} y ${auto[auto.length - 1]}` : auto[0];
-      const la = varios ? 'las' : 'la';
-      notaAuto =
-        `🤖 <b>${nombres}</b> se descarga${varios ? 'n' : ''} sola${varios ? 's' : ''} por API a las 21:00 — ` +
-        `no hace falta subirla${varios ? 's' : ''} a mano ` +
-        `(si algún día te ${la} pido porque ${varios ? 'fallaron' : 'falló'}, ${la} podés mandar acá igual).\n\n`;
+    if (mios.some((d) => d.codigo === 'liquidacion')) {
+      const auto = PLATAFORMAS.filter((p) => p.bajaPorApi).map((p) => p.nombre);
+      if (auto.length) {
+        const varios = auto.length > 1;
+        const nombres = varios ? `${auto.slice(0, -1).join(', ')} y ${auto[auto.length - 1]}` : auto[0];
+        const la = varios ? 'las' : 'la';
+        notaAuto =
+          `🤖 <b>${nombres}</b> se descarga${varios ? 'n' : ''} sola${varios ? 's' : ''} por API a las 21:00 — ` +
+          `no hace falta subirla${varios ? 's' : ''} a mano ` +
+          `(si algún día te ${la} pido porque ${varios ? 'fallaron' : 'falló'}, ${la} podés mandar acá igual).\n\n`;
+      }
     }
+
+    // La nota del cierre nocturno tampoco aplica a quien solo sube retiros.
+    const notaNocturna = mios.some((d) => d.nocturno)
+      ? '🕗 El libro queda archivado; las liquidaciones se arquean solas a las 08:00 y el reporte ' +
+        'les llega a Tesorería y Caja Central.\n\n'
+      : '';
+    const notaRetiros = mios.some((d) => d.codigo === 'retiros')
+      ? '📺 La planilla de retiros actualiza la pantalla de recepción al toque. Mandámela cada vez ' +
+        'que la cambies.\n\n'
+      : '';
+
     await ctx.reply(
-      '📥 <b>Carga del día</b>.\n\n' +
-      `Mandame los documentos del día (uno o varios, en cualquier orden):\n${lista}\n\n` +
-      notaAuto +
-      '🔎 Reconozco cada archivo solo: no hace falta que me digas cuál es cuál.\n' +
-      '🕗 El libro queda archivado; las liquidaciones se arquean solas a las 08:00 y el reporte ' +
-      'les llega a Tesorería y Caja Central.\n\n' +
+      '📥 <b>Carga de documentos</b>.\n\n' +
+      `Mandame los archivos (uno o varios, en cualquier orden):\n${lista}\n\n` +
+      notaAuto + notaRetiros + notaNocturna +
+      '🔎 Reconozco cada archivo solo: no hace falta que me digas cuál es cuál.\n\n' +
       'Cuando termines, escribí <b>listo</b>.\n(o escribí "cancelar")',
       { parse_mode: 'HTML' }
     );
@@ -223,7 +223,8 @@ const cargaWizard = new Scenes.WizardScene(
   // pisarse, y el "listo" resume DESPUÉS de que todo se guardó.
   async (ctx) => {
     if (ctx.message && esCancelar(ctx.message.text)) { await ctx.reply('Carga cancelada.'); return ctx.scene.leave(); }
-    if (!esAdmin(ctx.state.usuario)) { await ctx.reply('Solo un administrador puede cargar los documentos.'); return ctx.scene.leave(); }
+    // El permiso fino es por documento (ver rutearDoc); acá solo se corta a quien no puede subir nada.
+    if (!puedeUsarCarga(ctx.state.usuario)) { await ctx.reply('No tenés ningún documento para cargar.'); return ctx.scene.leave(); }
     const st = ctx.wizard.state.data;
     const doc = ctx.message && ctx.message.document;
 
