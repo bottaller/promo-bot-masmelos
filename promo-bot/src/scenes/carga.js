@@ -191,7 +191,7 @@ const cargaWizard = new Scenes.WizardScene(
   async (ctx) => {
     ctx.wizard.state.data = { dias: new Set(), huboLibro: false };
     const lista = ['• <b>Libro diario</b> (Diario de movimientos de Sigma)']
-      .concat(plataformasManuales().map((p) => `• <b>${p.nombre}</b> (liquidación del panel)`))
+      .concat(plataformasManuales().map((p) => `• <b>${p.nombre}</b> (${p.archivoEsperado})`))
       .join('\n');
     // Plataformas que se bajan solas por API (hoy Talo): se avisa que NO hay que subirlas. Todo
     // pluralizado por si mañana hay más de una plataforma automática (2+ → "A, B y C se descargan…").

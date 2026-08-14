@@ -71,10 +71,12 @@ t('fecha/hora ilegible NO se inventa: tira error', () => {
 console.log('plataformas: alcance y detección');
 const TALO = porCodigo('talo');
 const MP = porCodigo('mp');
-t('el registro tiene las dos, con su cuenta de Sigma', () => {
-  assert.strictEqual(PLATAFORMAS.length, 2);
+t('el registro tiene las cuatro, con su cuenta de Sigma', () => {
+  assert.strictEqual(PLATAFORMAS.length, 4);
   assert.strictEqual(MP.cuenta, 422101014);
   assert.strictEqual(TALO.cuenta, 42210108); // TALO HONRE S.A
+  assert.strictEqual(porCodigo('santander').cuenta, 111201014);
+  assert.strictEqual(porCodigo('supervielle').cuenta, 111201015);
 });
 t('Talo: entra RECIBIDO, queda fuera ENVIADO', () => {
   assert.strictEqual(TALO.enAlcance({ estado: 'RECIBIDO', bruto: 100 }), true);

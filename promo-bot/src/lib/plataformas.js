@@ -1,4 +1,5 @@
-// Las plataformas de cobro que se arquean contra el libro (hoy: Mercado Pago y Talo).
+// Las plataformas de cobro que se arquean contra el libro (hoy: Mercado Pago, Talo, Santander
+// y Supervielle).
 //
 // Cada una declara lo ÚNICO que la hace distinta: contra qué cuenta de Sigma asienta, cómo se
 // parsea su liquidación, qué operaciones entran en el arqueo, y cuánto tarda en asentarse. El
@@ -8,6 +9,8 @@
 const { parsearLiquidacion, LiquidacionError } = require('./liquidacion-excel');
 const { parsearCollection, esCollection } = require('./collection-excel');
 const { parsearTalo, TaloError, ESTADO_COBRO } = require('./talo-excel');
+const { parsearSantander, SantanderError, categoriaExcluida: categoriaExcluidaSantander } = require('./santander-excel');
+const { parsearSupervielle, SupervielleError, categoriaExcluida: categoriaExcluidaSupervielle } = require('./supervielle-excel');
 
 // MP puede venir en DOS formatos: el "Collection" (Cobros, disponible el MISMO día — el que se usa
 // hoy) o el "settlement_v2" (a día vencido). Se detecta por los encabezados y se rutea al parser
@@ -49,6 +52,24 @@ function motivoFueraTalo(op) {
   if (op.estado && op.estado !== ESTADO_COBRO) return `Es "${op.estado}", no un cobro recibido`;
   if (op.bruto <= 0) return 'Importe cero o negativo: no es un cobro';
   return 'Fuera del alcance';
+}
+
+// --- Bancos (Santander / Supervielle) --------------------------------------
+// El extracto no distingue "cobro" de cualquier otra plata que entra: acá el alcance es
+// "todo Crédito que no sea un movimiento automático del banco sin asiento propio en Sigma"
+// (impuestos, comisiones, percepciones — ver categoriaExcluida en cada parser). Los Débito
+// (plata que sale) quedan fuera siempre: el motor solo mira el Debe del sistema.
+function enAlcanceBanco(op) {
+  return op.sentido === 'credito' && op.bruto > 0;
+}
+function motivoFueraBanco(categoriaExcluida) {
+  return (op) => {
+    if (op.sentido !== 'credito') return 'Egreso (Débito): no es un cobro';
+    return categoriaExcluida(op.concepto) || 'Fuera del alcance';
+  };
+}
+function enAlcanceBancoFiltrado(categoriaExcluida) {
+  return (op) => enAlcanceBanco(op) && !categoriaExcluida(op.concepto);
 }
 
 const PLATAFORMAS = [
@@ -95,6 +116,39 @@ const PLATAFORMAS = [
     // barrido ya avisa a los admins. (Igual se puede subir con /carga como fallback: eso lo arquea
     // el barrido de las 08:00.)
     bajaPorApi: true,
+  },
+  {
+    codigo: 'santander',
+    nombre: 'Santander',
+    corto: 'Santander',
+    cuenta: 111201014,
+    cuentaNombre: 'BCO. SANTANDER (HONRE) 144-002914',
+    archivoEsperado: 'extracto de movimientos (homebanking de Santander, exportado a Excel)',
+    alcanceTxt: 'cobros recibidos por transferencia',
+    parsear: parsearSantander,
+    Error: SantanderError,
+    enAlcance: enAlcanceBancoFiltrado(categoriaExcluidaSantander),
+    motivoFuera: motivoFueraBanco(categoriaExcluidaSantander),
+    // Sin hora en el extracto: la ventana de tiempo no aplica (ver conciliarMP: `sinHora`).
+    deltaSospechosoSeg: 24 * 3600,
+    referencia: (o) => o.referencia || o.concepto || '',
+    reconoce: (encabezados) => encabezados.includes('importe pesos') && encabezados.includes('saldo pesos'),
+  },
+  {
+    codigo: 'supervielle',
+    nombre: 'Supervielle',
+    corto: 'Supervielle',
+    cuenta: 111201015,
+    cuentaNombre: 'BCO. SUPERVIELLE CTA CTE HONRE',
+    archivoEsperado: 'extracto de movimientos (homebanking de Supervielle, exportado a Excel)',
+    alcanceTxt: 'cobros recibidos por transferencia',
+    parsear: parsearSupervielle,
+    Error: SupervielleError,
+    enAlcance: enAlcanceBancoFiltrado(categoriaExcluidaSupervielle),
+    motivoFuera: motivoFueraBanco(categoriaExcluidaSupervielle),
+    deltaSospechosoSeg: 24 * 3600,
+    referencia: (o) => o.referencia || o.concepto || '',
+    reconoce: (encabezados) => encabezados.includes('debito') && encabezados.includes('credito') && encabezados.includes('detalle'),
   },
 ];
 
