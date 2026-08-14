@@ -15,6 +15,7 @@ const carritoWeb = require('./areas/carritoweb');
 const deposito = require('./areas/deposito');
 const marketing = require('./areas/marketing');
 const ventas = require('./areas/ventas');
+const retiros = require('./areas/retiros');
 const admin = require('./admin');
 const { iniciarAvisos } = require('./avisos');
 const { iniciarAvisoLibro } = require('./aviso-libro');
@@ -27,7 +28,7 @@ const { anunciarDeploy } = require('./aviso-deploy');
 const { iniciarChequeoDemoraAjustes } = require('./ajustes-demora');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
-const areas = [calidad, compras, tesoreria, cajaCentral, carritoWeb, deposito, marketing, ventas];
+const areas = [calidad, compras, tesoreria, cajaCentral, carritoWeb, deposito, marketing, ventas, retiros];
 
 // Variables imprescindibles para arrancar.
 const requeridas = ['BOT_TOKEN', 'DATABASE_URL'];
