@@ -62,8 +62,11 @@ t('deriva impuestos para que comisión+impuestos = neto−bruto', () => {
   assert.ok(Math.abs((o.bruto + o.comision + o.impuestos) - o.neto) < 0.01, 'bruto+comisión+impuestos = neto');
 });
 
-console.log('alcance: solo QR + approved entran a la cuenta MP');
-t('QR approved entra; Point y rejected quedan fuera con su motivo', () => {
+// Point AHORA entra al arqueo: la venta con terminal se asienta en las cuentas de TARJETA y se
+// concilia junto con el QR (ver plataformas.js::incluirCuenta). Antes quedaba "fuera de alcance";
+// hoy solo la operación NO aprobada (rechazada) queda afuera.
+console.log('alcance: QR + Point approved entran; la rechazada no');
+t('QR y Point approved entran; la rechazada queda fuera con su motivo', () => {
   const mp = porCodigo('mp');
   const { operaciones } = parsearCollection(aBuffer([HDR,
     op('a', 1000, '23/07/2026 10:00:00', { sub: 'QR', status: 'approved' }),
@@ -72,10 +75,11 @@ t('QR approved entra; Point y rejected quedan fuera con su motivo', () => {
   ]));
   const dentro = operaciones.filter(mp.enAlcance);
   const fuera = operaciones.filter((o) => !mp.enAlcance(o));
-  assert.strictEqual(dentro.length, 1);
-  assert.strictEqual(dentro[0].source_id, 'a');
-  assert.strictEqual(fuera.length, 2);
-  assert.match(mp.motivoFuera(operaciones[1]), /Point/);       // b: Point → tarjetas
+  assert.strictEqual(dentro.length, 2);                          // QR 'a' + Point 'b'
+  assert.deepStrictEqual(dentro.map((o) => o.source_id).sort(), ['a', 'b']);
+  assert.strictEqual(operaciones[1].canal, 'Point');            // 'b' es Point y entra igual
+  assert.strictEqual(fuera.length, 1);
+  assert.strictEqual(fuera[0].source_id, 'c');
   assert.match(mp.motivoFuera(operaciones[2]), /aprobado|rejected/i); // c: rechazada
 });
 t('una DEVOLUCIÓN aprobada por QR (importe POSITIVO) queda FUERA — se filtra por operation_type', () => {
@@ -106,7 +110,7 @@ t('deriva estado (accredited→approved), canal (regular→QR, pos→Point) y fe
   assert.strictEqual(a.hora, '2026-07-27 00:00:00');   // date_created_short: sin hora
   assert.strictEqual(b.canal, 'Point');                // operation_type 'pos_payment' → Point
 });
-t('el alcance de MP anda igual con el formato nuevo (QR approved entra, Point y rechazada fuera)', () => {
+t('el alcance anda igual con el formato nuevo (QR y Point approved entran, la rechazada no)', () => {
   const mp = porCodigo('mp');
   const { operaciones } = parsearCollection(aBuffer([HDR_NUEVO,
     opN('a', 1000, '2026-07-27', { det: 'accredited', tipo: 'regular_payment' }),
@@ -114,8 +118,8 @@ t('el alcance de MP anda igual con el formato nuevo (QR approved entra, Point y 
     opN('c', 3000, '2026-07-27', { det: 'cc_rejected_high_risk', tipo: 'regular_payment' }),
   ]));
   const dentro = operaciones.filter(mp.enAlcance);
-  assert.strictEqual(dentro.length, 1);
-  assert.strictEqual(dentro[0].source_id, 'a');
+  assert.strictEqual(dentro.length, 2);                            // QR 'a' + Point 'b'
+  assert.deepStrictEqual(dentro.map((o) => o.source_id).sort(), ['a', 'b']);
 });
 t('sin status NI status_detail, error claro (status o status_detail)', () => {
   const hdr = ['Op (operation_id)', 'Tipo (operation_type)', 'Valor (transaction_amount)',

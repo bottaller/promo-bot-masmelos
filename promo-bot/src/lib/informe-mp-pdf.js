@@ -257,8 +257,8 @@ function construirInformePDF({ fecha, resultados, cuenta, resultado, generadoEn,
     // Pie
     const pieY = doc.page.height - doc.page.margins.bottom - 22;
     doc.font('Helvetica').fontSize(7.5).fillColor(GRIS).text(
-      'Alcance: los cobros que cada plataforma liquida en su cuenta. Point, Mercado Libre y salidas de '
-      + 'dinero quedan fuera. Generado automáticamente por el bot de Más Melos.',
+      'Alcance: las cobranzas de cada plataforma sin importar el canal (QR, transferencia, tarjeta/Point). '
+      + 'Mercado Libre y las salidas de dinero quedan fuera. Generado automáticamente por el bot de Más Melos.',
       x, pieY, { width: ancho, align: 'center' }
     );
 

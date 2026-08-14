@@ -383,6 +383,155 @@ const filaDiario = (cuentaId, debe, ingreso) => [
   8300319, '14/07/2026', 'PG23', 'COBRANZA CAJA MORENO (1)', cuentaId, 'MERCADO PAGO MORENO', null, null,
   debe, 0, debe, 0, 'COBRANZA CAJA MORENO (1)', '030640-MALDONADO RAUL', 'NIEVASA', ingreso];
 
+console.log('conciliarMP() + parsearMayor(): Point entra al arqueo (canal Point + cuentas de tarjeta)');
+const { porCodigo } = require('../src/lib/plataformas');
+const MP_DESC = porCodigo('mp');
+t('un cobro Point aparea igual que uno QR (mismo motor, por importe)', () => {
+  const r = conciliarMP({
+    movimientos: [M(500000, '2026-08-05 00:00:00', { cuenta: 'TARJETA VISA CREDITO MORENO', cuenta_id: 111301001 })],
+    operaciones: [O(500000, '2026-08-05 00:00:00', { canal: 'Point', instrumento: 'credit_card' })],
+    plataforma: MP_DESC,
+  });
+  assert.strictEqual(r.pares.length, 1);
+  assert.strictEqual(r.soloSistema.length + r.soloMp.length, 0);
+  assert.strictEqual(r.resumen.nivel, 'ok');
+});
+t('QR y Point conviven en el MISMO arqueo (los dos en alcance)', () => {
+  const r = conciliarMP({
+    movimientos: [M(1000, '2026-08-05 00:00:00'), M(2000, '2026-08-05 00:00:00', { cuenta: 'TARJETA MASTERCARD MORENO' })],
+    operaciones: [O(1000, '2026-08-05 00:00:00', { canal: 'QR Code' }), O(2000, '2026-08-05 00:00:00', { canal: 'Point' })],
+    plataforma: MP_DESC,
+  });
+  assert.strictEqual(r.resumen.nMp, 2);
+  assert.strictEqual(r.pares.length, 2);
+});
+t('un Point RECHAZADO (tipo != Approved payment) NO entra: si no, inflaría el arqueo', () => {
+  const r = conciliarMP({
+    movimientos: [],
+    operaciones: [O(2942585.16, '2026-08-05 00:00:00', { canal: 'Point', tipo: 'pos_payment' })],
+    plataforma: MP_DESC,
+  });
+  assert.strictEqual(r.resumen.nMp, 0);
+  assert.strictEqual(r.fuera.mp.length, 1);
+});
+t('parsearMayor incluir: mete las cuentas TARJETA en movimientos, deja el resto afuera', () => {
+  const filaTarjeta = (cuentaId, nombre, debe, ingreso) => [
+    8300400, '14/07/2026', 'PG23', 'COBRANZA', cuentaId, nombre, null, null,
+    debe, 0, debe, 0, 'COBRANZA', '030640-CLIENTE', 'NIEVASA', ingreso];
+  const buf = aBuffer([
+    ['Empresa: 0008-HONRE_2'],
+    ['Diario de movimientos contables del 07/14/2026 al 07/14/2026'],
+    HDR_DIARIO,
+    filaDiario(422101014, 88146.06, '14/07/2026 08:38:28'),                               // MP QR
+    filaTarjeta(111301001, 'TARJETA VISA CREDITO MORENO', 500000, '14/07/2026 09:00:00'),  // Point
+    filaDiario(111201014, 999999, '14/07/2026 08:00:00'),                                 // Santander: NO
+  ]);
+  const incluir = (id, nombre) => /^\s*TARJETA\b/i.test(nombre);
+  const r = parsearMayor(buf, { cuentaId: CUENTA_MP, incluir });
+  assert.strictEqual(r.movimientos.length, 2);                                            // MP + tarjeta
+  assert.deepStrictEqual(r.movimientos.map((m) => m.cuenta_id).sort((a, b) => a - b), [111301001, 422101014]);
+  assert.ok(r.otrasCuentas.some((m) => m.cuenta_id === 111201014), 'Santander queda en otras cuentas');
+  assert.strictEqual(r.cuenta, 'MERCADO PAGO MORENO');                                    // encabezado = cuenta objetivo
+});
+t('parsearMayor SIN incluir: idéntico a antes (la tarjeta queda en otras cuentas)', () => {
+  const filaTarjeta = (cuentaId, nombre, debe, ingreso) => [
+    8300400, '14/07/2026', 'PG23', 'COBRANZA', cuentaId, nombre, null, null,
+    debe, 0, debe, 0, 'COBRANZA', '030640-CLIENTE', 'NIEVASA', ingreso];
+  const buf = aBuffer([
+    ['Empresa: 0008-HONRE_2'],
+    ['Diario de movimientos contables del 07/14/2026 al 07/14/2026'],
+    HDR_DIARIO,
+    filaDiario(422101014, 88146.06, '14/07/2026 08:38:28'),
+    filaTarjeta(111301001, 'TARJETA VISA CREDITO MORENO', 500000, '14/07/2026 09:00:00'),
+  ]);
+  const r = parsearMayor(buf, { cuentaId: CUENTA_MP }); // sin incluir
+  assert.strictEqual(r.movimientos.length, 1);          // solo MP, como siempre
+  assert.ok(r.otrasCuentas.some((m) => m.cuenta_id === 111301001), 'la tarjeta queda en otras cuentas');
+});
+
+const { parsearCollection } = require('../src/lib/collection-excel');
+const filaMov = (asiento, cuentaId, nombre, debe, haber, ingreso) => [
+  asiento, '05/08/2026', 'PG23', 'Mov', cuentaId, nombre, null, null,
+  debe, haber, debe, haber, 'Mov', '030640-CLIENTE', 'NIEVASA', ingreso];
+t('Fix A (regresion): una transferencia interna MP<->TARJETA NO se cuela como cobro', () => {
+  // Liquidacion de la tarjeta a MP: Debe 422101014 $850k / Haber TARJETA $850k. Ambas patas en
+  // cuentas objetivo -> antes del fix ninguna quedaba en otrasCuentas y el Debe MP salia como
+  // cobro falso; con el fix la pata TARJETA sigue en otrasCuentas y se reconoce la transferencia.
+  const buf = aBuffer([
+    ['Empresa: 0008-HONRE_2'],
+    ['Diario de movimientos contables del 08/05/2026 al 08/05/2026'],
+    HDR_DIARIO,
+    filaMov(8307600, 422101014, 'MERCADO PAGO MORENO', 850000, 0, '05/08/2026 13:00:00'),
+    filaMov(8307600, 111304001, 'TARJETA MASTERCARD MORENO', 0, 850000, '05/08/2026 13:00:00'),
+  ]);
+  const { movimientos, otrasCuentas } = parsearMayor(buf, { cuentaId: CUENTA_MP, incluir: MP_DESC.incluirCuenta });
+  assert.ok(otrasCuentas.some((m) => m.asiento === 8307600), 'la pata TARJETA debe quedar tambien en otrasCuentas');
+  const r = conciliarMP({ movimientos, operaciones: [], otrasCuentas, plataforma: MP_DESC });
+  assert.strictEqual(r.soloSistema.length, 0, 'la liquidacion NO debe salir como cobro sin aparear');
+  assert.strictEqual(r.resumen.nSistema, 0, 'no hay cobranzas: solo la transferencia, excluida');
+  assert.ok(r.fuera.sistema.some((m) => /Transferencia interna/.test(m.motivo)), 'debe marcarse como transferencia interna');
+});
+t('una VENTA Point real (Debe TARJETA + pata DEUDORES POR VENTA) por el Diario completo cuenta como cobranza y aparea', () => {
+  // El camino REAL de Point (el que corre el 05/08), no cubierto antes: la cobranza con terminal salda
+  // la deuda del cliente -> Debe TARJETA / Haber DEUDORES POR VENTA. La fila TARJETA entra a movimientos
+  // (Point) Y a otrasCuentas; la pata DEUDORES queda en otrasCuentas. Como el asiento SÍ toca DEUDORES,
+  // esTransferencia da false -> el Point SE cuenta y aparea (no se cae como transferencia falsa).
+  const buf = aBuffer([
+    ['Empresa: 0008-HONRE_2'],
+    ['Diario de movimientos contables del 08/05/2026 al 08/05/2026'],
+    HDR_DIARIO,
+    filaMov(8305000, 111301001, 'TARJETA VISA CREDITO MORENO', 500000, 0, '05/08/2026 10:00:00'),
+    filaMov(8305000, 112011001, 'DEUDORES POR VENTA', 0, 500000, '05/08/2026 10:00:00'),
+  ]);
+  const { movimientos, otrasCuentas } = parsearMayor(buf, { cuentaId: CUENTA_MP, incluir: MP_DESC.incluirCuenta });
+  const r = conciliarMP({
+    movimientos,
+    operaciones: [O(500000, '2026-08-05 00:00:00', { canal: 'Point', instrumento: 'credit_card' })],
+    otrasCuentas, plataforma: MP_DESC,
+  });
+  assert.strictEqual(r.resumen.nSistema, 1, 'la venta Point es una cobranza, NO una transferencia');
+  assert.strictEqual(r.pares.length, 1, 'aparea contra la operación Point por importe');
+  assert.strictEqual(r.soloSistema.length + r.soloMp.length, 0, 'nada queda sin aparear');
+  assert.strictEqual(r.resumen.totalSistema, 500000);
+  assert.ok(!r.fuera.sistema.some((m) => /Transferencia interna/.test(m.motivo)), 'NO debe marcarse como transferencia');
+});
+t('la pata DEUDORES es lo que hace contar la venta Point: sin ella, el Debe TARJETA es transferencia', () => {
+  // Contrato explícito de lo que el verificador marcó como dependencia "silenciosa": la correctitud de
+  // Point depende de que el asiento toque DEUDORES POR VENTA. Mismo Debe TARJETA pero con contrapartida
+  // que NO es una venta (ej. un ajuste contra CAJA) -> esTransferencia lo deja fuera del arqueo.
+  const buf = aBuffer([
+    ['Empresa: 0008-HONRE_2'],
+    ['Diario de movimientos contables del 08/05/2026 al 08/05/2026'],
+    HDR_DIARIO,
+    filaMov(8305001, 111301001, 'TARJETA VISA CREDITO MORENO', 500000, 0, '05/08/2026 10:00:00'),
+    filaMov(8305001, 111100001, 'CAJA MORENO', 0, 500000, '05/08/2026 10:00:00'), // contrapartida NO-venta
+  ]);
+  const { movimientos, otrasCuentas } = parsearMayor(buf, { cuentaId: CUENTA_MP, incluir: MP_DESC.incluirCuenta });
+  const r = conciliarMP({ movimientos, operaciones: [], otrasCuentas, plataforma: MP_DESC });
+  assert.strictEqual(r.resumen.nSistema, 0, 'sin pata DEUDORES, el Debe TARJETA se trata como transferencia');
+  assert.ok(r.fuera.sistema.some((m) => /Transferencia interna/.test(m.motivo)));
+});
+t('Fix C: una cuenta de tarjeta por ID conocido entra aunque el nombre NO empiece con TARJETA', () => {
+  const buf = aBuffer([
+    ['Empresa: 0008-HONRE_2'],
+    ['Diario de movimientos contables del 08/05/2026 al 08/05/2026'],
+    HDR_DIARIO,
+    filaMov(8300700, 422101014, 'MERCADO PAGO MORENO', 100, 0, '05/08/2026 08:00:00'),
+    filaMov(8300701, 111302002, 'NARANJA MORENO', 450000, 0, '05/08/2026 09:00:00'), // ID conocido, sin 'TARJETA'
+  ]);
+  const r = parsearMayor(buf, { cuentaId: CUENTA_MP, incluir: MP_DESC.incluirCuenta });
+  assert.ok(r.movimientos.some((m) => m.cuenta_id === 111302002), 'la cuenta de tarjeta por ID debe entrar a movimientos');
+});
+t('Fix B: parsearCollection deja Point FUERA de cobro si no hay operation_type (formato viejo)', () => {
+  const hdr = ['x (operation_id)', 'x (sub_unit)', 'x (status)', 'x (date_created)', 'x (transaction_amount)'];
+  const devPoint = parsearCollection(aBuffer([hdr, ['555', 'Point', 'approved', '2026-08-05 10:00:00', '8000.00']]));
+  assert.strictEqual(devPoint.operaciones[0].canal, 'Point');
+  assert.notStrictEqual(devPoint.operaciones[0].tipo, 'Approved payment'); // sin operation_type -> Point NO es cobro
+  // QR viejo (sin operation_type) SIGUE siendo cobro: backward-safe intacto.
+  const qrViejo = parsearCollection(aBuffer([hdr, ['556', 'QR', 'approved', '2026-08-05 10:00:00', '5000.00']]));
+  assert.strictEqual(qrViejo.operaciones[0].tipo, 'Approved payment');
+});
+
 console.log('parsearMayor(): acepta los dos exports de Sigma');
 t('Mayor de cuenta: lee los renglones y DESCARTA el saldo anterior', () => {
   const buf = aBuffer([

@@ -49,11 +49,16 @@ function detectarFormato(filas) {
   return null;
 }
 
-// parsearMayor(buffer, { cuentaId }) -> { origen, cuenta, desde, hasta, movimientos }
-// movimientos: [{asiento, fecha, comp, cliente, comprobante, usuario, ingreso, debe, haber}]
-// en el orden del export (uno por renglón, sin agregar). `ingreso` es el ts canónico
+// parsearMayor(buffer, { cuentaId, incluir }) -> { origen, cuenta, desde, hasta, movimientos }
+// movimientos: [{asiento, fecha, cuenta_id, cuenta, comp, cliente, comprobante, usuario, ingreso,
+// debe, haber}] en el orden del export (uno por renglón, sin agregar). `ingreso` es el ts canónico
 // 'AAAA-MM-DD HH:MM:SS' (hora de pared, ver fechas.js).
-function parsearMayor(buffer, { cuentaId }) {
+//
+// `incluir(cuenta_id, nombre)` (opcional): además de `cuentaId`, mete en `movimientos` las cuentas
+// que matcheen. Se usa para arquear MP JUNTO con las cuentas de tarjeta del Point (ver plataformas.js):
+// una venta con terminal se asienta en TARJETA VISA/MASTER/… (no en la cuenta de MP), pero para el
+// arqueo de cobranzas cuenta igual. Sin `incluir`, el comportamiento es EXACTAMENTE el de antes.
+function parsearMayor(buffer, { cuentaId, incluir = null }) {
   const wb = XLSX.read(buffer, { type: 'buffer' });
   const ws = wb.Sheets[wb.SheetNames[0]];
   if (!ws || !ws['!ref']) {
@@ -83,7 +88,8 @@ function parsearMayor(buffer, { cuentaId }) {
   let cuenta = '';
   let minFecha = null;
   let maxFecha = null;
-  let filasDeLaCuenta = 0;
+  let filasDeLaCuenta = 0; // renglones de la cuenta objetivo (cuentaId) — para el mensaje de error
+  let filasIncluidas = 0;  // renglones que entraron a `movimientos` (objetivo + `incluir`)
 
   for (let i = fmt.headerIdx + 1; i < filas.length; i++) {
     const r = filas[i];
@@ -92,30 +98,38 @@ function parsearMayor(buffer, { cuentaId }) {
     const cid = parseEntero(r[C.cuenta_id]);
     if (cid === null) continue; // fila de pie/total/blanco
 
-    // Las OTRAS cuentas no se descartan: con el Diario completo, un cobro que MP hizo y no
-    // se asentó en la cuenta de MP suele aparecer en otra cuenta (ej.: como faltante de una
-    // caja física). Guardarlas permite decir DÓNDE quedó, no solo que falta.
+    const nombreCuenta = norm(r[C.cuenta]);
+    // Cuenta incluida por el predicado (ej. las de tarjeta del Point): va a `movimientos` para
+    // arquearla, PERO también se registra abajo en `otrasCuentas` (no es la cuenta objetivo).
+    const esIncluida = !!(incluir && cid !== cuentaId && incluir(cid, nombreCuenta));
+
+    // TODA cuenta distinta de la objetivo se registra en `otrasCuentas` — INCLUIDAS las de tarjeta.
+    // Sirve para (a) rastrear dónde quedó un cobro mal imputado (ej.: como faltante de una caja) y
+    // (b) que conciliacion-mp.js reconozca las transferencias internas: un asiento con las DOS patas
+    // en {MP, TARJETA} (ej. la liquidación de la tarjeta a MP) DEBE dejar rastro acá — si no, se
+    // colaría como un cobro falso y le inflaría la diferencia a Tesorería.
     if (cid !== cuentaId) {
       const asientoOtra = parseEntero(r[C.asiento]);
-      if (asientoOtra === null || asientoOtra === 0) continue;
-      if (norm(r[C.concepto]).toLowerCase() === 'saldo anterior') continue;
-      const fechaOtra = interpretarFecha(r[C.fecha]);
-      otrasCuentas.push({
-        asiento: asientoOtra,
-        cuenta_id: cid,
-        cuenta: norm(r[C.cuenta]),
-        comp: norm(r[C.comp]),
-        concepto: norm(r[C.concepto]),
-        comprobante: norm(r[C.comprobante]),
-        cliente: norm(r[C.cliente]),
-        usuario: norm(r[C.usuario]),
-        ingreso: interpretarTimestamp(r[C.ingreso], fechaOtra),
-        debe: parseNum(r[C.debe]),
-        haber: parseNum(r[C.haber]),
-      });
-      continue;
+      if (asientoOtra !== null && asientoOtra !== 0 && norm(r[C.concepto]).toLowerCase() !== 'saldo anterior') {
+        const fechaOtra = interpretarFecha(r[C.fecha]);
+        otrasCuentas.push({
+          asiento: asientoOtra,
+          cuenta_id: cid,
+          cuenta: nombreCuenta,
+          comp: norm(r[C.comp]),
+          concepto: norm(r[C.concepto]),
+          comprobante: norm(r[C.comprobante]),
+          cliente: norm(r[C.cliente]),
+          usuario: norm(r[C.usuario]),
+          ingreso: interpretarTimestamp(r[C.ingreso], fechaOtra),
+          debe: parseNum(r[C.debe]),
+          haber: parseNum(r[C.haber]),
+        });
+      }
+      if (!esIncluida) continue; // las "otras" que NO son de tarjeta terminan acá
     }
-    filasDeLaCuenta++;
+    if (cid === cuentaId) filasDeLaCuenta++;
+    filasIncluidas++;
 
     // El Mayor abre con el renglón "Saldo anterior": es el arrastre del saldo, NO un
     // movimiento (y su Debe es enorme: se colaría como una cobranza gigante). Se descarta
@@ -127,17 +141,20 @@ function parsearMayor(buffer, { cuentaId }) {
     const fecha = interpretarFecha(r[C.fecha]);
     if (!fecha) {
       throw new MayorError(
-        `Una fila de la cuenta ${cuentaId} (asiento ${asiento}) no tiene una fecha válida. ¿El export salió completo?`
+        `Una fila de la cuenta ${cid} (asiento ${asiento}) no tiene una fecha válida. ¿El export salió completo?`
       );
     }
 
-    if (!cuenta) cuenta = norm(r[C.cuenta]);
+    // `cuenta` (para el encabezado del reporte) = SIEMPRE la cuenta objetivo, no una satélite.
+    if (!cuenta && cid === cuentaId) cuenta = nombreCuenta;
     if (!minFecha || fecha < minFecha) minFecha = fecha;
     if (!maxFecha || fecha > maxFecha) maxFecha = fecha;
 
     movimientos.push({
       asiento,
       fecha,
+      cuenta_id: cid,          // qué cuenta lo asentó (MP o cuál tarjeta) — para el PDF/depuración
+      cuenta: nombreCuenta,
       comp: norm(r[C.comp]),
       cliente: norm(r[C.cliente]),
       comprobante: norm(r[C.comprobante]),
@@ -149,9 +166,10 @@ function parsearMayor(buffer, { cuentaId }) {
     });
   }
 
-  if (filasDeLaCuenta === 0) {
+  if (filasIncluidas === 0) {
     throw new MayorError(
-      `El export de "${fmt.nombre}" no tiene ningún movimiento de la cuenta ${cuentaId}. ` +
+      `El export de "${fmt.nombre}" no tiene ningún movimiento de la cuenta ${cuentaId}` +
+      (incluir ? ' ni de sus cuentas satélite' : '') + '. ' +
       (fmt.origen === 'mayor'
         ? '¿Exportaste el Mayor de la cuenta correcta?'
         : '¿El libro cubre el día que querés conciliar?')

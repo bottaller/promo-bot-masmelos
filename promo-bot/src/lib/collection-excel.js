@@ -167,8 +167,11 @@ function parsearCollection(buffer) {
       operation_type: opTipo,                                    // 'regular_payment' | 'pos_payment' | 'refund' | …
       // Cobro (→ 'Approved payment', el vocabulario del settlement) SOLO si el status es approved Y
       // es un tipo de cobro. Una devolución/chargeback aprobada NO es un cobro; queda con su tipo y
-      // el alcance la excluye. Sin operation_type en el reporte, cae al comportamiento por status.
-      tipo: estado === 'approved' && (!opTipo || TIPOS_COBRO.has(opTipo)) ? 'Approved payment' : (opTipo || estado),
+      // el alcance la excluye. Sin operation_type (formato viejo) se confía en el status SOLO para QR
+      // (validado, backward-safe); para Point NO: sin operation_type no hay cómo distinguir una
+      // devolución/contracargo de un cobro, y una devolución Point aprobada (importe positivo) se
+      // colaría como cobranza. Entonces Point exige un operation_type de cobro explícito.
+      tipo: estado === 'approved' && (TIPOS_COBRO.has(opTipo) || (!opTipo && canal !== 'Point')) ? 'Approved payment' : (opTipo || estado),
       canal,                                                     // 'QR Code' | 'Point' | …
       unidad: ix.business_unit >= 0 ? norm(r[ix.business_unit]) : '',
       hora,

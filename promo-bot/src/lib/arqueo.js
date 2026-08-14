@@ -70,7 +70,7 @@ function arquearPlataforma({ plataforma, liq, libroBuffer, dia }) {
   const avisos = [];
   let mayor;
   try {
-    mayor = parsearMayor(libroBuffer, { cuentaId: plataforma.cuenta });
+    mayor = parsearMayor(libroBuffer, { cuentaId: plataforma.cuenta, incluir: plataforma.incluirCuenta || null });
   } catch (e) {
     if (!(e instanceof MayorError)) throw e;
     // Esa cuenta no tiene movimientos en el libro: NO es un error, significa que todo lo que

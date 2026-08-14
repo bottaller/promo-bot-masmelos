@@ -29,16 +29,33 @@ function parsearMp(buffer) {
 // conviven dinero en cuenta, transferencia, crédito y débito). Point liquida en las cuentas de
 // tarjetas, no acá. Ver docs/conciliacion-mp.md §2.
 const CANAL_QR = 'QR Code';
+const CANAL_POINT = 'Point';
 const TIPO_COBRO = 'Approved payment';
 
+// El arqueo de MP concilia TODA la cobranza que pasa por Mercado Pago, sin importar el canal: QR /
+// transferencia (liquidan en la cuenta MP 422101014) Y Point (terminal física, que se asienta en las
+// cuentas de TARJETA — se suman al lado sistema con `incluirCuenta`, ver el descriptor). La venta con
+// tarjeta cuenta como cobranza aunque la plata de crédito recién entre a MP a ~18 días (es una venta
+// igual). Antes Point quedaba "fuera de alcance"; ahora entra al apareo normal.
 function motivoFueraMp(op) {
-  if (op.unidad === 'Mercado Libre') return 'Mercado Libre: no es una venta por QR';
-  if (op.canal === 'Point') return 'Point (terminal física): liquida en las cuentas de tarjetas, no en Mercado Pago';
+  if (op.unidad === 'Mercado Libre') return 'Mercado Libre: no es una venta';
   if (!op.canal) return 'Sin canal ni medio de pago: revisar con MP qué es';
-  if (op.canal !== CANAL_QR) return `Canal "${op.canal}": fuera del alcance (acá solo van QR y transferencia)`;
+  if (op.canal !== CANAL_QR && op.canal !== CANAL_POINT) return `Canal "${op.canal}": fuera del alcance`;
   if (op.tipo !== TIPO_COBRO) return `Es "${op.tipo}", no un cobro aprobado`;
   if (op.bruto <= 0) return 'Importe negativo o cero: no es una venta';
   return 'Fuera del alcance';
+}
+
+// Las cuentas de Sigma donde se asienta una venta con TARJETA (el Point liquida ahí, no en la cuenta
+// de MP). Se matchea por ID conocido Y por nombre:
+//  - IDs: la composición de la cuenta de control "Mercado Pago" en conciliacion.js (las tarjetas que
+//    liquidan en MP) MÁS la Visa Crédito 111301001 —que allá se excluye por ser cuenta a cobrar (Visa
+//    liquida a ~18 días), pero acá SÍ entra porque la VENTA con crédito es cobranza igual—.
+//  - regex /^TARJETA: red por si suman una marca nueva ("TARJETA NARANJA…") sin tocar esta lista.
+// Verificado 05/08: 111301001/002/304001/305001 = "TARJETA VISA CRED/DEB, MASTERCARD, AMEX MORENO".
+const CUENTAS_TARJETA_ID = new Set([111301001, 111301002, 111302002, 111303001, 111304001, 111305001]);
+function esCuentaTarjeta(cuentaId, nombre) {
+  return CUENTAS_TARJETA_ID.has(cuentaId) || /^\s*TARJETA\b/i.test(String(nombre || ''));
 }
 
 // --- Talo ------------------------------------------------------------------
@@ -58,12 +75,14 @@ const PLATAFORMAS = [
     corto: 'MP',            // se repite en cada renglón del mensaje: conviene corto
     cuenta: 422101014,
     cuentaNombre: 'MERCADO PAGO MORENO',
+    // Además de la cuenta MP, suma al lado sistema las cuentas de TARJETA (donde se asienta el Point).
+    incluirCuenta: esCuentaTarjeta,
     archivoEsperado: 'reporte de Cobros (collection-….xlsx) del panel de Mercado Pago',
-    alcanceTxt: 'ventas cobradas por QR / transferencia',
+    alcanceTxt: 'cobranzas por QR, transferencia y tarjeta (Point)',
     // Acepta los dos formatos de MP (Cobros del mismo día o settlement a día vencido).
     parsear: parsearMp,
     Error: LiquidacionError, // CollectionError hereda de LiquidacionError: un solo instanceof atrapa ambos
-    enAlcance: (o) => o.canal === CANAL_QR && o.tipo === TIPO_COBRO && o.bruto > 0,
+    enAlcance: (o) => (o.canal === CANAL_QR || o.canal === CANAL_POINT) && o.tipo === TIPO_COBRO && o.bruto > 0,
     motivoFuera: motivoFueraMp,
     // Los asientos de MP se cargan a segundos del cobro (5-210 s el 16/07).
     deltaSospechosoSeg: 30 * 60,
