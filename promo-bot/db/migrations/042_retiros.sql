@@ -1,5 +1,5 @@
 -- ============================================================
--- Migración 040 — Área Retiros: quien mantiene la PLANILLA RETIRA y la sube por
+-- Migración 042 — Área Retiros: quien mantiene la PLANILLA RETIRA y la sube por
 -- /carga para que alimente la pantalla /tv_recepcion del sitio.
 --
 -- Va como área propia y no dentro de 'deposito' a propósito: el que carga la
