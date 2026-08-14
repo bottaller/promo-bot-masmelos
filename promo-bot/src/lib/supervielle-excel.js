@@ -24,14 +24,20 @@ function clave(s) {
 }
 
 // Igual criterio que Santander (ver santander-excel.js::categoriaExcluida): movimientos
-// automáticos del banco, sin asiento propio en Sigma, agrupados en una sola categoría.
-function categoriaExcluida(texto) {
-  const c = clave(texto);
+// automáticos del banco, sin asiento propio en Sigma, agrupados en una sola categoría. Mira
+// concepto Y referencia: "CUENTAS PROPIAS" (transferencias entre las cuentas del propio HONRE —
+// validado: 6 movimientos reales de julio, hasta $140.000.000, con esa leyenda en Referencia, no
+// en Concepto) es un caso real que solo aparece ahí, no es un cobro y no tiene por qué asentarse
+// como venta en Sigma.
+function categoriaExcluida(texto, referencia = '') {
+  const c = clave(`${texto} ${referencia}`);
   if (/comision/.test(c)) return 'Comisión bancaria (sin asiento propio)';
   if (/iibb/.test(c)) return 'Percepción/acreditación IIBB (automática, sin asiento propio)';
   if (/impuesto ley 25\.413/.test(c)) return 'Impuesto Ley 25.413 (retención automática, sin asiento propio)';
   if (/\biva\b/.test(c)) return 'IVA retenido/percibido (sin asiento propio)';
   if (/haberes/.test(c)) return 'Pago de haberes (Sigma lo asienta agrupado, no línea por línea)';
+  if (/cuentas propias/.test(c)) return 'Transferencia entre cuentas propias (no es una venta)';
+  if (/remuneracion de saldo/.test(c)) return 'Remuneración de saldo (interés que paga el banco, no una venta)';
   if (/^anul/.test(c)) return 'Movimiento anulado';
   return null;
 }

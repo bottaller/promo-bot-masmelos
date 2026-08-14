@@ -6,6 +6,11 @@
 // lo viejo. El apareo se acota al MES CALENDARIO actual (no compara contra meses anteriores — eso
 // es un control aparte, manual).
 //
+// A DÍA VENCIDO (reporte-arqueo-banco.js::filtrarPorVencimiento): lo pendiente de los últimos
+// DIAS_GRACIA_DEFAULT días NO se reporta como alarma — es timing normal, se resuelve solo. Recién
+// se marca "vencido, hay que revisarlo" pasado ese margen. Un match se marca matcheado sin importar
+// la antigüedad; el filtro solo decide qué se REPORTA como problema.
+//
 // Sigue sin estar enganchado al circuito automático de MP/Talo — ver la nota en plataformas.js.
 // Reusa el mismo motor: parsear()/detectarPlataformaBanco (plataformas.js), parsearMayor
 // (mayor-excel.js) y conciliarMP (conciliacion-mp.js). Lo único nuevo es la PERSISTENCIA.
@@ -15,7 +20,7 @@ const { detectarPlataformaBanco, PLATAFORMAS_BANCOS } = require('../lib/platafor
 const { parsearMayor, MayorError } = require('../lib/mayor-excel');
 const { conciliarMP, separarTransferenciasInternas } = require('../lib/conciliacion-mp');
 const { guardarMovimientosBanco, guardarMayor, pendientesDelMes, marcarMatch } = require('../db/arqueo-banco');
-const { formatearArqueoBancoAcumulado } = require('../lib/reporte-arqueo-banco');
+const { formatearArqueoBancoAcumulado, filtrarPorVencimiento } = require('../lib/reporte-arqueo-banco');
 const { construirInformePDF } = require('../lib/informe-mp-pdf');
 const { fechaHoyArgISO } = require('../lib/fechas');
 
@@ -37,7 +42,9 @@ function mesActual() {
   return { mes, nombre, rangoPdf };
 }
 
-// Corre el apareo del mes para una plataforma/cuenta y persiste los matches nuevos. -> resultado (conciliarMP)
+// Corre el apareo del mes para una plataforma/cuenta y persiste los matches nuevos. Un match es
+// un match sin importar la antigüedad: el "día vencido" (filtrarPorVencimiento) solo afecta qué
+// se REPORTA como alarma, no qué se marca matcheado. -> resultado CRUDO (conciliarMP)
 async function rematchearMes(plataforma) {
   const { mes } = mesActual();
   const { operaciones, movimientos } = await pendientesDelMes({ plataforma: plataforma.codigo, cuentaId: plataforma.cuenta, mes });
@@ -50,10 +57,10 @@ async function rematchearMes(plataforma) {
 
 async function responderConAcumulado(ctx, plataforma) {
   const { mes, nombre } = mesActual();
-  const resultado = await rematchearMes(plataforma);
-  const texto = formatearArqueoBancoAcumulado({ mesTxt: nombre, plataforma, resultado });
+  const crudo = await rematchearMes(plataforma);
+  const texto = formatearArqueoBancoAcumulado({ mesTxt: nombre, plataforma, resultado: filtrarPorVencimiento(crudo) });
   await ctx.reply(texto, { parse_mode: 'HTML' });
-  return { mes, resultado };
+  return { mes, resultado: crudo };
 }
 
 // Misma cola por chat que /carga: si llegan varios archivos como álbum, se procesan de a uno.
@@ -143,11 +150,11 @@ async function finalizar(ctx, st) {
     const plataforma = PLATAFORMAS_BANCOS.find((p) => p.codigo === codigo);
     if (!plataforma) continue;
     try {
-      const resultado = await rematchearMes(plataforma);
+      const crudo = await rematchearMes(plataforma);
       const u = ctx.state.usuario;
       const nombre = (u && u.nombre) || (ctx.from && ctx.from.username ? `@${ctx.from.username}` : 'Administración');
       const pdf = await construirInformePDF({
-        fecha: rangoPdf, resultados: [{ plataforma, cuenta: plataforma.cuentaNombre, resultado }], usuario: nombre,
+        fecha: rangoPdf, resultados: [{ plataforma, cuenta: plataforma.cuentaNombre, resultado: filtrarPorVencimiento(crudo) }], usuario: nombre,
       });
       await ctx.replyWithDocument({ source: pdf, filename: `arqueo_${plataforma.corto}_${mesActual().mes}.pdf` });
     } catch (e) {
@@ -171,6 +178,8 @@ const arqueoBancoWizard = new Scenes.WizardScene(
       'Cada archivo se GUARDA (no se pisa lo de antes) y recalculo el acumulado del <b>mes actual</b> ' +
       'contra TODO lo cargado hasta ahora — así, si Sigma asienta algo unos días después del extracto, ' +
       'lo matchea solo cuando llegue un Mayor más nuevo, sin que resubas nada.\n\n' +
+      '⏳ El reporte es <b>a día vencido</b>: lo pendiente de los últimos días no se marca como problema ' +
+      '(es normal que tarde en asentarse); recién avisa cuando algo sigue sin aparear pasado ese margen.\n\n' +
       'Cuando termines te mando un PDF de cierre por cada banco que tocaste. Escribí <b>listo</b>.\n(o "cancelar")',
       { parse_mode: 'HTML' }
     );

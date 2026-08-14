@@ -73,11 +73,11 @@ function enAlcanceBanco(op) {
 function motivoFueraBanco(categoriaExcluida) {
   return (op) => {
     if (op.sentido !== 'credito') return 'Egreso (Débito): no es un cobro';
-    return categoriaExcluida(op.concepto) || 'Fuera del alcance';
+    return categoriaExcluida(op.concepto, op.referencia) || 'Fuera del alcance';
   };
 }
 function enAlcanceBancoFiltrado(categoriaExcluida) {
-  return (op) => enAlcanceBanco(op) && !categoriaExcluida(op.concepto);
+  return (op) => enAlcanceBanco(op) && !categoriaExcluida(op.concepto, op.referencia);
 }
 
 const PLATAFORMAS = [

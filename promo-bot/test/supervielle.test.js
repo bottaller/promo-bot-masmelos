@@ -55,6 +55,21 @@ t('una transferencia de un cliente SÍ entra en alcance (son cobros de ventas)',
   const op = { sentido: 'credito', bruto: 2746076, concepto: 'Crédito por Transferencia' };
   assert.strictEqual(SUPERVIELLE.enAlcance(op), true);
 });
+t('una transferencia entre cuentas propias queda fuera (la leyenda está en Referencia, no en Concepto)', () => {
+  // Caso real de julio: 6 movimientos de hasta $140.000.000 con "CUENTAS PROPIAS 30709953482
+  // HONRE SA" en Referencia (Concepto solo dice "CRED BCA ELECTR INTERBANC EXEN") — no es una
+  // venta, es plata que se movió entre las cuentas del propio HONRE.
+  const op = { sentido: 'credito', bruto: 140000000, concepto: 'CRED BCA ELECTR INTERBANC EXEN', referencia: 'CUENTAS PROPIAS 30709953482 HONRE SA' };
+  assert.strictEqual(SUPERVIELLE.enAlcance(op), false);
+  assert.match(SUPERVIELLE.motivoFuera(op), /cuentas propias/i);
+});
+t('la remuneración de saldo (interés que paga el banco) queda fuera', () => {
+  // Caso real: 21 movimientos de julio, concepto "Remuneración de Saldo" — el banco acredita
+  // interés sobre el saldo, no es una venta y no tiene asiento propio en Sigma.
+  const op = { sentido: 'credito', bruto: 132663.39, concepto: 'Remuneración de Saldo', referencia: 'TNA: 12,500 Saldo Base: 129125708,64 TEA: 13,31' };
+  assert.strictEqual(SUPERVIELLE.enAlcance(op), false);
+  assert.match(SUPERVIELLE.motivoFuera(op), /interés/i);
+});
 t('detecta el archivo por sus encabezados (registro de bancos, separado del de /carga)', () => {
   const buf = aBuffer([HDR, filaCredito('19/07/2026', 'Crédito por Transferencia', 1000)]);
   assert.strictEqual(detectarPlataformaBanco(buf).codigo, 'supervielle');

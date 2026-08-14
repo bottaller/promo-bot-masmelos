@@ -27,8 +27,11 @@ function clave(s) {
 // Sigma: quedan agrupados en una sola categoría (no uno por concepto) para no inflar el
 // reporte. "Pago...Haberes" es la excepción del lado Debe: Sigma lo asienta como UN asiento
 // agregado ("Sueldos <mes>"), no línea por línea, así que tampoco matchea 1:1.
-function categoriaExcluida(concepto) {
-  const c = clave(concepto);
+// `referencia` no se usa hoy (en Santander es solo un número de operación, sin texto que
+// identifique nada) — el parámetro está para tener la MISMA firma que supervielle-excel.js
+// (donde "CUENTAS PROPIAS" sí aparece en Referencia, no en Concepto).
+function categoriaExcluida(concepto, referencia = '') {
+  const c = clave(`${concepto} ${referencia}`);
   if (/impuesto ley 25\.413/.test(c)) return 'Impuesto Ley 25.413 (retención automática, sin asiento propio)';
   if (/sircreb/.test(c)) return 'Retención SIRCREB (automática, sin asiento propio)';
   if (/iibb/.test(c)) return 'Percepción/retención IIBB (automática, sin asiento propio)';
