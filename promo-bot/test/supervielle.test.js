@@ -3,7 +3,7 @@
 const assert = require('assert');
 const XLSX = require('xlsx');
 const { parsearSupervielle, SupervielleError } = require('../src/lib/supervielle-excel');
-const { porCodigo, detectarPlataforma } = require('../src/lib/plataformas');
+const { porCodigo, detectarPlataformaBanco } = require('../src/lib/plataformas');
 const { conciliarMP } = require('../src/lib/conciliacion-mp');
 
 let pass = 0;
@@ -55,9 +55,9 @@ t('una transferencia de un cliente SÍ entra en alcance (son cobros de ventas)',
   const op = { sentido: 'credito', bruto: 2746076, concepto: 'Crédito por Transferencia' };
   assert.strictEqual(SUPERVIELLE.enAlcance(op), true);
 });
-t('detecta el archivo por sus encabezados', () => {
+t('detecta el archivo por sus encabezados (registro de bancos, separado del de /carga)', () => {
   const buf = aBuffer([HDR, filaCredito('19/07/2026', 'Crédito por Transferencia', 1000)]);
-  assert.strictEqual(detectarPlataforma(buf).codigo, 'supervielle');
+  assert.strictEqual(detectarPlataformaBanco(buf).codigo, 'supervielle');
 });
 
 console.log('el motor concilia Supervielle con las mismas reglas de apareo');

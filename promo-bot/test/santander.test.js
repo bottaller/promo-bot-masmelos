@@ -3,7 +3,7 @@
 const assert = require('assert');
 const XLSX = require('xlsx');
 const { parsearSantander, SantanderError } = require('../src/lib/santander-excel');
-const { porCodigo, detectarPlataforma } = require('../src/lib/plataformas');
+const { porCodigo, detectarPlataforma, detectarPlataformaBanco } = require('../src/lib/plataformas');
 const { conciliarMP } = require('../src/lib/conciliacion-mp');
 
 let pass = 0;
@@ -61,9 +61,13 @@ t('una transferencia recibida normal SÍ entra en alcance', () => {
   const op = { sentido: 'credito', bruto: 100000, concepto: 'Transferencia recibida de un cliente' };
   assert.strictEqual(SANTANDER.enAlcance(op), true);
 });
-t('detecta el archivo por sus encabezados', () => {
+t('detecta el archivo por sus encabezados (registro de bancos, separado del de /carga)', () => {
   const buf = aBuffer([HDR, fila('01/07/2026', 'Transferencia recibida', 1000)]);
-  assert.strictEqual(detectarPlataforma(buf).codigo, 'santander');
+  assert.strictEqual(detectarPlataformaBanco(buf).codigo, 'santander');
+});
+t('/carga NO lo reconoce: el circuito automático (MP/Talo) no ve los bancos', () => {
+  const buf = aBuffer([HDR, fila('01/07/2026', 'Transferencia recibida', 1000)]);
+  assert.strictEqual(detectarPlataforma(buf), null);
 });
 
 console.log('el motor concilia Santander con las mismas reglas de apareo (sin hora: aparea solo por importe)');

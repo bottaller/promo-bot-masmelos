@@ -13,6 +13,7 @@
 const { Scenes } = require('telegraf');
 const { esCancelar } = require('../lib/wizard');
 const { detectarPlataforma, PLATAFORMAS, plataformasManuales } = require('../lib/plataformas');
+const { diaDeLiquidacion } = require('../lib/arqueo');
 const { registrarLibro, LibroError } = require('../lib/registrar-libro');
 const { guardarLiquidacion, plataformasPendientesDe } = require('../db/liquidaciones-pendientes');
 const { avisarLibroResuelto } = require('../aviso-libro');
@@ -36,11 +37,6 @@ function isoADate(iso) {
 }
 function isoALinda(iso) {
   return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
-}
-// Día que cubre la liquidación ('AAAA-MM-DD'), o null si abarca varios (no se puede archivar sola).
-function diaDeLiquidacion(liq) {
-  const dias = [...new Set((liq.operaciones || []).map((o) => (o.hora || '').slice(0, 10)).filter(Boolean))].sort();
-  return dias.length === 1 ? dias[0] : null;
 }
 
 // Rutea UN documento: detecta qué es y lo guarda donde va. NO tira por archivo inválido: devuelve

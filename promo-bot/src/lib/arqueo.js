@@ -32,6 +32,14 @@ function textoRango(desde, hasta) {
   return d === h ? d : `${d} al ${h}`;
 }
 
+// Día que cubre una liquidación ya parseada ('AAAA-MM-DD'), o null si abarca varios (no se puede
+// arquear sola contra el libro de un día puntual). La usan /carga (carga.js) y /arqueobanco
+// (arqueo-banco.js) antes de aceptar el archivo.
+function diaDeLiquidacion(liq) {
+  const dias = [...new Set((liq.operaciones || []).map((o) => (o.hora || '').slice(0, 10)).filter(Boolean))].sort();
+  return dias.length === 1 ? dias[0] : null;
+}
+
 // Los dos archivos (libro y liquidación) tienen que hablar del mismo día, si no el control es un
 // sinsentido. Devuelve { error } si no se pisan, { aviso } si se pisan solo en parte, {} si ok.
 function chequearRangos({ mayor, operaciones }) {
@@ -191,4 +199,4 @@ async function arquearDia({ libroBuffer, libroMeta = null, liquidaciones, dia })
   return { ok: true, dia, resultados, texto, pdfs, paraGuardar };
 }
 
-module.exports = { arquearDia, chequearRangos, acotarAlDia, textoRango };
+module.exports = { arquearDia, chequearRangos, acotarAlDia, textoRango, diaDeLiquidacion };
