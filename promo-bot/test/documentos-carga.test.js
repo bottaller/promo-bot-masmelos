@@ -108,4 +108,26 @@ t('cada documento sabe como presentarse en el menu', () => {
   }
 });
 
+// ── Regresiones ──────────────────────────────────────────────────────────────
+
+t('el libro esta marcado como catch-all', () => {
+  // Es lo que permite distinguir "no reconoci el archivo" de "lo reconoci pero no
+  // lo podes subir vos". Sin esta marca, a alguien de Retiros que manda un archivo
+  // equivocado el bot le contestaba que habia mandado el libro diario.
+  const libro = DOCUMENTOS.find((d) => d.codigo === 'libro');
+  assert.equal(libro.catchAll, true);
+  // y es el UNICO: los demas se reconocen por encabezados
+  assert.deepEqual(DOCUMENTOS.filter((d) => d.catchAll).map((d) => d.codigo), ['libro']);
+});
+
+t('un archivo cualquiera de alguien de Retiros cae en el catch-all que no puede subir', () => {
+  // Este es el caso que generaba el mensaje enganoso: la deteccion da 'libro'
+  // (catch-all) y puedeSubir da false. El wizard tiene que tratarlo como
+  // "no reconocido", no como "sin permiso".
+  const doc = detectarDocumento(CUALQUIERA);
+  assert.equal(doc.codigo, 'libro');
+  assert.equal(doc.catchAll, true);
+  assert.equal(puedeSubir(deRetiros, doc), false);
+});
+
 console.log(`\n${pass} tests ok\n`);

@@ -192,7 +192,22 @@ function parsearRetiros(buffer, opts = {}) {
         continue;
       }
 
-      const cuerpo = hoja.slice(i + 1, i + 17); // los 16 turnos del día
+      // El cuerpo del día llega hasta el encabezado del día siguiente, NO hasta una
+      // ventana fija de 16. La planilla tiene 16 turnos armados, pero el depósito
+      // inserta filas cuando entra un pedido de más — y con el corte fijo esas
+      // filas se perdían EN SILENCIO. Estaba pasando: en la planilla de agosto hay
+      // un bloque de 17 y el cliente 41163 de las 16:30 nunca llegaba a la pantalla.
+      //
+      // Sin tope: el último día de la hoja llega hasta el final. Un tope acá volvía
+      // a perder filas justo en ese bloque, que es donde el depósito agrega los
+      // pedidos del día en curso. Lo que sobre no molesta: más abajo cada fila
+      // necesita código de cliente Y horario para entrar, así que los renglones
+      // vacíos del final de la hoja se descartan solos.
+      let fin = hoja.length;
+      for (let j = i + 1; j < hoja.length; j++) {
+        if (esFilaEncabezado(hoja[j])) { fin = j; break; }
+      }
+      const cuerpo = hoja.slice(i + 1, fin);
 
       // La fecha vive en una celda combinada: solo la trae la primera fila.
       let fecha = null;

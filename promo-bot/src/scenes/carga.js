@@ -45,6 +45,9 @@ async function rutearDoc({ buffer, nombreArchivo, usuario }) {
   // El permiso se chequea DESPUÉS de saber qué es y ANTES de escribir nada: detectar solo lee
   // encabezados, así que hasta acá no se tocó la base.
   if (!puedeSubir(usuario, doc)) {
+    // Si el que matcheó fue el catch-all, el archivo no se reconoció: decirle "esto
+    // es el libro diario y no lo podés subir" sería mentira y encima desorienta.
+    if (doc.catchAll) return { tipo: 'no_reconocido', msg: '' };
     return {
       tipo: 'sin_permiso',
       msg: `🔒 Reconocí el archivo (${doc.nombre.toLowerCase()}), pero ese documento no lo subís vos. ` +
@@ -164,6 +167,13 @@ async function finalizar(ctx, st) {
     lineas.push(`📺 <b>Pantalla de recepción</b> actualizada con: ${dias}.`);
     lineas.push('<i>Volvé a mandarme la planilla cada vez que la actualices y la pantalla se pone al día.</i>');
   }
+  // Red de seguridad: si se cargó algo pero ninguna de las dos ramas de arriba dejó texto, el
+  // mensaje saldría VACÍO. Telegram rechaza un mensaje sin texto, la excepción la traga la cola
+  // (ver `encolar`) y el resultado es que la persona escribe "listo", el bot no contesta nada y
+  // encima queda atrapada adentro del wizard. Pasaba de verdad: una planilla sin turnos futuros
+  // marcaba huboAlgo pero no aportaba ningún día.
+  if (!lineas.length) lineas.push('✅ Listo. No quedó nada pendiente de avisarte.');
+
   await ctx.reply(lineas.join('\n'), { parse_mode: 'HTML' });
   return ctx.scene.leave();
 }

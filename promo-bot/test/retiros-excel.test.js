@@ -278,4 +278,40 @@ t('devuelve las filas ordenadas por fecha y turno', () => {
   assert.deepEqual(filas.map((f) => f.turno), ['09:00', '10:00', '11:30']);
 });
 
+
+// ── Regresiones ──────────────────────────────────────────────────────────────
+
+t('un dia con MAS de 16 filas no pierde los pedidos de mas', () => {
+  // El deposito inserta filas cuando entra un pedido extra. Con la ventana fija de
+  // 16 esas filas se perdian EN SILENCIO: en la planilla real de agosto habia un
+  // bloque de 17 y el cliente 41163 de las 16:30 nunca llegaba a la pantalla.
+  const filas = bloque('LUNES 17 DE AGOSTO DE 2026', {
+    0: { codigo: '1', cliente: 'primero', prep: 'Preparado' },
+    15: { codigo: '16', cliente: 'ultimo del bloque', prep: 'Preparado' },
+  });
+  // dos filas extra pegadas al final del bloque, como las agrega el deposito
+  filas.push(['', '', '', 17, '900', 'extra uno', '', '', '', '16:45', '', '', 'Preparado', '']);
+  filas.push(['', '', '', 18, '901', 'extra dos', '', '', '', '17:00', '', '', 'Preparado', '']);
+
+  const { filas: leidas } = parsearRetiros(aBuffer({ AGOSTO: filas }), DESDE);
+  const codigos = leidas.map((f) => f.codigo_cliente);
+  assert.ok(codigos.includes('900'), 'se perdio el primer pedido extra');
+  assert.ok(codigos.includes('901'), 'se perdio el segundo pedido extra');
+  assert.equal(leidas.length, 4);
+});
+
+t('el bloque igual termina donde empieza el dia siguiente', () => {
+  // El corte por encabezado no puede comerse el dia que sigue: si lo hiciera, los
+  // pedidos de mañana quedarian con la fecha de hoy.
+  const buf = aBuffer({
+    AGOSTO: [
+      ...bloque('LUNES 17 DE AGOSTO DE 2026', { 0: { codigo: '1', cliente: 'a' } }),
+      ...bloque('MARTES 18 DE AGOSTO DE 2026', { 0: { codigo: '2', cliente: 'b' } }),
+    ],
+  });
+  const { filas } = parsearRetiros(buf, DESDE);
+  assert.deepEqual(filas.map((f) => [f.fecha, f.codigo_cliente]),
+    [['2026-08-17', '1'], ['2026-08-18', '2']]);
+});
+
 console.log(`\n${pass} tests ok\n`);

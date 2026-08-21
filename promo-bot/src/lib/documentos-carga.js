@@ -93,7 +93,21 @@ const DOCUMENTOS = [
         if (e instanceof RetirosError) throw new DocumentoInvalido(e.message);
         throw e;
       }
-      const { porDia, borrados } = await registrarRetiros({
+      // Una planilla que no aporta NINGUN turno de hoy en adelante casi siempre es
+      // un archivo viejo mandado por error (hay dos .xlsx con el mismo nombre base
+      // dando vueltas). Se corta acá, antes de tocar la base: así no se pisa nada y
+      // la persona se entera de por qué en vez de ver un éxito engañoso.
+      if (!leido.filas.length) {
+        const dias = leido.diasVistos.length
+          ? ` Tiene armados los días ${leido.diasVistos.slice(0, 3).map(isoALinda).join(', ')}, pero sin ningún pedido cargado.`
+          : '';
+        throw new DocumentoInvalido(
+          '⚠️ Esa planilla no trae ningún turno de hoy en adelante, así que <b>no toqué nada</b>.' + dias +
+          '\n\n¿No será una versión vieja del archivo? Fijate la fecha de modificación y mandame la última.'
+        );
+      }
+
+      const { porDia, borrados, conservados } = await registrarRetiros({
         filas: leido.filas,
         diasVistos: leido.diasVistos,
       });
@@ -112,6 +126,18 @@ const DOCUMENTOS = [
         }
       }
       if (borrados) lineas.push('', `🗑 Saqué ${borrados} pedido(s) que ya no están en la planilla.`);
+      // Los que desaparecieron del Excel pero YA estaban marcados no se borran solos:
+      // que un pedido marcado listo se esfume del archivo es raro y lo tiene que
+      // mirar una persona. Se listan con nombre para que se pueda ir a buscarlos.
+      if (conservados && conservados.length) {
+        lineas.push('', `❗ ${conservados.length} pedido(s) ya no están en la planilla pero <b>ya estaban marcados</b>, así que los dejé:`);
+        for (const c of conservados.slice(0, 6)) {
+          const marca = c.prep === 'listo' ? 'listo' : (c.estado_final === 'retirado' ? 'retirado' : (c.prep || 'marcado'));
+          lineas.push(`   • ${isoALinda(c.fecha)} ${c.turno} — ${c.cliente || c.codigo_cliente} (${marca})`);
+        }
+        if (conservados.length > 6) lineas.push(`   …y ${conservados.length - 6} más.`);
+        lineas.push('<i>Si de verdad se dieron de baja, sacalos desde el panel.</i>');
+      }
       const fuera = leido.descartados;
       const omitidos = [];
       if (fuera.reparto) omitidos.push(`${fuera.reparto} de reparto en camión`);
@@ -132,6 +158,12 @@ const DOCUMENTOS = [
     etiquetas: () => ['<b>Libro diario</b> (Diario de movimientos de Sigma)'],
     soloAdmin: true,
     nocturno: true,
+    // Es el ULTIMO y dice que si a cualquier cosa (ver `detectar` abajo). Por eso se
+    // marca: un archivo que llega hasta acá no fue "reconocido como libro", sino
+    // "no reconocido como nada". Sin esta marca, a alguien de Retiros que manda un
+    // archivo equivocado el bot le contestaba que habia mandado el libro diario y
+    // que no tenia permiso para subirlo, que es doblemente confuso.
+    catchAll: true,
     // No se reconoce por encabezados: si no fue ninguno de los anteriores, se
     // intenta parsear como libro y registrarLibro decide.
     detectar: () => true,

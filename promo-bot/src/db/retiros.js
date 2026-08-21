@@ -84,17 +84,54 @@ async function registrarRetiros({ filas = [], diasVistos = [] }) {
       );
     }
 
-    // Lo que ya no está en la planilla, para esos días, se va: es un pedido dado
-    // de baja. Si un día quedó sin ningún turno cargado, se limpia entero.
-    const { rowCount: borrados } = await client.query(
-      `delete from public.retiros r
-        where r.fecha = any($1::date[])
+    // ── Lo que ya no está en la planilla ────────────────────────────────────
+    //
+    // Un turno que desaparece del Excel suele ser un pedido dado de baja, y hay
+    // que sacarlo de la pantalla. Pero borrar es la única operación de acá que no
+    // se puede deshacer, así que va con dos frenos que costaron caro:
+    //
+    // FRENO 1 — una planilla que no aporta NINGÚN turno no borra nada. Antes el
+    // `if (filas.length)` de arriba envolvía solo al INSERT y este DELETE corría
+    // igual: reenviar por error una versión vieja del archivo (dos .xlsx con el
+    // mismo nombre en la misma carpeta, algo que pasa) parseaba cero filas pero
+    // igual traía los días armados en `diasVistos`, y vaciaba el día entero. Con
+    // la planilla real de prueba eso borraba 28 pedidos, 16 de ellos ya listos.
+    //
+    // FRENO 2 — no se borra lo que alguien ya tocó. Si el pedido está marcado
+    // (desde el panel, o con un estado que la planilla ya había avanzado), se
+    // deja y se informa: que un pedido marcado listo desaparezca del Excel es
+    // raro y lo tiene que mirar una persona, no resolverlo un DELETE en silencio.
+    // Acá `origen` deja de ser decorativo y pasa a decidir de verdad.
+    let borrados = 0;
+    let conservados = [];
+    if (filas.length) {
+      const condicionSobra = `
+        r.fecha = any($1::date[])
           and not exists (
             select 1 from unnest($2::date[], $3::time[]) as v(fecha, turno)
              where v.fecha = r.fecha and v.turno = r.turno
-          )`,
-      [dias, filas.map((f) => f.fecha), filas.map((f) => f.turno)]
-    );
+          )`;
+      const args = [dias, filas.map((f) => f.fecha), filas.map((f) => f.turno)];
+
+      // Intocados: nadie los marcó nunca. Esos sí se van.
+      const sinTocar = `r.origen = 'planilla' and r.prep is null and r.estado_final is null`;
+
+      const { rows: quedan } = await client.query(
+        `select to_char(r.fecha, 'YYYY-MM-DD') as fecha, to_char(r.turno, 'HH24:MI') as turno,
+                r.codigo_cliente, r.cliente, r.prep, r.estado_final, r.origen
+           from public.retiros r
+          where ${condicionSobra} and not (${sinTocar})
+          order by r.fecha, r.turno`,
+        args
+      );
+      conservados = quedan;
+
+      const res = await client.query(
+        `delete from public.retiros r where ${condicionSobra} and ${sinTocar}`,
+        args
+      );
+      borrados = res.rowCount;
+    }
 
     // El resumen sale DESPUÉS del merge, no de lo que traía el Excel: es lo que
     // realmente va a mostrar la pantalla, que es lo que el bot tiene que contarle
@@ -105,9 +142,17 @@ async function registrarRetiros({ filas = [], diasVistos = [] }) {
               count(*) filter (
                 where prep = 'listo' and estado_final is distinct from 'retirado'
               )::int as listos,
-              count(*) filter (where prep = 'preparando')::int as preparando,
+              count(*) filter (
+                where prep in ('preparando', 'faltante') and estado_final is distinct from 'retirado'
+              )::int as preparando,
               count(*) filter (where estado_final = 'retirado')::int as retirados,
-              count(*) filter (where prep is null and estado_final is null)::int as sin_estado
+              -- Todo lo que no cayó en los tres de arriba. Se calcula por descarte a
+              -- propósito: antes 'faltante' y 'agendado' no entraban en ningún
+              -- contador y los números del mensaje no cerraban con el total.
+              count(*) filter (
+                where estado_final is distinct from 'retirado'
+                  and (prep is null or prep in ('agendado'))
+              )::int as sin_estado
          from public.retiros
         where fecha = any($1::date[])
         group by fecha
@@ -116,7 +161,7 @@ async function registrarRetiros({ filas = [], diasVistos = [] }) {
     );
 
     await client.query('commit');
-    return { guardados: filas.length, borrados, porDia };
+    return { guardados: filas.length, borrados, conservados, porDia };
   } catch (e) {
     await client.query('rollback');
     throw e;
