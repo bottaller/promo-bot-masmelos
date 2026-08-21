@@ -19,6 +19,8 @@ promo-bot/
 │   ├── scenes/               ← wizards (carga, cierre, alta, informe, …)
 │   ├── lib/                  ← lógica pura (conciliación, arqueo, parsers de Excel, reportes)
 │   ├── entrega-arqueo.js     ← barrido 08:00: arquea MP/Talo y entrega los reportes
+│   ├── api-planilla.js       ← ÚNICA puerta HTTP: recibe la PLANILLA RETIRA sola (ver abajo)
+│   ├── aviso-planilla.js     ← cada 30min: avisa si la pantalla de recepción quedó vieja
 │   └── notificar.js          ← avisos por rol (telegramIdsPorRol)
 ├── db/migrations/            ← 001…023 (acceso, artículos, tesorería, arqueo, deploys, …)
 ├── docs/                     ← documentación (empezá por arquitectura.md)
@@ -71,6 +73,36 @@ El detalle por área está en [`docs/`](docs/) — empezá por [`docs/arquitectu
 
 Conectar el repo a un proyecto de Railway y cargar las variables (`BOT_TOKEN`, `DATABASE_URL`) en la
 sección Variables. Las migraciones se corren una vez contra Supabase (SQL Editor o el script de arriba).
+
+## La planilla de retiros entra sola
+
+El bot habla con Telegram por **polling**, así que históricamente no necesitó ningún puerto. Desde
+agosto 2026 escucha además **un solo endpoint**, para que la PLANILLA RETIRA que alimenta la pantalla
+de recepción llegue sin que nadie se acuerde de subirla:
+
+```
+POST /planilla        header X-Sync-Token: <PLANILLA_SYNC_TOKEN>
+                      body: el .xlsx crudo (application/octet-stream)
+GET  /salud           sin clave, no devuelve datos
+```
+
+Del otro lado hay un script de PowerShell en la PC de la sucursal (`Desktop/sync-planilla`) que mira
+el archivo en el servidor cada pocos minutos y lo manda cuando cambia. **No parsea nada**: es una
+máquina de empleado, sin admin y sin Node, y no tiene por qué tener credenciales de la base.
+
+Tres cosas para no romperlo:
+
+- **Sin `PLANILLA_SYNC_TOKEN` el endpoint no se levanta.** Es a propósito: un puerto que escribe en
+  la base sin clave es peor que no tener endpoint. `chequear-env` lo avisa al arrancar.
+- En Railway hay que **generar un dominio público** para el servicio (Settings → Networking). Sin
+  eso el puerto existe pero nadie llega.
+- Por esta puerta **solo** se puede subir la planilla, nunca el libro diario. Se exige
+  `esPlanillaRetiros(buffer)` en vez de dejar que el registro de documentos elija, porque el libro es
+  el catch-all y cualquier archivo terminaría ahí.
+
+El parseo y la escritura son **los mismos** que usa `/carga` (`lib/documentos-carga.js` →
+`lib/retiros-excel.js` → `db/retiros.js`), así que la subida manual y la automática no pueden
+comportarse distinto.
 
 ## Notas
 

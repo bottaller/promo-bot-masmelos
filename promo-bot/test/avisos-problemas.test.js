@@ -1,5 +1,11 @@
 // Tests del sistema de avisos de problemas: el FORMATO del mensaje y el chequeo de envs.
 // Las partes puras (sin bot ni base). Correr: node test/avisos-problemas.test.js
+
+// notificar.js arrastra db/usuarios → db/pool, y pool exige DATABASE_URL apenas se lo
+// requiere. No se conecta a nada; sin esta línea el test solo pasaba si la variable ya
+// estaba exportada en la shell.
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://test/test';
+
 const assert = require('assert');
 const { formatearProblema } = require('../src/notificar');
 const { funcionalesFaltantes, FUNCIONALES, falta } = require('../src/lib/chequear-env');

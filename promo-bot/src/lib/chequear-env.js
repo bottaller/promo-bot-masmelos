@@ -19,6 +19,10 @@ const FUNCIONALES = [
   { nombre: 'TALO_CLIENT_SECRET', rompe: 'no se baja Talo por API (arqueo Talo de las 21:00)' },
   { nombre: 'SUPABASE_STORAGE_URL', rompe: '/carteleria no encuentra las fotos del catálogo de producto' },
   { nombre: 'GRAFICA_WHATSAPP_NUMBER', rompe: '/carteleria no arma el link de WhatsApp a la gráfica' },
+  // Sin el token NO se levanta el endpoint (un puerto que escribe en la base sin clave
+  // es peor que no tener endpoint), así que la planilla vuelve a depender de que
+  // alguien la suba a mano por /carga.
+  { nombre: 'PLANILLA_SYNC_TOKEN', rompe: 'la planilla de retiros no entra sola: hay que subirla por /carga' },
 ];
 
 // Una variable "falta" si no está o está vacía (espacios no cuentan).

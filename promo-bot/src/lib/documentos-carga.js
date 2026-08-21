@@ -107,7 +107,7 @@ const DOCUMENTOS = [
         );
       }
 
-      const { porDia, borrados, conservados } = await registrarRetiros({
+      const { porDia, borrados, conservados, guardados } = await registrarRetiros({
         filas: leido.filas,
         diasVistos: leido.diasVistos,
       });
@@ -147,7 +147,16 @@ const DOCUMENTOS = [
       for (const a of leido.anomalias.slice(0, 5)) lineas.push(`⚠️ ${a}`);
       if (leido.anomalias.length > 5) lineas.push(`⚠️ …y ${leido.anomalias.length - 5} aviso(s) más.`);
 
-      return { dias: leido.dias, mensaje: lineas.join('\n') };
+      // Además del mensaje para Telegram se devuelven los números crudos: la
+      // misma planilla puede llegar por HTTP (api-planilla.js), y ahí lo que hace
+      // falta es un JSON corto, no HTML. Un solo `procesar` para los dos canales
+      // es lo que garantiza que no se comporten distinto.
+      return {
+        dias: leido.dias,
+        mensaje: lineas.join('\n'),
+        guardados, borrados, conservados,
+        anomalias: leido.anomalias,
+      };
     },
   },
 

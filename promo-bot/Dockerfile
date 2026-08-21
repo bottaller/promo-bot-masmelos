@@ -21,4 +21,9 @@ RUN pip3 install --no-cache-dir --break-system-packages -r arqueo/requirements.t
 # Resto del código.
 COPY . .
 
+# El bot habla con Telegram por polling (no necesita puerto), pero desde agosto 2026 escucha
+# ademas un POST con la PLANILLA RETIRA (src/api-planilla.js). Railway inyecta PORT; esto es
+# documentacion y ayuda a que detecte el puerto.
+EXPOSE 8080
+
 CMD ["node", "src/index.js"]

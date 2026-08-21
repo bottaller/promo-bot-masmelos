@@ -27,6 +27,8 @@ const { registrarAccionesDeposito } = require('./acciones-deposito');
 const { iniciarEntregaArqueo, iniciarEntregaTaloApi } = require('./entrega-arqueo');
 const { anunciarDeploy } = require('./aviso-deploy');
 const { iniciarChequeoDemoraAjustes } = require('./ajustes-demora');
+const { iniciarApiPlanilla } = require('./api-planilla');
+const { iniciarAvisoPlanilla } = require('./aviso-planilla');
 
 // Áreas registradas. Sumar un área = agregarla a esta lista.
 const areas = [calidad, compras, tesoreria, cajaCentral, carritoWeb, deposito, marketing, ventas, administracion, retiros];
@@ -172,6 +174,8 @@ bot.catch((err, ctx) => {
     iniciarEntregaArqueo(bot); // 08:00 ART: arquea MP/Talo del día y manda los reportes a Tesorería + Caja Central
     iniciarEntregaTaloApi(bot); // 21:00 ART: baja Talo del día por API y lo arquea solo; avisa a los admins si falla
     iniciarChequeoDemoraAjustes(bot); // cada 1h: avisa al dueño si un ajuste verificado lleva +36hs sin confirmar
+    iniciarApiPlanilla(); // puerta HTTP: la PLANILLA RETIRA entra sola desde la PC de la sucursal
+    iniciarAvisoPlanilla(); // cada 30min: avisa si la pantalla de recepción quedó con datos viejos
     await publicarComandos(bot); // publica el menú "/" de Telegram (antes de arrancar el polling)
     // OJO: bot.launch() NO resuelve — startPolling corre el loop de polling para siempre. Por eso
     // TODO lo que tenga que pasar al arrancar (aviso de deploy, log) va ANTES; launch() queda último

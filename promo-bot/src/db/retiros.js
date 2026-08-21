@@ -170,4 +170,25 @@ async function registrarRetiros({ filas = [], diasVistos = [] }) {
   }
 }
 
-module.exports = { registrarRetiros };
+/**
+ * Cuándo entró la última planilla. Lo usa el aviso de datos viejos.
+ *
+ * Se mira `origen = 'planilla'` y no simplemente el max de la tabla porque el
+ * panel también toca `actualizado_en`: si contara, alguien marcando pedidos a
+ * mano taparía el hecho de que hace horas no llega el Excel, que es justo lo
+ * que se quiere detectar.
+ *
+ * Sale de la BASE y no de una variable en memoria a propósito: un redeploy del
+ * bot no tiene que hacer parecer que la planilla acaba de llegar.
+ *
+ * @returns {Promise<Date|null>} null si nunca entró ninguna.
+ */
+async function ultimaPlanillaImportada() {
+  const { rows } = await pool.query(
+    "select max(actualizado_en) as ultima from public.retiros where origen = 'planilla'"
+  );
+  const v = rows[0] && rows[0].ultima;
+  return v ? new Date(v) : null;
+}
+
+module.exports = { registrarRetiros, ultimaPlanillaImportada };
