@@ -267,8 +267,54 @@ async function t(nombre, fn) {
     const a = avisos[0].archivo;
     assert.ok(a, 'sin adjunto el aviso no sirve para nada');
     assert.ok(a.buffer.equals(OTRO_XLSX), 'tienen que ir los bytes que llegaron, tal cual');
-    assert.ok(/^RECHAZADA \d{4}-\d{2}-\d{2}_\d{4} - lo que sea\.xlsx$/.test(a.nombre), a.nombre);
+    // El nombre ORIGINAL va primero: Telegram recorta los nombres largos por el
+    // medio, y con la fecha adelante lo que desaparecía era justo el nombre.
+    assert.ok(/^lo que sea \(RECHAZADA \d{4}-\d{2}-\d{2}_\d{4}\)\.xlsx$/.test(a.nombre), a.nombre);
     assert.ok(a.leyenda);
+  });
+
+  await t('la extensión sale del CONTENIDO, no del nombre que mandaron', async () => {
+    // Es el error que hacía que Excel dijera "archivo dañado": se le ponía .xlsx
+    // a algo que no era un Excel y parecía que el aviso estaba roto.
+    await pedir({ cuerpo: Buffer.from('esto es texto plano'), headers: { 'x-archivo': 'mentira.xlsx' } });
+    assert.ok(avisos[0].archivo.nombre.endsWith('.txt'), avisos[0].archivo.nombre);
+  });
+
+  await t('un xlsx de verdad conserva .xlsx aunque no sea la planilla', async () => {
+    // Un Excel real que no es la planilla TIENE que abrirse con Excel.
+    await pedir({ cuerpo: OTRO_XLSX, headers: { 'x-archivo': 'cualquiera.xlsx' } });
+    assert.ok(avisos[0].archivo.nombre.endsWith('.xlsx'));
+  });
+
+  await t('el aviso dice el tamaño en bytes cuando es chiquito', async () => {
+    // "Pesa 0 KB" hace parecer que el archivo está vacío o que el aviso falló.
+    await pedir({ cuerpo: Buffer.alloc(89, 0x41) });
+    assert.ok(/89 bytes/.test(avisos[0].detalle), avisos[0].detalle);
+    assert.ok(!/0 KB/.test(avisos[0].detalle));
+    assert.ok(/Ni siquiera parece un Excel/.test(avisos[0].detalle), 'si no es un Excel, decirlo');
+  });
+
+  await t('con un Excel de verdad no dice que no parece un Excel', async () => {
+    await pedir({ cuerpo: OTRO_XLSX });
+    assert.ok(!/Ni siquiera/.test(avisos[0].detalle), avisos[0].detalle);
+  });
+
+  await t('extensionReal y tamanoLegible, caso por caso', () => {
+    const ex = api.extensionReal;
+    assert.equal(ex(Buffer.from('PK\x03\x04algo'), '.xlsx'), '.xlsx');
+    assert.equal(ex(Buffer.from('PK\x03\x04algo'), '.xlsm'), '.xlsm', 'respeta xlsm');
+    assert.equal(ex(Buffer.from('PK\x03\x04algo'), '.txt'), '.xlsx', 'es un zip: manda el contenido');
+    assert.equal(ex(Buffer.from('%PDF-1.7 ...'), '.xlsx'), '.pdf');
+    assert.equal(ex(Buffer.from('d0cf11e0a1b11ae1', 'hex'), '.xlsx'), '.xls', 'Excel viejo (OLE2)');
+    assert.equal(ex(Buffer.from('hola\nque tal'), '.xlsx'), '.txt');
+    assert.equal(ex(Buffer.from([0, 1, 2, 3, 255]), '.xlsx'), '.bin', 'binario desconocido');
+    assert.equal(ex(Buffer.alloc(0), '.xlsx'), '.bin');
+
+    assert.equal(api.tamanoLegible(0), '0 bytes');
+    assert.equal(api.tamanoLegible(89), '89 bytes');
+    assert.equal(api.tamanoLegible(1023), '1023 bytes');
+    assert.equal(api.tamanoLegible(1024), '1 KB');
+    assert.equal(api.tamanoLegible(104791), '102 KB');
   });
 
   await t('el aviso de planilla vieja lleva la planilla', async () => {
@@ -291,7 +337,8 @@ async function t(nombre, fn) {
     const n = avisos[0].archivo.nombre;
     assert.ok(!n.includes('/') && !n.includes('\\'), n);
     assert.ok(!/[:*?"<>|]/.test(n), n);
-    assert.ok(n.endsWith('.xlsx'));
+    assert.ok(n.endsWith('.xlsx'), n);
+    assert.ok(n.includes('(RECHAZADA '), n);
   });
 
   await t('sin nombre en el header igual sale con extensión', async () => {

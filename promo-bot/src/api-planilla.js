@@ -71,20 +71,70 @@ function selloArg(d = new Date()) {
 }
 
 /**
+ * Tamaño legible. Abajo de 1 KB se muestran los bytes: redondear 89 bytes a
+ * "0 KB" en un aviso hace parecer que el archivo está vacío o que el aviso está
+ * roto, justo cuando lo que se quiere decir es "mirá lo chico que es esto".
+ */
+function tamanoLegible(bytes) {
+  const b = Number(bytes) || 0;
+  return b < 1024 ? `${b} bytes` : `${Math.round(b / 1024)} KB`;
+}
+
+/**
  * Nombre para el archivo que se les manda a los admins.
  *
  * El nombre original viene en un header, o sea que lo elige quien llama: se limpia
- * de barras y caracteres raros antes de usarlo como nombre de archivo. Y va con la
- * fecha adelante porque si el problema se repite en distintos momentos, en el chat
- * quedan varios adjuntos y hay que poder distinguirlos.
+ * de barras y caracteres raros antes de usarlo como nombre de archivo.
+ *
+ * El nombre original va PRIMERO y la marca de rechazo entre paréntesis al final.
+ * Telegram recorta los nombres largos por el medio: con la fecha adelante, lo que
+ * se comía era justamente el nombre del archivo, que es lo único que dice cuál
+ * era. La hora igual se ve al lado del mensaje; lo que no se puede recuperar de
+ * ningún otro lado es el nombre.
  */
-function nombreParaAdmins(original) {
-  const base = String(original || 'planilla.xlsx')
+function nombreParaAdmins(buffer, original) {
+  const limpio = String(original || 'planilla')
     .replace(/[\\/:*?"<>|\r\n\t]/g, '_')
     .trim()
-    .slice(0, 70) || 'planilla.xlsx';
-  const conExt = /\.(xlsx|xlsm|xls)$/i.test(base) ? base : `${base}.xlsx`;
-  return `RECHAZADA ${selloArg()} - ${conExt}`;
+    .slice(0, 70) || 'planilla';
+  const mExt = /\.[A-Za-z0-9]{1,6}$/.exec(limpio);
+  const base = mExt ? limpio.slice(0, -mExt[0].length) : limpio;
+  return `${base} (RECHAZADA ${selloArg()})${extensionReal(buffer, mExt && mExt[0])}`;
+}
+
+/** ¿Arranca como un Excel? zip = xlsx/xlsm moderno, OLE2 = .xls viejo. */
+function esExcel(buffer) {
+  const b = buffer || Buffer.alloc(0);
+  if (b.length >= 4 && b[0] === 0x50 && b[1] === 0x4B) return true;
+  return b.slice(0, 8).toString('hex') === 'd0cf11e0a1b11ae1';
+}
+
+/**
+ * La extensión según el CONTENIDO, no según el nombre.
+ *
+ * El nombre llega en un header, o sea que puede mentir, y por esta puerta puede
+ * entrar cualquier cosa. Ponerle .xlsx a algo que no es un Excel hace que al
+ * admin le salte "el archivo está dañado" y parezca que el aviso está roto,
+ * cuando el problema real es otro. Un .xlsx REAL pero cortado sí tiene que
+ * seguir llamándose .xlsx: ahí el error de Excel es información, no ruido.
+ */
+function extensionReal(buffer, extOriginal) {
+  const b = buffer || Buffer.alloc(0);
+  if (b.length >= 4 && b[0] === 0x50 && b[1] === 0x4B) {
+    // Es un zip, así que es un Excel moderno (o un docx, pero acá no llegan).
+    return /^\.(xlsx|xlsm)$/i.test(extOriginal || '') ? extOriginal : '.xlsx';
+  }
+  if (b.slice(0, 4).toString('latin1') === '%PDF') return '.pdf';
+  if (b.slice(0, 8).toString('hex') === 'd0cf11e0a1b11ae1') return '.xls'; // Excel viejo (OLE2)
+  if (!b.length) return '.bin';
+  // Si todo lo que se ve es texto imprimible, .txt: así se abre con doble clic
+  // y se ve qué es, en vez de pelear con Excel.
+  const muestra = b.slice(0, 512);
+  for (const c of muestra) {
+    if (c === 9 || c === 10 || c === 13) continue;
+    if (c < 32 || c === 127) return '.bin';
+  }
+  return '.txt';
 }
 
 /**
@@ -181,7 +231,7 @@ async function procesarPlanillaHttp(buffer, { documento, equipo = 'desconocido',
   // Cuando algo falla, el aviso va CON el archivo. Describir el problema no alcanza:
   // el que lo tiene que resolver necesita abrirlo, y si no se lo mandamos tiene que
   // ir hasta la PC de la sucursal a buscarlo.
-  const adjunto = (leyenda) => ({ buffer, nombre: nombreParaAdmins(nombre), leyenda });
+  const adjunto = (leyenda) => ({ buffer, nombre: nombreParaAdmins(buffer, nombre), leyenda });
 
   // Se exige que SEA la planilla, en vez de dejar que el registro elija. Si se
   // usara detectarDocumento(), un archivo cualquiera caería en el catch-all y el
@@ -194,7 +244,8 @@ async function procesarPlanillaHttp(buffer, { documento, equipo = 'desconocido',
     await avisarSiCambio('archivo', String(buffer.length), {
       proceso: 'la planilla automática de retiros',
       que: `Desde ${equipo} está llegando un archivo que NO es la PLANILLA RETIRA.`,
-      detalle: `Pesa ${Math.round(buffer.length / 1024)} KB y no tiene los encabezados de la planilla.`,
+      detalle: `Pesa ${tamanoLegible(buffer.length)} y no tiene los encabezados de la planilla.`
+        + (esExcel(buffer) ? '' : ' Ni siquiera parece un Excel.'),
       sugerencia: 'En esa PC, revisar qué .xlsx quedó en la carpeta PEDIDOS RETIRA MORENO 2026: '
         + 'el script manda el más nuevo que encuentre ahí.',
       archivo: adjunto('Este es el archivo que llegó y no es la planilla.'),
@@ -313,7 +364,7 @@ async function manejar(req, res, { documento }) {
       // parser con este archivo puntual (y entonces el archivo es TODA la
       // evidencia). Desde acá no se distingue, así que va.
       archivo: buffer && buffer.length
-        ? { buffer, nombre: nombreParaAdmins(nombre), leyenda: 'La planilla que estaba procesando cuando falló.' }
+        ? { buffer, nombre: nombreParaAdmins(buffer, nombre), leyenda: 'La planilla que estaba procesando cuando falló.' }
         : undefined,
     });
     return responder(res, 500, { ok: false, error: 'Error interno.' });
@@ -381,6 +432,7 @@ module.exports = {
   iniciarApiPlanilla,
   // exportados para los tests
   procesarPlanillaHttp, tokenValido, ErrorHttp, RUTA, LIMITE_BYTES,
+  nombreParaAdmins, extensionReal, tamanoLegible, esExcel,
   ultimaPlanillaOk: () => ultimaOk,
   RECHAZOS_PARA_AVISAR,
   _resetAvisos: () => { avisosVistos.clear(); rechazosSeguidos = 0; ultimaOk = null; },
