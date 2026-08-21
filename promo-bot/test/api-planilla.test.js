@@ -258,6 +258,55 @@ async function t(nombre, fn) {
     assert.equal(avisos.length, 1, 'no repite mientras siga llegando el mismo archivo');
   });
 
+  // ── El archivo va adjunto ──────────────────────────────────────────────────
+  // Describir el problema no alcanza: el admin tiene que poder ABRIR el archivo
+  // sin ir hasta la PC de la sucursal.
+
+  await t('el aviso de archivo equivocado lleva el archivo adjunto', async () => {
+    await pedir({ cuerpo: OTRO_XLSX, headers: { 'x-archivo': 'lo que sea.xlsx' } });
+    const a = avisos[0].archivo;
+    assert.ok(a, 'sin adjunto el aviso no sirve para nada');
+    assert.ok(a.buffer.equals(OTRO_XLSX), 'tienen que ir los bytes que llegaron, tal cual');
+    assert.ok(/^RECHAZADA \d{4}-\d{2}-\d{2}_\d{4} - lo que sea\.xlsx$/.test(a.nombre), a.nombre);
+    assert.ok(a.leyenda);
+  });
+
+  await t('el aviso de planilla vieja lleva la planilla', async () => {
+    tirar = new DocumentoInvalido('No trae ningún turno de hoy en adelante.');
+    await pedir({ cuerpo: PLANILLA });
+    assert.ok(avisos[0].archivo.buffer.equals(PLANILLA));
+  });
+
+  await t('el aviso de error interno lleva el archivo que se estaba procesando', async () => {
+    tirar = new Error('la base no responde');
+    await pedir({ cuerpo: PLANILLA });
+    assert.ok(avisos[0].archivo, 'puede ser un bug del parser con ESTE archivo: es la evidencia');
+    assert.ok(avisos[0].archivo.buffer.equals(PLANILLA));
+  });
+
+  await t('el nombre del adjunto se limpia: viene de un header', async () => {
+    // El nombre lo elige quien llama. Sin limpiarlo, barras y caracteres raros
+    // terminan en un nombre de archivo.
+    await pedir({ cuerpo: OTRO_XLSX, headers: { 'x-archivo': '../../etc/algo:raro?.xlsx' } });
+    const n = avisos[0].archivo.nombre;
+    assert.ok(!n.includes('/') && !n.includes('\\'), n);
+    assert.ok(!/[:*?"<>|]/.test(n), n);
+    assert.ok(n.endsWith('.xlsx'));
+  });
+
+  await t('sin nombre en el header igual sale con extensión', async () => {
+    await pedir({ cuerpo: OTRO_XLSX, headers: {} });
+    assert.ok(avisos[0].archivo.nombre.endsWith('.xlsx'), avisos[0].archivo.nombre);
+  });
+
+  await t('el aviso por clave equivocada NO lleva archivo', async () => {
+    // Con el token mal ni siquiera se lee el cuerpo: no hay nada que mandar, y
+    // reenviar lo que sea que mandó un desconocido sería peor.
+    for (let i = 0; i < api.RECHAZOS_PARA_AVISAR; i++) await pedir({ token: 'mal', cuerpo: PLANILLA });
+    assert.equal(avisos.length, 1);
+    assert.equal(avisos[0].archivo, undefined);
+  });
+
   await t('cuando vuelve a llegar la planilla buena, el problema queda cerrado', async () => {
     await pedir({ cuerpo: OTRO_XLSX });
     assert.equal(avisos.length, 1);

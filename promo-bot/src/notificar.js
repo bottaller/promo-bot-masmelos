@@ -52,10 +52,19 @@ function formatearProblema({ proceso, que, detalle = '', sugerencia = '', nivel 
   return L.join('\n');
 }
 
+// Telegram acepta hasta 50 MB por documento, pero acá el tope es por sensatez: si algo
+// gigante llega a fallar, el aviso tiene que salir igual y no quedarse colgado subiendo.
+const MAX_ADJUNTO = 20 * 1024 * 1024;
+
 // Avisa a TODOS los admins de un problema. "Avisar siempre": no agrupa ni silencia repetidos
 // (decisión del dueño: mejor ruido que perderse algo). Best-effort: si el bot no está seteado o
 // falla el envío, queda en el log y NUNCA rompe al proceso que llamó (por eso todo va en try/catch).
 // Devuelve a cuántos admins les llegó.
+//
+// opts.archivo = { buffer, nombre, leyenda } — OPCIONAL. Cuando el problema ES un archivo
+// (una planilla que no se pudo procesar, por ejemplo), describirlo no alcanza: se manda el
+// archivo atrás del mensaje, así el admin lo abre en el momento en vez de tener que ir hasta
+// la PC donde se generó. Si falla el adjunto, el aviso de texto ya salió igual.
 async function avisarProblema(opts) {
   const msg = formatearProblema(opts);
   // Siempre al log, aunque no llegue a Telegram (Railway guarda el log).
@@ -64,10 +73,36 @@ async function avisarProblema(opts) {
   let admins = [];
   try { admins = await telegramIdsAdmins(); }
   catch (e) { console.error('avisarProblema: no pude leer los admins de la base:', e.message); return 0; }
+
+  let adjunto = null;
+  const a = opts.archivo;
+  if (a && a.buffer && a.buffer.length) {
+    if (a.buffer.length > MAX_ADJUNTO) {
+      console.error(`avisarProblema: el archivo pesa ${Math.round(a.buffer.length / 1024)} KB, no lo adjunto.`);
+    } else {
+      adjunto = a;
+    }
+  }
+  // Se sube UNA sola vez: al primer admin va el archivo y a los demás el file_id que
+  // devuelve Telegram, en vez de resubir lo mismo tantas veces como admins haya.
+  let fileId = null;
+
   let enviados = 0;
   for (const tid of new Set(admins.map(String))) {
     try { await botInstance.telegram.sendMessage(tid, msg, { parse_mode: 'HTML' }); enviados++; }
-    catch (e) { console.error(`avisarProblema: no pude avisar al admin ${tid}:`, e.message); }
+    catch (e) { console.error(`avisarProblema: no pude avisar al admin ${tid}:`, e.message); continue; }
+
+    if (!adjunto) continue;
+    try {
+      const r = await botInstance.telegram.sendDocument(
+        tid,
+        fileId || { source: adjunto.buffer, filename: adjunto.nombre || 'archivo' },
+        adjunto.leyenda ? { caption: String(adjunto.leyenda).slice(0, 1000) } : undefined
+      );
+      if (!fileId && r && r.document && r.document.file_id) fileId = r.document.file_id;
+    } catch (e) {
+      console.error(`avisarProblema: no pude mandarle el archivo al admin ${tid}:`, e.message);
+    }
   }
   return enviados;
 }

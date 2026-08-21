@@ -59,6 +59,34 @@ class ErrorHttp extends Error {
   }
 }
 
+/** Fecha y hora argentina compacta, apta para un nombre de archivo. */
+function selloArg(d = new Date()) {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d);
+  const g = (t) => (p.find((x) => x.type === t) || {}).value || '00';
+  return `${g('year')}-${g('month')}-${g('day')}_${g('hour')}${g('minute')}`;
+}
+
+/**
+ * Nombre para el archivo que se les manda a los admins.
+ *
+ * El nombre original viene en un header, o sea que lo elige quien llama: se limpia
+ * de barras y caracteres raros antes de usarlo como nombre de archivo. Y va con la
+ * fecha adelante porque si el problema se repite en distintos momentos, en el chat
+ * quedan varios adjuntos y hay que poder distinguirlos.
+ */
+function nombreParaAdmins(original) {
+  const base = String(original || 'planilla.xlsx')
+    .replace(/[\\/:*?"<>|\r\n\t]/g, '_')
+    .trim()
+    .slice(0, 70) || 'planilla.xlsx';
+  const conExt = /\.(xlsx|xlsm|xls)$/i.test(base) ? base : `${base}.xlsx`;
+  return `RECHAZADA ${selloArg()} - ${conExt}`;
+}
+
 /**
  * Comparación en tiempo constante. El largo se chequea aparte porque
  * timingSafeEqual tira si los buffers miden distinto.
@@ -147,8 +175,13 @@ function limpiarAviso(tipo) {
  * @param {object} doc     la entrada del registro de documentos (se inyecta en los tests)
  * @param {string} equipo  qué máquina lo mandó (solo para el log y los avisos)
  */
-async function procesarPlanillaHttp(buffer, { documento, equipo = 'desconocido' } = {}) {
+async function procesarPlanillaHttp(buffer, { documento, equipo = 'desconocido', nombre = '' } = {}) {
   if (!buffer || !buffer.length) throw new ErrorHttp(400, 'Vino sin archivo.');
+
+  // Cuando algo falla, el aviso va CON el archivo. Describir el problema no alcanza:
+  // el que lo tiene que resolver necesita abrirlo, y si no se lo mandamos tiene que
+  // ir hasta la PC de la sucursal a buscarlo.
+  const adjunto = (leyenda) => ({ buffer, nombre: nombreParaAdmins(nombre), leyenda });
 
   // Se exige que SEA la planilla, en vez de dejar que el registro elija. Si se
   // usara detectarDocumento(), un archivo cualquiera caería en el catch-all y el
@@ -164,6 +197,7 @@ async function procesarPlanillaHttp(buffer, { documento, equipo = 'desconocido' 
       detalle: `Pesa ${Math.round(buffer.length / 1024)} KB y no tiene los encabezados de la planilla.`,
       sugerencia: 'En esa PC, revisar qué .xlsx quedó en la carpeta PEDIDOS RETIRA MORENO 2026: '
         + 'el script manda el más nuevo que encuentre ahí.',
+      archivo: adjunto('Este es el archivo que llegó y no es la planilla.'),
     });
     throw new ErrorHttp(400, 'Ese archivo no es la PLANILLA RETIRA (no tiene sus encabezados).');
   }
@@ -182,6 +216,7 @@ async function procesarPlanillaHttp(buffer, { documento, equipo = 'desconocido' 
         que: `Llegó una planilla desde ${equipo} pero no se pudo usar.`,
         detalle: String(e.message).replace(/<[^>]+>/g, ''),
         sugerencia: 'Fijate el archivo en el servidor: puede ser una versión vieja.',
+        archivo: adjunto('Esta es la planilla que llegó y no se pudo usar.'),
       });
       throw new ErrorHttp(422, String(e.message).replace(/<[^>]+>/g, '').slice(0, 200));
     }
@@ -255,10 +290,13 @@ async function manejar(req, res, { documento }) {
   if (enCurso) return responder(res, 409, { ok: false, error: 'Hay otra planilla procesándose. Reintentá.' });
 
   const equipo = String(req.headers['x-equipo'] || 'desconocido').slice(0, 60);
+  const nombre = String(req.headers['x-archivo'] || '').slice(0, 120);
+  // Declarado afuera del try para poder adjuntarlo si algo explota más abajo.
+  let buffer = null;
   enCurso = true;
   try {
-    const buffer = await leerCuerpo(req);
-    const salida = await procesarPlanillaHttp(buffer, { documento, equipo });
+    buffer = await leerCuerpo(req);
+    const salida = await procesarPlanillaHttp(buffer, { documento, equipo, nombre });
     console.log(`[api-planilla] ${equipo}: ${buffer.length} bytes, días ${salida.dias.join(',') || '-'}, ${salida.borrados} borrado(s)`);
     return responder(res, 200, salida);
   } catch (e) {
@@ -271,6 +309,12 @@ async function manejar(req, res, { documento }) {
       que: `Falló el procesamiento de la planilla que mandó ${equipo}.`,
       detalle: e && e.stack ? e.stack : String(e),
       nivel: '❌',
+      // Puede ser la base caída (y entonces el archivo no importa) o un bug del
+      // parser con este archivo puntual (y entonces el archivo es TODA la
+      // evidencia). Desde acá no se distingue, así que va.
+      archivo: buffer && buffer.length
+        ? { buffer, nombre: nombreParaAdmins(nombre), leyenda: 'La planilla que estaba procesando cuando falló.' }
+        : undefined,
     });
     return responder(res, 500, { ok: false, error: 'Error interno.' });
   } finally {
