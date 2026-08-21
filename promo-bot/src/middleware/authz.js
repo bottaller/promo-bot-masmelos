@@ -1,6 +1,6 @@
 // Autorización por área / por rol de admin. Se usa envolviendo cada comando.
 // Asume que el middleware de auth ya dejó el usuario en ctx.state.usuario.
-const { esDueno } = require('../lib/owner');
+const { esDueno, esMarketingCarteleria } = require('../lib/owner');
 
 // Admin real, o el rol "sistemas" (ve y usa casi TODO — todas las áreas salvo las excluidas
 // explícitamente, ver TESORERIA_EXCLUYE_SISTEMAS más abajo, y los comandos admin-only que están
@@ -79,4 +79,17 @@ function requiereDueno() {
   };
 }
 
-module.exports = { requiereArea, requiereAlgunaArea, requiereAdmin, requiereAdminOSistemas, requiereDueno, tieneAccesoTotal, AREAS_SIN_BYPASS_SISTEMAS };
+// Deja pasar solo a la persona de Marketing con su propia copia personal de /carteleria
+// (MARKETING_CARTELERIA_TELEGRAM_ID, ver lib/owner.js) — para /carteleria_marketing, que
+// tampoco debe quedar visible ni usable por nadie más (mismo criterio que requiereDueno).
+function requiereMarketingCarteleria() {
+  return async (ctx, next) => {
+    if (esMarketingCarteleria(ctx.from.id)) return next();
+    await ctx.reply('Este comando es solo para esa persona.');
+  };
+}
+
+module.exports = {
+  requiereArea, requiereAlgunaArea, requiereAdmin, requiereAdminOSistemas,
+  requiereDueno, requiereMarketingCarteleria, tieneAccesoTotal, AREAS_SIN_BYPASS_SISTEMAS,
+};

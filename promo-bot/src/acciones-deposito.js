@@ -6,16 +6,17 @@ const { agregarImagenPromo } = require('./db/promoprecios');
 const { avisarAMarketingFinal, avisarVerificacionMarketing } = require('./lib/carteleria-mensajes');
 const { entregarImagenACompras } = require('./lib/promoprecios-mensajes');
 const { generarCartel } = require('./lib/carteleria-render');
-const { esDueno } = require('./lib/owner');
+const { esDueno, esMarketingCarteleria } = require('./lib/owner');
 
 function esMarketing(usuario) {
   return !!(usuario && usuario.areas && usuario.areas.includes('marketing'));
 }
 
-// El dueño del bot también puede tocar estos botones — es lo único que le llega en su chat que
-// no sea Marketing de verdad: sus propios pedidos de /carteleria_prueba (ver scenes/carteleria.js).
+// El dueño del bot y la persona de /carteleria_marketing también pueden tocar estos botones —
+// es lo único que les llega en su chat que no sea Marketing de verdad: sus propios pedidos de
+// /carteleria_prueba o /carteleria_marketing (ver scenes/carteleria.js).
 function puedeAccionar(ctx) {
-  return esMarketing(ctx.state.usuario) || esDueno(ctx.from.id);
+  return esMarketing(ctx.state.usuario) || esDueno(ctx.from.id) || esMarketingCarteleria(ctx.from.id);
 }
 
 function registrarAccionesDeposito(bot) {
@@ -66,14 +67,16 @@ function registrarAccionesDeposito(bot) {
       return;
     }
 
-    // Un pedido de /carteleria_prueba (es_prueba) nunca dispara el aviso final a Marketing
-    // real -> se lo mandamos solo a quien lo probó, para completar el circuito de prueba.
+    // Un pedido de /carteleria_prueba o /carteleria_marketing (es_prueba) nunca dispara el
+    // aviso final a Marketing real -> se lo mandamos solo a quien lo pidió, para completar el
+    // circuito. mostrarPrueba (etiqueta_prueba) decide aparte si se ve el texto "🧪 PRUEBA".
     const avisados = await avisarAMarketingFinal(bot.telegram, {
       id: carteleria.id,
       fileIdParaEnviar: carteleria.diseno_file_id || carteleria.foto_file_id,
       tipo: carteleria.tipo,
       cantidadCopias: carteleria.cantidad_copias,
       esPrueba: carteleria.es_prueba,
+      mostrarPrueba: carteleria.etiqueta_prueba,
       destinatarios: carteleria.es_prueba ? [carteleria.usuario_telegram_id] : undefined,
     });
     console.log(`Cartelería #${carteleria.id} verificada: avisados ${avisados}${carteleria.es_prueba ? ' (prueba)' : ' de marketing'}.`);
