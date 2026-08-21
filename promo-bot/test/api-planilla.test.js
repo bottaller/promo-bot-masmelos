@@ -14,8 +14,21 @@ process.env.PLANILLA_SYNC_TOKEN = 'la-clave-de-prueba';
 
 const assert = require('assert');
 const http = require('http');
+const Module = require('module');
 const XLSX = require('xlsx');
 const { DocumentoInvalido } = require('../src/lib/documentos-carga');
+
+// Doble de notificar, puesto ANTES de cargar api-planilla: los avisos a los admins
+// son la mitad del valor de esto (un token mal copiado no se nota de ninguna otra
+// forma), así que hay que poder verificar que salen y que NO se repiten.
+const avisos = [];
+{
+  const p = require.resolve('../src/notificar');
+  const m = new Module(p, null);
+  m.filename = p; m.loaded = true;
+  m.exports = { async avisarProblema(o) { avisos.push(o); return 1; } };
+  require.cache[p] = m;
+}
 const api = require('../src/api-planilla');
 
 // ── Un .xlsx que el parser reconoce como planilla ────────────────────────────
@@ -71,7 +84,7 @@ function pedir({ metodo = 'POST', ruta = '/planilla', token = 'la-clave-de-prueb
 
 let pass = 0;
 async function t(nombre, fn) {
-  recibido = null; tirar = null; api._resetAvisos();
+  recibido = null; tirar = null; api._resetAvisos(); avisos.length = 0;
   respuesta = { dias: ['2026-08-17'], mensaje: 'ok', guardados: 1, borrados: 0, conservados: [], anomalias: [] };
   await fn();
   pass++;
@@ -204,6 +217,86 @@ async function t(nombre, fn) {
     tirar = null;
     const r = await pedir({ cuerpo: PLANILLA });
     assert.equal(r.codigo, 200, 'un error no puede dejar trabado el flag de "en curso"');
+  });
+
+  // ── Los avisos ─────────────────────────────────────────────────────────────
+  // Sin esto, los tres errores más probables de la puesta en marcha —el token mal
+  // copiado, el archivo equivocado y el puerto que no abre— son invisibles: no
+  // pasa nada y nadie se entera de que no pasa nada.
+
+  await t('un solo rechazo por clave NO avisa (puede ser un escaneo cualquiera)', async () => {
+    await pedir({ token: 'mal', cuerpo: PLANILLA });
+    assert.equal(avisos.length, 0);
+  });
+
+  await t('tres rechazos seguidos SÍ avisan, y el cuarto no repite', async () => {
+    for (let i = 0; i < api.RECHAZOS_PARA_AVISAR; i++) await pedir({ token: 'mal', cuerpo: PLANILLA });
+    assert.equal(avisos.length, 1);
+    assert.ok(/clave equivocada/.test(avisos[0].que));
+    // Tiene que decir dónde están las dos puntas que hay que comparar.
+    assert.ok(/config\.txt/.test(avisos[0].sugerencia) && /PLANILLA_SYNC_TOKEN/.test(avisos[0].sugerencia));
+    await pedir({ token: 'mal', cuerpo: PLANILLA });
+    assert.equal(avisos.length, 1, 'el script reintenta cada 4 minutos: no puede avisar cada vez');
+  });
+
+  await t('un envío bueno reinicia el contador de rechazos', async () => {
+    for (let i = 0; i < api.RECHAZOS_PARA_AVISAR; i++) await pedir({ token: 'mal', cuerpo: PLANILLA });
+    assert.equal(avisos.length, 1);
+    await pedir({ cuerpo: PLANILLA });             // se arregló el token
+    for (let i = 0; i < api.RECHAZOS_PARA_AVISAR - 1; i++) await pedir({ token: 'mal', cuerpo: PLANILLA });
+    assert.equal(avisos.length, 1, 'todavía no llegó a tres desde que se arregló');
+    await pedir({ token: 'mal', cuerpo: PLANILLA });
+    assert.equal(avisos.length, 2, 'y si se vuelve a romper, avisa de nuevo');
+  });
+
+  await t('un archivo que no es la planilla avisa una vez', async () => {
+    await pedir({ cuerpo: OTRO_XLSX });
+    assert.equal(avisos.length, 1);
+    assert.ok(/NO es la PLANILLA RETIRA/.test(avisos[0].que));
+    assert.ok(/PEDIDOS RETIRA MORENO 2026/.test(avisos[0].sugerencia), 'tiene que decir dónde mirar');
+    await pedir({ cuerpo: OTRO_XLSX });
+    assert.equal(avisos.length, 1, 'no repite mientras siga llegando el mismo archivo');
+  });
+
+  await t('cuando vuelve a llegar la planilla buena, el problema queda cerrado', async () => {
+    await pedir({ cuerpo: OTRO_XLSX });
+    assert.equal(avisos.length, 1);
+    await pedir({ cuerpo: PLANILLA });               // se arregló
+    await pedir({ cuerpo: OTRO_XLSX });              // y se vuelve a romper
+    assert.equal(avisos.length, 2, 'un problema que se resolvió y volvió tiene que avisar otra vez');
+  });
+
+  await t('problemas de distinto tipo no se pisan entre sí', async () => {
+    // Con una sola variable de "último aviso", dos problemas alternándose se
+    // borran la firma mutuamente y vuelven a avisar en cada vuelta. Se alternan
+    // dos que NO se resuelven entre sí (un token malo no arregla el archivo malo).
+    await pedir({ cuerpo: OTRO_XLSX });                                    // aviso 1: archivo
+    for (let i = 0; i < api.RECHAZOS_PARA_AVISAR; i++) await pedir({ token: 'mal', cuerpo: PLANILLA }); // aviso 2: token
+    assert.equal(avisos.length, 2);
+    await pedir({ cuerpo: OTRO_XLSX });                                    // el mismo archivo de antes
+    assert.equal(avisos.length, 2, 'el aviso de archivo no se tiene que repetir');
+  });
+
+  await t('un error interno avisa con el detalle, aunque no lo devuelva', async () => {
+    tirar = new Error('connection terminated unexpectedly');
+    await pedir({ cuerpo: PLANILLA });
+    assert.equal(avisos.length, 1);
+    assert.equal(avisos[0].nivel, '❌');
+    assert.ok(/connection terminated/.test(avisos[0].detalle), 'al admin sí hay que darle el detalle');
+  });
+
+  await t('una planilla vieja avisa, y no repite mientras siga siendo la misma', async () => {
+    tirar = new DocumentoInvalido('Esa planilla no trae ningún turno de hoy en adelante.');
+    await pedir({ cuerpo: PLANILLA });
+    await pedir({ cuerpo: PLANILLA });
+    assert.equal(avisos.length, 1);
+    assert.ok(/versión vieja/.test(avisos[0].sugerencia));
+  });
+
+  await t('el camino feliz no molesta a nadie', async () => {
+    await pedir({ cuerpo: PLANILLA });
+    await pedir({ cuerpo: PLANILLA });
+    assert.equal(avisos.length, 0, 'la planilla se guarda decenas de veces por día');
   });
 
   // ── Tamaño ─────────────────────────────────────────────────────────────────

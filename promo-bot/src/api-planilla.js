@@ -36,7 +36,17 @@ let ultimaOk = null;
 // Guard de ruido. El script reintenta solo, y la planilla se guarda decenas de
 // veces por día: sin esto, un problema que persiste avisaría cada 4 minutos para
 // siempre. Se avisa cuando el problema CAMBIA, igual que aviso-libro.js.
-let ultimoAvisoFirma = null;
+//
+// Va por TIPO de problema y no en una sola variable: con una sola, dos problemas
+// distintos alternándose se pisan la firma y vuelven a avisar cada vuelta, que es
+// exactamente el ruido que se quiere evitar.
+const avisosVistos = new Map();
+
+// Cuántos rechazos por clave seguidos antes de avisar. Uno solo puede ser
+// cualquier cosa (un escaneo de internet, alguien probando la URL); tres seguidos
+// es alguien que se equivocó al copiar el token y no se va a enterar nunca solo.
+const RECHAZOS_PARA_AVISAR = 3;
+let rechazosSeguidos = 0;
 
 /** ¿Hay una importación en curso? Dos planillas a la vez no rompen (la transacción
  *  las serializa), pero encolar es más barato que dos INSERT masivos compitiendo. */
@@ -114,14 +124,19 @@ function responder(res, codigo, objeto) {
 }
 
 /**
- * Avisa a los admins solo si el problema es DISTINTO al último avisado.
- * `firma` identifica al problema; si se repite igual, se calla.
+ * Avisa a los admins solo si ESTE tipo de problema cambió respecto del último
+ * aviso del mismo tipo. `firma` identifica el caso concreto.
  */
-async function avisarSiCambio(firma, opts) {
-  if (firma === ultimoAvisoFirma) return false;
-  ultimoAvisoFirma = firma;
+async function avisarSiCambio(tipo, firma, opts) {
+  if (avisosVistos.get(tipo) === firma) return false;
+  avisosVistos.set(tipo, firma);
   await avisarProblema(opts).catch(() => {});
   return true;
+}
+
+/** El problema de ese tipo se resolvió: que el próximo vuelva a avisar. */
+function limpiarAviso(tipo) {
+  avisosVistos.delete(tipo);
 }
 
 /**
@@ -140,8 +155,19 @@ async function procesarPlanillaHttp(buffer, { documento, equipo = 'desconocido' 
   // bot intentaría registrarlo como libro diario: esta puerta tiene una sola
   // clave y no debe poder tocar nada más que los retiros.
   if (!esPlanillaRetiros(buffer)) {
+    // Con la clave correcta pero el archivo equivocado, alguien apuntó el script a
+    // otro Excel. Nadie se entera solo: del otro lado es una máquina sin nadie
+    // mirándola, y acá la pantalla simplemente se queda como estaba.
+    await avisarSiCambio('archivo', String(buffer.length), {
+      proceso: 'la planilla automática de retiros',
+      que: `Desde ${equipo} está llegando un archivo que NO es la PLANILLA RETIRA.`,
+      detalle: `Pesa ${Math.round(buffer.length / 1024)} KB y no tiene los encabezados de la planilla.`,
+      sugerencia: 'En esa PC, revisar qué .xlsx quedó en la carpeta PEDIDOS RETIRA MORENO 2026: '
+        + 'el script manda el más nuevo que encuentre ahí.',
+    });
     throw new ErrorHttp(400, 'Ese archivo no es la PLANILLA RETIRA (no tiene sus encabezados).');
   }
+  limpiarAviso('archivo');
 
   let res;
   try {
@@ -151,7 +177,7 @@ async function procesarPlanillaHttp(buffer, { documento, equipo = 'desconocido' 
       // La planilla se reconoció pero no sirve (típico: una versión vieja, sin
       // ningún turno de hoy en adelante). Es 422 y no 400 porque el archivo está
       // bien formado: el problema es su contenido, y lo arregla una persona.
-      await avisarSiCambio('invalida:' + e.message, {
+      await avisarSiCambio('invalida', String(e.message), {
         proceso: 'la planilla automática de retiros',
         que: `Llegó una planilla desde ${equipo} pero no se pudo usar.`,
         detalle: String(e.message).replace(/<[^>]+>/g, ''),
@@ -163,21 +189,22 @@ async function procesarPlanillaHttp(buffer, { documento, equipo = 'desconocido' 
   }
 
   ultimaOk = new Date();
+  limpiarAviso('invalida');
 
   // Lo que sí amerita molestar a alguien: pedidos que desaparecieron del Excel
   // pero ya estaban marcados. registrarRetiros no los borra a propósito, y si
   // nadie mira quedan colgados en la pantalla para siempre.
   const conservados = res.conservados || [];
   if (conservados.length) {
-    const firma = 'conservados:' + conservados.map((c) => `${c.fecha}${c.turno}`).join(',');
-    await avisarSiCambio(firma, {
+    const firma = conservados.map((c) => `${c.fecha}${c.turno}`).join(',');
+    await avisarSiCambio('conservados', firma, {
       proceso: 'la planilla automática de retiros',
       que: `${conservados.length} pedido(s) ya no están en la planilla pero ya estaban marcados, así que los dejé.`,
       detalle: conservados.slice(0, 8).map((c) => `${c.fecha} ${c.turno} — ${c.cliente || c.codigo_cliente} (${c.prep || c.estado_final || 'marcado'})`).join('\n'),
       sugerencia: 'Si de verdad se dieron de baja, sacalos desde el panel.',
     });
-  } else if (ultimoAvisoFirma && ultimoAvisoFirma.startsWith('conservados:')) {
-    ultimoAvisoFirma = null; // se resolvió: que el próximo problema vuelva a avisar
+  } else {
+    limpiarAviso('conservados'); // se resolvió: que el próximo vuelva a avisar
   }
 
   return {
@@ -206,8 +233,22 @@ async function manejar(req, res, { documento }) {
 
   if (!tokenValido(req.headers['x-sync-token'])) {
     console.warn(`[api-planilla] token inválido desde ${req.socket.remoteAddress}`);
+    rechazosSeguidos++;
+    // Un token mal copiado se ve EXACTAMENTE igual que "todavía no instalé nada":
+    // no pasa nada y nadie se entera. Es el error más fácil de cometer de todo
+    // esto (se copia y se pega a mano en dos lugares), así que hay que avisarlo.
+    if (rechazosSeguidos >= RECHAZOS_PARA_AVISAR) {
+      await avisarSiCambio('token', String(req.headers['x-equipo'] || 'desconocido'), {
+        proceso: 'la planilla automática de retiros',
+        que: `${rechazosSeguidos} intentos seguidos con la clave equivocada. La planilla NO está entrando.`,
+        detalle: `Equipo: ${String(req.headers['x-equipo'] || 'sin identificar')} · IP: ${req.socket.remoteAddress}`,
+        sugerencia: 'El token de config.txt en la PC de la sucursal tiene que ser idéntico a '
+          + 'PLANILLA_SYNC_TOKEN en Railway. Ojo con los espacios al copiar.',
+      });
+    }
     return responder(res, 401, { ok: false, error: 'Token inválido.' });
   }
+  if (rechazosSeguidos) { rechazosSeguidos = 0; limpiarAviso('token'); }
 
   // A partir de acá el que llama está autenticado, así que los errores pueden ser
   // explícitos: le sirven al log del script para saber qué arreglar.
@@ -225,7 +266,7 @@ async function manejar(req, res, { documento }) {
     // Un error inesperado (la base caída, un bug) sí se avisa: acá no hay nadie
     // mirando una conversación de Telegram que se entere de que falló.
     console.error('[api-planilla] error:', e);
-    await avisarSiCambio('error:' + (e.message || ''), {
+    await avisarSiCambio('error', String(e.message || ''), {
       proceso: 'la planilla automática de retiros',
       que: `Falló el procesamiento de la planilla que mandó ${equipo}.`,
       detalle: e && e.stack ? e.stack : String(e),
@@ -270,7 +311,19 @@ function iniciarApiPlanilla({ puerto, documento } = {}) {
       try { responder(res, 500, { ok: false, error: 'Error interno.' }); } catch {}
     });
   });
-  server.on('error', (e) => console.error('[api-planilla] no pude escuchar:', e.message));
+  server.on('error', (e) => {
+    // Si el puerto no se puede abrir, el bot sigue andando por Telegram como si
+    // nada y la planilla deja de entrar en silencio. Es de los pocos casos que
+    // hay que gritar aunque no haya nadie del otro lado esperando respuesta.
+    console.error('[api-planilla] no pude escuchar:', e.message);
+    avisarSiCambio('puerto', String(e.code || e.message), {
+      proceso: 'la planilla automática de retiros',
+      que: 'No pude abrir el puerto: la planilla no va a poder entrar sola.',
+      detalle: `${e.code || ''} ${e.message}`.trim(),
+      sugerencia: 'Revisar el puerto del servicio en Railway (Settings → Networking).',
+      nivel: '❌',
+    }).catch(() => {});
+  });
   // Se loguea el puerto REAL y no el pedido: con puerto 0 el sistema elige uno, y
   // ver ":0" en el log no le sirve a nadie.
   server.listen(p, () => {
@@ -285,5 +338,6 @@ module.exports = {
   // exportados para los tests
   procesarPlanillaHttp, tokenValido, ErrorHttp, RUTA, LIMITE_BYTES,
   ultimaPlanillaOk: () => ultimaOk,
-  _resetAvisos: () => { ultimoAvisoFirma = null; ultimaOk = null; },
+  RECHAZOS_PARA_AVISAR,
+  _resetAvisos: () => { avisosVistos.clear(); rechazosSeguidos = 0; ultimaOk = null; },
 };
