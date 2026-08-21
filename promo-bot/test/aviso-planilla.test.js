@@ -74,6 +74,30 @@ async function ta(nombre, fn) { avisos.length = 0; av._reset(); await fn(); pass
     assert.equal(r.accion, 'nada', 'a las 6 de la mañana que no haya planilla es lo normal');
   });
 
+  t('el domingo no se reclama: no se trabaja', () => {
+    // La planilla del 21/08 traía viernes, sábado y lunes. El domingo ni figura.
+    // Sin esto, el primer domingo llegaba un "hace 3 horas que no entra" que es
+    // mentira — y un aviso que grita en falso una vez ya no se lee la segunda.
+    const domingo = new Date('2026-08-23T17:00:00Z'); // 14:00 ART, domingo
+    assert.equal(av.diaArg(domingo), 0);
+    const r = av.decidir({ ultima: new Date(domingo - 20 * H), ahora: domingo, hayReclamo: false });
+    assert.equal(r.accion, 'nada');
+  });
+
+  t('el sábado SÍ se reclama: se trabaja', () => {
+    const sabado = new Date('2026-08-22T17:00:00Z'); // 14:00 ART, sábado
+    assert.equal(av.diaArg(sabado), 6);
+    const r = av.decidir({ ultima: new Date(sabado - 5 * H), ahora: sabado, hayReclamo: false });
+    assert.equal(r.accion, 'reclamar');
+  });
+
+  t('diaArg usa la fecha ARGENTINA, no la UTC', () => {
+    // Sábado 22 a las 22:00 de Argentina ya es domingo 23 en UTC. Con getUTCDay()
+    // a secas, las últimas dos horas del sábado se tomarían como domingo.
+    const sabadoTarde = new Date('2026-08-23T01:00:00Z'); // 22:00 ART del sábado
+    assert.equal(av.diaArg(sabadoTarde), 6, 'todavía es sábado en Argentina');
+  });
+
   t('si nunca entró ninguna planilla, también se reclama', () => {
     const r = av.decidir({ ultima: null, ahora: EN_HORARIO, hayReclamo: false });
     assert.equal(r.accion, 'reclamar');

@@ -28,6 +28,7 @@ const LIMITE_HORAS = Number(process.env.PLANILLA_LIMITE_HORAS) > 0
 // está tocando la planilla, así que un silencio es normal.
 const DESDE_HORA = 9;
 const HASTA_HORA = 19;
+const DOMINGO = 0;
 
 // Episodio en curso: cuándo se avisó. Null = no hay reclamo abierto. Sirve para
 // avisar UNA vez por episodio y para poder anunciar cuando se resuelve.
@@ -39,6 +40,16 @@ function horaArg(fecha) {
     timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hour12: false,
   }).format(fecha);
   return Number(h);
+}
+
+/** Día de la semana en Argentina. 0 = domingo. */
+function diaArg(fecha) {
+  // Se pasa por la fecha ARGENTINA y recién ahí se pide el día: a las 22:00 de un
+  // sábado en Argentina, en UTC ya es domingo.
+  const iso = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+  }).format(fecha);
+  return new Date(`${iso}T12:00:00Z`).getUTCDay();
 }
 
 /**
@@ -58,6 +69,12 @@ function decidir({ ultima, ahora, hayReclamo }) {
   if (hayReclamo) {
     return { accion: horasSin < LIMITE_HORAS ? 'resuelto' : 'nada', horasSin };
   }
+
+  // Los domingos no se trabaja: la planilla del 21/08 traía viernes, sábado y
+  // lunes, y el domingo ni figuraba. Sin esta línea el primer domingo llegaba un
+  // "hace 3 horas que no entra la planilla" que es mentira, y un aviso que grita
+  // en falso una vez ya no lo lee nadie la segunda.
+  if (diaArg(ahora) === DOMINGO) return { accion: 'nada', horasSin };
 
   const hora = horaArg(ahora);
   if (hora < DESDE_HORA || hora >= HASTA_HORA) return { accion: 'nada', horasSin };
@@ -120,7 +137,7 @@ function iniciarAvisoPlanilla() {
 }
 
 module.exports = {
-  iniciarAvisoPlanilla, revisarPlanilla, decidir, horaArg, textoHoras,
+  iniciarAvisoPlanilla, revisarPlanilla, decidir, horaArg, diaArg, textoHoras,
   LIMITE_HORAS, DESDE_HORA, HASTA_HORA,
   _reset: () => { reclamadoEn = null; },
   _hayReclamo: () => !!reclamadoEn,
