@@ -1,12 +1,14 @@
 // Área Depósito: /informe (informes en texto libre dirigidos a Calidad o Compras) y /carteleria
 // (pedido de cartel a Marketing, ver scenes/carteleria.js). /carteleria_prueba es el mismo wizard
 // en modo prueba (solo el dueño del bot, ver requiereDueno): el diseño y la verificación vuelven
-// a quien lo prueba en vez de salir para Marketing real — a propósito NO está en `comandos` (no
-// se anuncia en /menu para nadie más), se usa tipeándolo directo.
+// a quien lo prueba en vez de salir para Marketing real. /carteleria_marketing es análogo pero
+// para una persona puntual de Marketing (ver requiereMarketingCarteleria) y sin el texto
+// "🧪 PRUEBA". Ninguno de los dos está en `comandos` a propósito (no se anuncian en /menu para
+// nadie más), se usan tipeándolos directo.
 const informeWizard = require('../../scenes/informe');
-const { carteleriaWizard, carteleriaPruebaWizard } = require('../../scenes/carteleria');
+const { carteleriaWizard, carteleriaPruebaWizard, carteleriaMarketingWizard } = require('../../scenes/carteleria');
 const corregirCarteleriaWizard = require('../../scenes/corregir-carteleria');
-const { requiereArea, requiereDueno } = require('../../middleware/authz');
+const { requiereArea, requiereDueno, requiereMarketingCarteleria } = require('../../middleware/authz');
 
 const CODIGO = 'deposito';
 
@@ -22,12 +24,13 @@ function registrar(bot) {
   bot.command('informe', requiereArea(CODIGO), (ctx) => ctx.scene.enter('informe-wizard'));
   bot.command('carteleria', requiereArea(CODIGO), (ctx) => ctx.scene.enter('carteleria-wizard'));
   bot.command('carteleria_prueba', requiereDueno(), (ctx) => ctx.scene.enter('carteleria-prueba-wizard'));
+  bot.command('carteleria_marketing', requiereMarketingCarteleria(), (ctx) => ctx.scene.enter('carteleria-marketing-wizard'));
 }
 
 module.exports = {
   codigo: CODIGO,
   nombre: 'Depósito',
-  scenes: [informeWizard, carteleriaWizard, carteleriaPruebaWizard, corregirCarteleriaWizard],
+  scenes: [informeWizard, carteleriaWizard, carteleriaPruebaWizard, carteleriaMarketingWizard, corregirCarteleriaWizard],
   comandos,
   registrar,
 };

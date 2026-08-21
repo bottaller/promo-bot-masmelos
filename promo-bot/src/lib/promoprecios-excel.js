@@ -29,7 +29,9 @@ function detectarColumnas(filas) {
     const header = (filas[i] || []).map(normalizarHeader);
     const iVencimiento = header.indexOf('vencimiento');
     const iCodigo = header.indexOf('codigo');
-    const iDetalle = header.indexOf('detalle');
+    // La planilla real usa "Descripcion" (no "Detalle") para esta columna -- se acepta cualquiera
+    // de las dos, por si vuelve a cambiar de nombre entre versiones de la planilla de Calidad.
+    const iDetalle = header.indexOf('detalle') >= 0 ? header.indexOf('detalle') : header.indexOf('descripcion');
     const iImagen = header.indexOf('imagen');
     const iPrecio = header.findIndex((h) => h.includes('accion') && h.includes('tomar'));
     if (iVencimiento >= 0 && iCodigo >= 0 && iDetalle >= 0 && iImagen >= 0 && iPrecio >= 0) {

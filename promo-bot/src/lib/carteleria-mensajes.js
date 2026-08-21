@@ -18,11 +18,13 @@ function linkWhatsApp(texto) {
 
 // Aviso final a Marketing (imprimir A4, o pedir a la gráfica) con el diseño ya aprobado —
 // se dispara desde acciones-deposito.js cuando Marketing toca "✅ Está bien". `destinatarios`
-// es un override explícito de a quién avisar — lo usa /carteleria_prueba para que un pedido de
-// prueba NUNCA le llegue a Marketing real. Si no se pasa, va a Marketing como siempre.
-async function avisarAMarketingFinal(telegram, { id, fileIdParaEnviar, tipo, cantidadCopias, destinatarios, esPrueba }) {
+// es un override explícito de a quién avisar — lo usa /carteleria_prueba y /carteleria_marketing
+// para que un pedido NUNCA le llegue a Marketing real. Si no se pasa, va a Marketing como
+// siempre. `mostrarPrueba` (independiente de que haya destinatarios-override) solo decide si se
+// ve el texto "🧪 PRUEBA" — /carteleria_marketing redirige igual pero sin ese texto.
+async function avisarAMarketingFinal(telegram, { id, fileIdParaEnviar, tipo, cantidadCopias, destinatarios, esPrueba, mostrarPrueba = esPrueba }) {
   const { label, interno } = TIPOS[tipo];
-  const prefijo = esPrueba ? '🧪 PRUEBA (esto no salió para Marketing) — ' : '';
+  const prefijo = mostrarPrueba ? '🧪 PRUEBA (esto no salió para Marketing) — ' : '';
   let avisados = 0;
   for (const tid of destinatarios || (await telegramIdsPorRol('marketing'))) {
     try {
@@ -57,13 +59,14 @@ async function avisarAMarketingFinal(telegram, { id, fileIdParaEnviar, tipo, can
 async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer, disenoFileId: disenoFileIdInicial }) {
   const {
     id, foto_file_id: fotoFileId, tipo, tipo_precio: tipoPrecio, cantidad_copias: cantidadCopias,
-    producto, precio, es_prueba: esPrueba, usuario_telegram_id: usuarioTelegramId, promoprecio_id: promoprecioId,
+    producto, precio, es_prueba: esPrueba, etiqueta_prueba: mostrarPrueba,
+    usuario_telegram_id: usuarioTelegramId, promoprecio_id: promoprecioId,
   } = carteleria;
   const { label } = TIPOS[tipo];
   const copiasTexto = cantidadCopias ? `, ${cantidadCopias === 1 ? '1 copia' : `${cantidadCopias} copias`}` : '';
   // "nuevo_ingreso" no lleva precio — precio viene null en ese caso.
   const precioTexto = precio === null || precio === undefined ? '' : ` — $${Number(precio).toFixed(2)}`;
-  const prefijo = esPrueba ? '🧪 PRUEBA (solo vos ves esto) — ' : '';
+  const prefijo = esPrueba && mostrarPrueba ? '🧪 PRUEBA (solo vos ves esto) — ' : '';
   const captionDiseno = `${prefijo}🖼️ Diseño a verificar: ${producto}${precioTexto} (${label}, ${LABELS_TIPO_PRECIO[tipoPrecio]}${copiasTexto}). Revisalo antes de aprobar.`;
   const botones = {
     reply_markup: {
@@ -109,8 +112,11 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer,
 // los file_id ya subidos para que el llamador los guarde (guardarDisenosCandidatos) y pueda
 // resolver el callback sin volver a generar ni subir nada.
 async function avisarEleccionFoto(telegram, { carteleria, disenosBuffers }) {
-  const { id, producto, es_prueba: esPrueba, usuario_telegram_id: usuarioTelegramId, promoprecio_id: promoprecioId } = carteleria;
-  const prefijo = esPrueba ? '🧪 PRUEBA (solo vos ves esto) — ' : '';
+  const {
+    id, producto, es_prueba: esPrueba, etiqueta_prueba: mostrarPrueba,
+    usuario_telegram_id: usuarioTelegramId, promoprecio_id: promoprecioId,
+  } = carteleria;
+  const prefijo = esPrueba && mostrarPrueba ? '🧪 PRUEBA (solo vos ves esto) — ' : '';
   // Mismo criterio que avisarVerificacionMarketing: diseño de /promoprecios -> directo al dueño.
   const destinatarios = esPrueba
     ? [usuarioTelegramId]

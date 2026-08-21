@@ -5,4 +5,13 @@ function esDueno(telegramId) {
   return !!process.env.OWNER_TELEGRAM_ID && String(telegramId) === String(process.env.OWNER_TELEGRAM_ID);
 }
 
-module.exports = { esDueno };
+// Mismo patrón que esDueno, para la persona de Marketing que tiene su propia copia personal de
+// /carteleria (/carteleria_marketing, ver scenes/carteleria.js): todo el circuito le vuelve a
+// ella en vez de salir a Marketing/Compras/dueño reales. Se configura por telegram_id en
+// MARKETING_CARTELERIA_TELEGRAM_ID (.env), nunca hardcodeado.
+function esMarketingCarteleria(telegramId) {
+  return !!process.env.MARKETING_CARTELERIA_TELEGRAM_ID
+    && String(telegramId) === String(process.env.MARKETING_CARTELERIA_TELEGRAM_ID);
+}
+
+module.exports = { esDueno, esMarketingCarteleria };

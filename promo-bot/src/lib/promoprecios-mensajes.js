@@ -40,14 +40,35 @@ async function mandarleImagenAlDueno(telegram, imagen) {
 // Cuando el dueño termina de validar TODAS las imágenes de un ciclo (ver
 // db/promoprecios.js: todasLasImagenesEnviadas / marcarAvisoImpresionEnviado). Lleva un botón
 // para que Marketing confirme cuando ya imprimió y entregó en salón (marcarImpresoEntregado).
+// A pedido: antes este aviso era solo texto, sin ninguna imagen adjunta — Marketing tenía que
+// volver a buscar cada foto por separado en la conversación (le habían llegado una por una,
+// mezcladas con el resto de la verificación). Ahora se le mandan TODAS agrupadas justo antes
+// (álbum de Telegram, sendMediaGroup), para bajarlas/imprimirlas juntas de una — no cambia en
+// nada el control de mercadería de antes (Compras + dueño siguen validando cada imagen una por
+// una, esto solo agrupa la ENTREGA final a Marketing).
+async function mandarAlbumImpresion(telegram, tid, imagenes) {
+  // sendMediaGroup pide entre 2 y 10 items -- con 1 sola imagen no aplica (mandarla suelta), y
+  // con más de 10 hay que partirlo en varios álbumes.
+  if (imagenes.length === 1) {
+    await telegram.sendPhoto(tid, imagenes[0].file_id, { caption: `Imagen #${imagenes[0].orden}` });
+    return;
+  }
+  for (let i = 0; i < imagenes.length; i += 10) {
+    const lote = imagenes.slice(i, i + 10);
+    await telegram.sendMediaGroup(tid, lote.map((img) => ({ type: 'photo', media: img.file_id })));
+  }
+}
+
 async function avisarImpresionAMarketing(telegram, promoId, { destinatarios, esPrueba } = {}) {
   const prefijo = esPrueba ? '🧪 PRUEBA — ' : '';
+  const imagenes = await imagenesDePromo(promoId);
   let avisados = 0;
   for (const tid of destinatarios || (await telegramIdsPorRol('marketing'))) {
     try {
+      if (imagenes.length) await mandarAlbumImpresion(telegram, tid, imagenes);
       await telegram.sendMessage(
         tid,
-        `${prefijo}🖨️ Ya está todo validado. Imprimí todas las imágenes en hoja A4 a color — al menos una copia de cada una.`,
+        `${prefijo}🖨️ Ya está todo validado. Imprimí las imágenes de arriba en hoja A4 a color — al menos una copia de cada una.`,
         { reply_markup: { inline_keyboard: [[{ text: '✅ Ya imprimí y entregué en salón', callback_data: `promo_impreso:${promoId}` }]] } }
       );
       avisados++;

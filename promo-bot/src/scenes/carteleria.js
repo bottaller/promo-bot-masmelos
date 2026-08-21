@@ -50,13 +50,16 @@ async function pedirTipoGrafica(ctx) {
 // middleware/authz.js requiereDueno) usa exactamente el mismo wizard, pero con esPrueba=true
 // -> el pedido se guarda marcado (bot.carteleria.es_prueba) y TODO vuelve a quien lo probó en
 // vez de salir para Marketing real (ver carteleria-mensajes.js).
-function crearCarteleriaWizard({ id, esPrueba }) {
+// /carteleria_marketing (solo esa persona, ver requiereMarketingCarteleria) usa el mismo
+// mecanismo de esPrueba para el circuito, pero con etiquetaPrueba=false: no muestra el texto
+// "🧪 PRUEBA" en ningún lado (bot.carteleria.etiqueta_prueba controla eso, separado de es_prueba).
+function crearCarteleriaWizard({ id, esPrueba, etiquetaPrueba = true }) {
   return new Scenes.WizardScene(
   id,
   // 0: pedir la foto del código de barras (o el código/nombre a mano)
   async (ctx) => {
     await ctx.reply(
-      (esPrueba ? '🧪 Modo prueba (esto no le llega a Marketing, te llega a vos): ' : '') +
+      (esPrueba && etiquetaPrueba ? '🧪 Modo prueba (esto no le llega a Marketing, te llega a vos): ' : '') +
       'Mandame una foto del código de barras del producto, o escribí el código o el nombre a mano (o "cancelar").'
     );
     return ctx.wizard.next();
@@ -156,7 +159,7 @@ function crearCarteleriaWizard({ id, esPrueba }) {
         ctx.wizard.selectStep(8);
         return;
       }
-      return procesarYFinalizar(ctx, esPrueba);
+      return procesarYFinalizar(ctx, esPrueba, etiquetaPrueba);
     }
     await ctx.reply('¿Cuál es el precio? (ej: 1500 o 1500,50)');
     return ctx.wizard.next();
@@ -183,7 +186,7 @@ function crearCarteleriaWizard({ id, esPrueba }) {
       ctx.wizard.selectStep(8);
       return;
     }
-    return procesarYFinalizar(ctx, esPrueba);
+    return procesarYFinalizar(ctx, esPrueba, etiquetaPrueba);
   },
   // 7: (solo corto vencimiento) recibir la fecha -> siempre es A4/A4 Color, así que pide copias
   async (ctx) => {
@@ -205,7 +208,7 @@ function crearCarteleriaWizard({ id, esPrueba }) {
       return;
     }
     ctx.wizard.state.cantidadCopias = cantidad;
-    return procesarYFinalizar(ctx, esPrueba);
+    return procesarYFinalizar(ctx, esPrueba, etiquetaPrueba);
   },
   // 9: (solo tipo_precio=politica) recibir la política -> cantidad de copias (si es interno) o terminar
   async (ctx) => {
@@ -220,12 +223,12 @@ function crearCarteleriaWizard({ id, esPrueba }) {
       ctx.wizard.selectStep(8);
       return;
     }
-    return procesarYFinalizar(ctx, esPrueba);
+    return procesarYFinalizar(ctx, esPrueba, etiquetaPrueba);
   }
   );
 }
 
-async function procesarYFinalizar(ctx, esPrueba) {
+async function procesarYFinalizar(ctx, esPrueba, etiquetaPrueba) {
   const u = ctx.state.usuario;
   const { fotoCodigoFileId, tipo, tipoPrecio, cantidadCopias, vencimiento, producto, precio, articuloCodigo, politica } = ctx.wizard.state;
 
@@ -234,7 +237,7 @@ async function procesarYFinalizar(ctx, esPrueba) {
     usuarioId: u ? u.id : null,
     usuarioNombre: u ? u.nombre : (ctx.from.username || ctx.from.first_name || null),
     usuarioTelegramId: ctx.from.id,
-    esPrueba, producto, precio: precio ?? null, politica: politica ?? null,
+    esPrueba, etiquetaPrueba, producto, precio: precio ?? null, politica: politica ?? null,
   });
 
   await ctx.reply('Dame un momento, estoy generando el diseño...');
@@ -271,5 +274,6 @@ async function procesarYFinalizar(ctx, esPrueba) {
 
 const carteleriaWizard = crearCarteleriaWizard({ id: 'carteleria-wizard', esPrueba: false });
 const carteleriaPruebaWizard = crearCarteleriaWizard({ id: 'carteleria-prueba-wizard', esPrueba: true });
+const carteleriaMarketingWizard = crearCarteleriaWizard({ id: 'carteleria-marketing-wizard', esPrueba: true, etiquetaPrueba: false });
 
-module.exports = { carteleriaWizard, carteleriaPruebaWizard };
+module.exports = { carteleriaWizard, carteleriaPruebaWizard, carteleriaMarketingWizard };
