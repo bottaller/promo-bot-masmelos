@@ -33,6 +33,7 @@ function iniciarChequeoDemoraAjustes(bot) {
       if (r.demorados > 0) console.log(`Demora de ajustes: avisados ${r.demorados}.`);
     } catch (e) {
       console.error('Error chequeando demora de ajustes:', e);
+      require('./notificar').avisarProblema({ proceso: 'chequeo de demora de ajustes', que: 'No pude chequear los ajustes verificados sin confirmar.', detalle: e && e.message, nivel: '❌' }).catch(() => {});
     }
   };
   correr(); // corrida inicial al arrancar, por si el proceso estuvo caído

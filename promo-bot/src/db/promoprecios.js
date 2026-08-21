@@ -164,6 +164,19 @@ async function validarImagenAdmin(imagenId) {
   return rows[0] || null;
 }
 
+// Diseño automático (ver carteleria-generar.js / acciones-deposito.js): el dueño lo valida
+// directo, sin pasar por Marketing ni Compras — pasa de 'pendiente' a 'enviada' en un solo paso
+// (se salta 'compras_ok', que no aplica acá).
+async function marcarImagenEnviadaDirecta(imagenId) {
+  const { rows } = await pool.query(
+    `update bot.promoprecios_imagenes set estado = 'enviada', admin_ok_en = now(), enviada_en = now()
+      where id = $1 and estado = 'pendiente'
+      returning *`,
+    [imagenId]
+  );
+  return rows[0] || null;
+}
+
 // true si ya no queda ninguna imagen del ciclo sin llegar a "enviada" (o sea, el dueño terminó de
 // validarlas todas). Se usa para disparar el aviso de impresión a Marketing.
 async function todasLasImagenesEnviadas(promoprecioId) {
@@ -214,6 +227,7 @@ module.exports = {
   reemplazarImagenRevisar,
   imagenRevisarPendiente,
   validarImagenAdmin,
+  marcarImagenEnviadaDirecta,
   todasLasImagenesEnviadas,
   marcarAvisoImpresionEnviado,
   marcarImpresoEntregado,

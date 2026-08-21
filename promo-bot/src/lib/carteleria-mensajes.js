@@ -59,7 +59,8 @@ async function avisarAMarketingFinal(telegram, { id, fileIdParaEnviar, tipo, can
 async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer, disenoFileId: disenoFileIdInicial }) {
   const {
     id, foto_file_id: fotoFileId, tipo, tipo_precio: tipoPrecio, cantidad_copias: cantidadCopias,
-    producto, precio, es_prueba: esPrueba, etiqueta_prueba: mostrarPrueba, usuario_telegram_id: usuarioTelegramId,
+    producto, precio, es_prueba: esPrueba, etiqueta_prueba: mostrarPrueba,
+    usuario_telegram_id: usuarioTelegramId, promoprecio_id: promoprecioId,
   } = carteleria;
   const { label } = TIPOS[tipo];
   const copiasTexto = cantidadCopias ? `, ${cantidadCopias === 1 ? '1 copia' : `${cantidadCopias} copias`}` : '';
@@ -76,9 +77,18 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer,
     },
   };
 
+  // Diseño automático de /promoprecios (promoprecio_id): la verificación es DIRECTO del dueño
+  // del bot, no de Marketing (Marketing solo entra al final, para imprimir ya todo aprobado —
+  // ver acciones-deposito.js y lib/promoprecios-mensajes.js).
+  const destinatarios = esPrueba
+    ? [usuarioTelegramId]
+    : promoprecioId
+      ? [process.env.OWNER_TELEGRAM_ID]
+      : await telegramIdsPorRol('marketing');
+
   let avisados = 0;
   let disenoFileId = disenoFileIdInicial || null;
-  for (const tid of esPrueba ? [usuarioTelegramId] : await telegramIdsPorRol('marketing')) {
+  for (const tid of destinatarios) {
     try {
       if (fotoFileId) {
         await telegram.sendPhoto(tid, fotoFileId, { caption: `📷 Código de barras escaneado — pedido #${id}` });
@@ -103,10 +113,16 @@ async function avisarVerificacionMarketing(telegram, { carteleria, disenoBuffer,
 // resolver el callback sin volver a generar ni subir nada.
 async function avisarEleccionFoto(telegram, { carteleria, disenosBuffers }) {
   const {
-    id, producto, es_prueba: esPrueba, etiqueta_prueba: mostrarPrueba, usuario_telegram_id: usuarioTelegramId,
+    id, producto, es_prueba: esPrueba, etiqueta_prueba: mostrarPrueba,
+    usuario_telegram_id: usuarioTelegramId, promoprecio_id: promoprecioId,
   } = carteleria;
   const prefijo = esPrueba && mostrarPrueba ? '🧪 PRUEBA (solo vos ves esto) — ' : '';
-  const destinatarios = esPrueba ? [usuarioTelegramId] : await telegramIdsPorRol('marketing');
+  // Mismo criterio que avisarVerificacionMarketing: diseño de /promoprecios -> directo al dueño.
+  const destinatarios = esPrueba
+    ? [usuarioTelegramId]
+    : promoprecioId
+      ? [process.env.OWNER_TELEGRAM_ID]
+      : await telegramIdsPorRol('marketing');
 
   let avisados = 0;
   const disenosFileIds = new Array(disenosBuffers.length).fill(null);

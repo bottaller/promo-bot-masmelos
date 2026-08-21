@@ -210,8 +210,9 @@ migración **018** + **021**) → lo consume el **resumen semanal** de los lunes
 
 **Ya no es un comando.** El flujo completo:
 
-1. **De noche — `/carga` (admin, Tesorería).** El admin sube el libro del día y las liquidaciones de
-   MP y Talo; el bot reconoce cada archivo solo. Las liquidaciones quedan en
+1. **De noche — `/carga` (admin, Tesorería).** El admin sube el libro del día y la liquidación de
+   MP; el bot reconoce cada archivo solo. **Talo la baja sola el barrido de las 21:00** (no se sube
+   a mano, salvo fallback si la API falló). Las liquidaciones quedan en
    `bot.liquidaciones_pendientes` (migración **022**). Ver [areas/tesoreria.md](areas/tesoreria.md).
 2. **21:30 ART (`src/aviso-libro.js`).** Si falta el libro o alguna liquidación, se reclama a los admins.
 3. **08:00 ART (`src/entrega-arqueo.js`).** El barrido cruza cada día pendiente contra su libro, arma

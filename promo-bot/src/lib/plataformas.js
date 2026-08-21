@@ -90,11 +90,25 @@ const PLATAFORMAS = [
     deltaSospechosoSeg: 90 * 60,
     referencia: (o) => o.titular || '',
     reconoce: (encabezados) => encabezados.includes('recibido') && encabezados.includes('estado'),
+    // Talo se baja SOLA por API a las 21:00 (entrega-arqueo.js::entregarTaloDelDia). Por eso el
+    // recordatorio de "faltan documentos" (aviso-libro.js) NO la reclama: si la bajada falla, ese
+    // barrido ya avisa a los admins. (Igual se puede subir con /carga como fallback: eso lo arquea
+    // el barrido de las 08:00.)
+    bajaPorApi: true,
   },
 ];
 
 function porCodigo(codigo) {
   return PLATAFORMAS.find((p) => p.codigo === codigo) || null;
+}
+
+// Plataformas que se cargan A MANO: su liquidación se sube con /carga y se reclama si falta (tanto
+// en /carga como en el aviso de las 21:30). Las que se bajan SOLAS por API (bajaPorApi, hoy Talo)
+// NO están acá: no hay que subirlas ni reclamarlas — el barrido las baja y arquea, y avisa si falla.
+// ÚNICA fuente de verdad del reparto manual/automático: antes estaba duplicado y se desincronizó
+// (/carga seguía pidiendo Talo aunque el aviso de las 21:30 ya no la reclamaba).
+function plataformasManuales() {
+  return PLATAFORMAS.filter((p) => !p.bajaPorApi);
 }
 
 // Saca acentos/mayúsculas para comparar encabezados sin depender del encoding.
@@ -126,4 +140,4 @@ function detectarPlataforma(buffer) {
   return null;
 }
 
-module.exports = { PLATAFORMAS, porCodigo, detectarPlataforma };
+module.exports = { PLATAFORMAS, porCodigo, plataformasManuales, detectarPlataforma };

@@ -30,13 +30,15 @@ t('grupo cheques A+B contra una cuenta (no doble-cuenta)', () => {
   const ch = byName(r, 'Cheques en Cartera');
   assert.strictEqual(ch.saldo_ayer, 3000); assert.strictEqual(ch.ingresos, 3000); assert.strictEqual(ch.diferencia, 0);
 });
-t('MP = MP + tarjetas (menos Visa Crédito)', () => {
+t('MP = MP + TODAS las tarjetas, incluida Visa Crédito', () => {
+  // Desde el 10/08/2026 Visa Crédito (111301001) SÍ entra al grupo de MP (la data mostró que su
+  // plata pesa en el saldo de MP y agruparla hace cerrar la cuenta).
   const r = conciliar({
-    saldosAyer: [S('Mercadopago', 1000)], saldosHoy: [S('Mercadopago', 1150)],
-    movimientos: [M(422101014, 100, 0), M(111301002, 50, 0), M(111301001, 999, 0)], // Visa Crédito NO cuenta
+    saldosAyer: [S('Mercadopago', 1000)], saldosHoy: [S('Mercadopago', 2149)],
+    movimientos: [M(422101014, 100, 0), M(111301002, 50, 0), M(111301001, 999, 0)], // Visa Crédito AHORA cuenta
   });
   const mp = byName(r, 'Mercado Pago');
-  assert.strictEqual(mp.ingresos, 150); assert.strictEqual(mp.diferencia, 0);
+  assert.strictEqual(mp.ingresos, 1149); assert.strictEqual(mp.diferencia, 0);
 });
 t('Talo (cuenta 42210108) concilia como cuenta deudora, cobros por el Debe', () => {
   // Talo entró como plataforma nueva el 23/07: el saldo sube por el Debe (cobros recibidos).

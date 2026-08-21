@@ -53,6 +53,18 @@ async function guardarMpConciliacion({ fecha, empresa = 'HONRE', plataforma = 'm
   return { veredicto };
 }
 
+// ¿Ya hay una conciliación guardada para ese día + plataforma? La usa la red de respaldo del
+// arqueo de Talo (entrega-arqueo.js) para no re-entregar un día que ya se arqueó. `fecha` puede
+// ser un Date o un ISO 'AAAA-MM-DD'.
+async function hayConciliacion({ fecha, plataforma, empresa = 'HONRE' }) {
+  const iso = typeof fecha === 'string' ? fecha : fechaISO(fecha);
+  const { rows } = await pool.query(
+    'select 1 from bot.mp_conciliacion where empresa = $1 and fecha = $2::date and plataforma = $3 limit 1',
+    [empresa, iso, plataforma]
+  );
+  return rows.length > 0;
+}
+
 // Las conciliaciones guardadas de un rango de días (para el resumen semanal). `desde`/`hasta`
 // son ISO 'AAAA-MM-DD', ambos inclusive. Devuelve las filas ordenadas por fecha.
 async function conciliacionesDeRango({ desde, hasta, empresa = 'HONRE' }) {
@@ -68,4 +80,4 @@ async function conciliacionesDeRango({ desde, hasta, empresa = 'HONRE' }) {
   return rows;
 }
 
-module.exports = { guardarMpConciliacion, conciliacionesDeRango, huerfanasDe };
+module.exports = { guardarMpConciliacion, hayConciliacion, conciliacionesDeRango, huerfanasDe };

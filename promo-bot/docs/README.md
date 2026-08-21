@@ -24,8 +24,8 @@ acumulado, seguridad y auditoría), `/semanal`, `/mensual` y `/reportecierre`. T
 Supabase; validado con una semana real. Falta mergear a `main` para deployar. Ver
 [conciliacion.md](conciliacion.md). **Nuevo (2026-07-25, en `dev`):** el **arqueo de cobros
 automático** — el nivel de abajo del `/cierre`, que dice **cuál** es la venta que no cierra. El admin
-sube el libro y las liquidaciones de **Mercado Pago y Talo** de noche con `/carga` (que reemplazó a
-`/libro`); a las **08:00** un barrido las cruza contra el libro y le manda a **Tesorería + Caja
+sube el libro y la liquidación de **Mercado Pago** de noche con `/carga` (que reemplazó a
+`/libro`); **Talo se baja sola por API** a las 21:00; a las **08:00** un barrido las cruza contra el libro y le manda a **Tesorería + Caja
 Central** un texto + un PDF por plataforma; los lunes va el resumen semanal. **Caja Central** dejó de
 tener comando (`/mp`) y pasó a ser un **rol de notificación**. MP acepta el reporte de **Cobros
 (collection)**, disponible el mismo día, además del settlement. **Falta correr las migraciones 014,

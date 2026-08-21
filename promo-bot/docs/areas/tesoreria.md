@@ -15,7 +15,7 @@ Excel y devuelve un **dashboard HTML** (el "Control 2 — Seguí la plata") list
 
 | Comando | Qué hace |
 |---------|----------|
-| `/carga` | (**admin**) Carga NOCTURNA de los documentos del día, **una sola vez**: el *"Diario de movimientos"* de Sigma **y** las liquidaciones de las plataformas de cobro (Mercado Pago, Talo). El bot **reconoce cada archivo solo** (no hay que decirle cuál es cuál). El libro se archiva (lo consumen los demás comandos); las liquidaciones quedan en espera para el **arqueo de las 08:00**. Reemplazó a `/libro`. Ver §Carga del día. |
+| `/carga` | (**admin**) Carga NOCTURNA de los documentos del día, **una sola vez**: el *"Diario de movimientos"* de Sigma **y** la liquidación de **Mercado Pago** (Talo se baja sola por API a las 21:00). El bot **reconoce cada archivo solo** (no hay que decirle cuál es cuál). El libro se archiva (lo consumen los demás comandos); las liquidaciones quedan en espera para el **arqueo de las 08:00**. Reemplazó a `/libro`. Ver §Carga del día. |
 | `/flujos` | Pide el Excel del *"Diario de movimientos contables"* de Sigma (`.xlsx`), lo procesa y devuelve el HTML del flujo. Si el archivo no es un export válido, responde el mensaje de error de Sigma. |
 | `/cierre` | Cierre **diario en dos tiempos**: el tesorero manda **solo** los saldos (*"Existencias al cierre"*) y el cierre queda **pendiente**. A las **08:00** un barrido lo concilia contra el libro que el admin cargó de noche (`/carga`) y le entrega el reporte al tesorero **y** a los admins (con las diferencias, el acumulado y las 🔴). Ver §Cierre diferido. |
 | `/semanal` | Control **semanal**: mandás el libro de la semana (los saldos ya están de los cierres diarios), concilia el período. **No modifica** los cierres diarios. |
@@ -37,8 +37,10 @@ liquidaciones de las plataformas de cobro. Ahora el admin, **de noche y en una s
 (en cualquier orden):
 
 - el **libro diario** (Diario de movimientos de Sigma) → se **archiva permanente**;
-- la liquidación de **Mercado Pago** → queda **en espera** para el arqueo de las 08:00;
-- la liquidación de **Talo** → ídem.
+- la liquidación de **Mercado Pago** → queda **en espera** para el arqueo de las 08:00.
+
+> **Talo NO se sube acá:** se baja sola por API a las 21:00 (`entrega-arqueo.js`). Subila a mano
+> con `/carga` solo como **fallback** si la bajada automática falló (ahí cae en la misma espera).
 
 El bot **reconoce cada archivo solo** por sus encabezados (`src/lib/plataformas.js`
 `detectarPlataforma`, y `registrarLibro` para el libro): no hay que decirle cuál es cuál. Al terminar,

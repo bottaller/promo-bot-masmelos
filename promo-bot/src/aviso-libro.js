@@ -5,7 +5,7 @@
 // con qué trabajar.
 const { cubreFecha } = require('./db/libro');
 const { plataformasPendientesDe } = require('./db/liquidaciones-pendientes');
-const { PLATAFORMAS } = require('./lib/plataformas');
+const { plataformasManuales } = require('./lib/plataformas');
 const { telegramIdsAdmins } = require('./db/usuarios');
 const { fechaHoyArgISO, parseVencimiento } = require('./lib/fechas');
 
@@ -55,7 +55,9 @@ async function revisarLibroDelDia(telegram, { empresa = 'HONRE' } = {}) {
 
   const faltan = [];
   if (!tieneLibro) faltan.push('el libro');
-  for (const p of PLATAFORMAS) if (!pendientes.includes(p.codigo)) faltan.push(p.nombre);
+  // Solo se reclaman las plataformas de carga MANUAL (plataformasManuales): las que se bajan solas
+  // por API (Talo) no van acá —no hay que subirlas y, si la bajada falla, ese barrido ya avisa—.
+  for (const p of plataformasManuales()) if (!pendientes.includes(p.codigo)) faltan.push(p.nombre);
 
   if (!faltan.length) return { jornada: hoyISO, cargado: true, avisados: 0, faltan: [] };
   if (ultimaJornadaAvisada === hoyISO) return { jornada: hoyISO, cargado: false, avisados: 0, faltan };
@@ -133,6 +135,7 @@ function iniciarAvisoLibro(bot) {
       console.log(`Carga ${r.jornada}: ${r.cargado ? 'completa' : `faltan ${r.faltan.join(', ')} (avisé a ${r.avisados} admin/s)`}.`);
     } catch (e) {
       console.error('Error en el aviso del libro diario:', e);
+      require('./notificar').avisarProblema({ proceso: 'aviso de documentos faltantes (21:30)', que: 'No pude chequear qué documentos del día faltan (libro/MP/Talo).', detalle: e && e.message, nivel: '❌' }).catch(() => {});
     }
     setTimeout(correr, msHastaProxima());
   };

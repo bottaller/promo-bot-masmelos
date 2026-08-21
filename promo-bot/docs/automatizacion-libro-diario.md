@@ -4,9 +4,9 @@ Cómo un script que exporta el "Diario de movimientos contables" de Sigma lo dej
 la base, para que lo consuman `/cierre`, el **arqueo de cobros** y `/flujos` sin que nadie lo suba
 a mano.
 
-> Esto automatiza **solo el libro**. Las **liquidaciones** de las plataformas (MP, Talo) se siguen
-> subiendo a mano con `/carga` en Telegram — el CLI de acá no las toca. En Telegram, `/carga` recibe
-> el libro **y** las liquidaciones en una sola sesión; este CLI es el equivalente del **libro** para
+> Esto automatiza **solo el libro**. La **liquidación de MP** se sigue subiendo a mano con `/carga`
+> en Telegram; **Talo se baja sola por API** a las 21:00 (el CLI de acá no toca ninguna liquidación).
+> En Telegram, `/carga` recibe el libro **y** la liquidación de MP en una sola sesión; este CLI es el equivalente del **libro** para
 > un robot que exporta de Sigma de noche.
 
 ## Regla de oro: NO escribas en la DB directamente
