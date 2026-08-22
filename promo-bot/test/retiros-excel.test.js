@@ -314,4 +314,74 @@ t('el bloque igual termina donde empieza el dia siguiente', () => {
     [['2026-08-17', '1'], ['2026-08-18', '2']]);
 });
 
+// ── Agendas en paralelo ──────────────────────────────────────────────────────
+
+// Encabezado de las hojas de NEGOCIOS: NO tiene "Excepcion" y SI tiene "NEGOCIO",
+// asi que las columnas quedan corridas respecto de la hoja del mes.
+const ENCABEZADO_NEG = [
+  'fecha de registro de pedido', 'Horario de Registro del pedido', 'N° de PEDIDO',
+  'CODIGO del Cliente', 'CLIENTE', 'N° de Orden de Pedido', 'VENDEDOR ',
+  'FECHA Retiro del Pedido', 'HORARIO de Retiro del pedido', '# Bultos', 'PALLET',
+  'STATUS de Preparación', 'ESTADO ', 'FORMA DE ENTREGA', 'NEGOCIO', 'OBSERVACION',
+];
+function bloqueNegocios(fechaTexto, pedidos = {}) {
+  const filas = [ENCABEZADO_NEG.slice()];
+  TURNOS.forEach((turno, i) => {
+    const p = pedidos[i] || {};
+    filas.push(['', '', p.nPedido === undefined ? '' : p.nPedido,
+      p.codigo === undefined ? '' : p.codigo, p.cliente || '', '', p.vendedor || '',
+      i === 0 ? fechaTexto : '', turno, '', '', p.prep || '', p.estado || '', '',
+      p.negocio || '', '']);
+  });
+  return filas;
+}
+
+t('dos agendas pueden usar el MISMO turno sin pisarse', () => {
+  // Desde agosto 2026 la planilla trae una hoja de negocios ademas de la del mes, y
+  // las dos usan los mismos 16 horarios. Con la clave vieja (fecha, turno) el pedido
+  // de una tapaba al de la otra y un cliente desaparecia de la pantalla.
+  const buf = aBuffer({
+    AGOSTO: bloque('LUNES 24 DE AGOSTO DE 2026', { 0: { codigo: '111', cliente: 'regular' } }),
+    'AGOSTO-NEGOCIOS': bloqueNegocios('LUNES 24 DE AGOSTO DE 2026',
+      { 0: { codigo: '222', cliente: 'del negocio', negocio: 'NEGOCIO PIÑATA' } }),
+  });
+  const { filas, anomalias } = parsearRetiros(buf, DESDE);
+  assert.equal(filas.length, 2, 'tienen que sobrevivir los dos');
+  assert.equal(anomalias.length, 0, 'no es un choque: son agendas distintas');
+  assert.deepEqual(filas.map((f) => f.turno), ['09:00', '09:00']);
+  assert.deepEqual(filas.map((f) => f.codigo_cliente).sort(), ['111', '222']);
+  const ag = filas.map((f) => f.agenda).sort();
+  // La agenda se normaliza sin tildes ni mayúsculas: es una clave, y así no cambia
+  // porque alguien escriba "PIÑATA" o "pinata".
+  assert.deepEqual(ag, ['general', 'negocio pinata']);
+});
+
+t('dos pedidos en el mismo turno de la MISMA agenda si es un choque', () => {
+  // Ese caso sigue siendo alguien que piso un renglon, y hay que avisarlo.
+  const buf = aBuffer({
+    AGOSTO: [
+      ...bloque('LUNES 24 DE AGOSTO DE 2026', { 0: { codigo: '111', cliente: 'uno' } }),
+      ...bloque('LUNES 24 DE AGOSTO DE 2026', { 0: { codigo: '222', cliente: 'dos' } }),
+    ],
+  });
+  const { filas, anomalias } = parsearRetiros(buf, DESDE);
+  assert.equal(filas.length, 1);
+  assert.equal(anomalias.length, 1);
+  assert.ok(anomalias[0].includes('mismo turno'));
+});
+
+t('la hoja de negocios sin columna NEGOCIO cae al nombre de la hoja', () => {
+  const buf = aBuffer({
+    'AGOSTO-NEGOCIOS': bloqueNegocios('LUNES 24 DE AGOSTO DE 2026',
+      { 0: { codigo: '333', cliente: 'sin negocio' } }),
+  });
+  const { filas } = parsearRetiros(buf, DESDE);
+  assert.equal(filas[0].agenda, 'agosto-negocios');
+});
+
+t('la hoja del mes de siempre queda en la agenda general', () => {
+  const { filas } = parsearRetiros(unDia({ 0: { codigo: '1', cliente: 'a' } }), DESDE);
+  assert.equal(filas[0].agenda, 'general');
+});
+
 console.log(`\n${pass} tests ok\n`);

@@ -17,7 +17,7 @@
 const { pool } = require('./pool');
 
 const COLUMNAS = [
-  'fecha', 'turno', 'codigo_cliente', 'cliente', 'n_pedido',
+  'fecha', 'turno', 'agenda', 'codigo_cliente', 'cliente', 'n_pedido',
   'ordenes', 'canal', 'bultos', 'prep', 'estado_final',
 ];
 
@@ -45,17 +45,17 @@ async function registrarRetiros({ filas = [], diasVistos = [] }) {
       const values = filas.map((f) => {
         const base = params.length;
         params.push(
-          f.fecha, f.turno, f.codigo_cliente, f.cliente ?? null, f.n_pedido ?? null,
+          f.fecha, f.turno, f.agenda || 'general', f.codigo_cliente, f.cliente ?? null, f.n_pedido ?? null,
           f.ordenes ?? [], f.canal, f.bultos ?? null, f.prep ?? null, f.estado_final ?? null
         );
-        return `($${base + 1}::date, $${base + 2}::time, $${base + 3}, $${base + 4}, $${base + 5}::int,
-                 $${base + 6}::text[], $${base + 7}, $${base + 8}::int, $${base + 9}, $${base + 10})`;
+        return `($${base + 1}::date, $${base + 2}::time, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}::int,
+                 $${base + 7}::text[], $${base + 8}, $${base + 9}::int, $${base + 10}, $${base + 11})`;
       }).join(',');
 
       await client.query(
         `insert into public.retiros (${COLUMNAS.join(', ')})
          values ${values}
-         on conflict (fecha, turno) do update set
+         on conflict (fecha, turno, agenda) do update set
            codigo_cliente = excluded.codigo_cliente,
            cliente        = excluded.cliente,
            n_pedido       = excluded.n_pedido,
@@ -105,13 +105,21 @@ async function registrarRetiros({ filas = [], diasVistos = [] }) {
     let borrados = 0;
     let conservados = [];
     if (filas.length) {
+      // La comparación incluye la AGENDA: la regular y las de negocios comparten los
+      // mismos horarios, así que sin eso el turno de una "tapaba" al de la otra y el
+      // pedido del negocio se borraba por no estar en la agenda regular.
       const condicionSobra = `
         r.fecha = any($1::date[])
           and not exists (
-            select 1 from unnest($2::date[], $3::time[]) as v(fecha, turno)
-             where v.fecha = r.fecha and v.turno = r.turno
+            select 1 from unnest($2::date[], $3::time[], $4::text[]) as v(fecha, turno, agenda)
+             where v.fecha = r.fecha and v.turno = r.turno and v.agenda = r.agenda
           )`;
-      const args = [dias, filas.map((f) => f.fecha), filas.map((f) => f.turno)];
+      const args = [
+        dias,
+        filas.map((f) => f.fecha),
+        filas.map((f) => f.turno),
+        filas.map((f) => f.agenda || 'general'),
+      ];
 
       // Intocados: nadie los marcó nunca. Esos sí se van.
       const sinTocar = `r.origen = 'planilla' and r.prep is null and r.estado_final is null`;

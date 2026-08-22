@@ -90,6 +90,9 @@ function mapearColumnas(fila) {
     else if (/status de preparacion/.test(h)) col.prep = i;
     else if (/^estado$/.test(h)) col.estado = i;
     else if (/forma de entrega/.test(h)) col.entrega = i;
+    // Columna nueva de la hoja de negocios (ej. "NEGOCIO PIÑATA"). No existe en la
+    // hoja regular: es lo que distingue las dos agendas que corren en paralelo.
+    else if (/^negocio$/.test(h)) col.negocio = i;
   });
   return col;
 }
@@ -134,6 +137,25 @@ function tituloNombre(raw) {
     .trim()
     .toLowerCase()
     .replace(/(^|[\s.\-/(])([a-záéíóúñü])/g, (_, p, c) => p + c.toUpperCase());
+}
+
+/**
+ * A qué agenda pertenece el turno.
+ *
+ * La planilla dejó de tener una sola agenda: desde agosto 2026 convive la hoja del
+ * mes de siempre con hojas de NEGOCIOS (ej. "AGOSTO-NEGOCIOS", con una columna
+ * "NEGOCIO" que dice "NEGOCIO PIÑATA"). Las dos usan LOS MISMOS 16 turnos, así que
+ * (fecha, turno) dejó de identificar un pedido: el lunes 24 hay dos pedidos a las
+ * 09:00, uno de cada agenda. Sin esto, uno pisaba al otro y un cliente desaparecía
+ * de la pantalla.
+ *
+ * Se prefiere el valor de la columna NEGOCIO —así dos negocios distintos el mismo
+ * día tampoco chocan— y se cae al nombre de la hoja si la celda está vacía.
+ */
+function agendaDe(nombreHoja, celdaNegocio) {
+  const negocio = norm(celdaNegocio);
+  if (negocio) return negocio;
+  return /negocio/.test(norm(nombreHoja)) ? norm(nombreHoja) : 'general';
 }
 
 const PREP = {
@@ -267,6 +289,7 @@ function parsearRetiros(buffer, opts = {}) {
           n_pedido: Number.isInteger(nPedido) && nPedido > 0 ? nPedido : null,
           ordenes: parsearOrdenes(fila[col.ordenes]),
           canal: norm(fila[col.vendedor]) === 'web' ? 'web' : 'programado',
+          agenda: agendaDe(nombreHoja, fila[col.negocio]),
           bultos: Number.isFinite(bultos) && bultos > 0 ? Math.round(bultos) : null,
           prep: prep || null,
           estado_final: final || null,
@@ -279,19 +302,21 @@ function parsearRetiros(buffer, opts = {}) {
     throw new RetirosError('No encontré ningún día cargado. ¿Es la planilla de retiros?');
   }
 
-  // (fecha, turno) es la clave del renglón. Si la planilla trae dos pedidos en el
-  // mismo turno gana el último, pero hay que avisarlo: significa que alguien pisó
-  // un renglón y uno de los dos pedidos no va a aparecer en la pantalla.
+  // La clave del renglón es (fecha, turno, AGENDA), no (fecha, turno): la agenda
+  // regular y las de negocios comparten los mismos 16 horarios, así que dos pedidos
+  // a la misma hora en agendas distintas son dos pedidos legítimos. Un choque DENTRO
+  // de la misma agenda sí es que alguien pisó un renglón, y eso se avisa.
   const porTurno = new Map();
   for (const f of filas) {
-    const clave = `${f.fecha} ${f.turno}`;
+    const clave = `${f.fecha} ${f.turno} ${f.agenda}`;
     if (porTurno.has(clave)) {
       anomalias.push(`${f.fecha} ${f.turno}: hay dos pedidos en el mismo turno (${porTurno.get(clave).codigo_cliente} y ${f.codigo_cliente}). Dejo el segundo.`);
     }
     porTurno.set(clave, f);
   }
 
-  const unicas = [...porTurno.values()].sort((a, b) => (a.fecha + a.turno).localeCompare(b.fecha + b.turno));
+  const unicas = [...porTurno.values()]
+    .sort((a, b) => (a.fecha + a.turno + a.agenda).localeCompare(b.fecha + b.turno + b.agenda));
   const dias = [...new Set(unicas.map((f) => f.fecha))].sort();
 
   return { filas: unicas, dias, diasVistos: [...vistos].sort(), anomalias, descartados };

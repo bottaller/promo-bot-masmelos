@@ -177,27 +177,29 @@ async function t(nombre, fn) { reset(); await fn(); pass++; console.log('  ok:',
 
   // ── El INSERT ──────────────────────────────────────────────────────────────
 
-  await t('el INSERT manda las 10 columnas por fila, en orden', async () => {
+  await t('el INSERT manda las 11 columnas por fila, en orden', async () => {
     await registrarRetiros({
       filas: [fila({ codigo_cliente: '777', cliente: 'PEPE', bultos: 5 })],
       diasVistos: ['2026-08-21'],
     });
     const ins = unaSola('insert')[0];
-    assert.equal(ins.params.length, 10, 'una fila = 10 parámetros');
+    assert.equal(ins.params.length, 11, 'una fila = 11 parámetros');
+    // `agenda` va tercera y cae a 'general' cuando la fila no la trae: es la hoja
+    // del mes de siempre. Las hojas de NEGOCIOS mandan su propio valor.
     assert.deepEqual(ins.params, [
-      '2026-08-21', '09:00', '777', 'PEPE', 1, ['A1'], 'programado', 5, 'preparando', null,
+      '2026-08-21', '09:00', 'general', '777', 'PEPE', 1, ['A1'], 'programado', 5, 'preparando', null,
     ]);
   });
 
-  await t('dos filas = 20 parámetros y placeholders correlativos', async () => {
+  await t('dos filas = 22 parámetros y placeholders correlativos', async () => {
     await registrarRetiros({
       filas: [fila({ turno: '09:00' }), fila({ turno: '09:30' })],
       diasVistos: ['2026-08-21'],
     });
     const ins = unaSola('insert')[0];
-    assert.equal(ins.params.length, 20);
-    assert.ok(ins.sql.includes('$11::date'), 'la segunda fila tiene que arrancar en $11');
-    assert.ok(ins.sql.includes('$20'));
+    assert.equal(ins.params.length, 22);
+    assert.ok(ins.sql.includes('$12::date'), 'la segunda fila tiene que arrancar en $12');
+    assert.ok(ins.sql.includes('$22'));
   });
 
   await t('los campos que pueden faltar viajan como null, no como undefined', async () => {
@@ -209,13 +211,18 @@ async function t(nombre, fn) { reset(); await fn(); pass++; console.log('  ok:',
     });
     const p = unaSola('insert')[0].params;
     assert.equal(p.filter((x) => x === undefined).length, 0, 'no puede quedar ningún undefined');
-    assert.deepEqual(p[5], [], 'ordenes vacío es un array, no null: la columna es not null');
+    // Orden de COLUMNAS: fecha, turno, agenda, codigo_cliente, cliente, n_pedido,
+    // ordenes, … — `ordenes` es el séptimo (índice 6).
+    assert.deepEqual(p[6], [], 'ordenes vacío es un array, no null: la columna es not null');
+    assert.equal(p[2], 'general', 'sin agenda explícita, la fila es de la hoja del mes');
   });
 
   await t('el estado solo puede avanzar: el UPDATE compara rangos', async () => {
     await registrarRetiros({ filas: [fila()], diasVistos: ['2026-08-21'] });
     const sql = unaSola('insert')[0].sql.replace(/\s+/g, ' ');
-    assert.ok(sql.includes('on conflict (fecha, turno) do update'));
+    // La AGENDA es parte de la clave: la hoja del mes y las de negocios comparten
+    // los mismos 16 horarios, así que sin ella un pedido pisaba al otro.
+    assert.ok(sql.includes('on conflict (fecha, turno, agenda) do update'));
     assert.ok(sql.includes('retiros_rango_prep'), 'sin esto una subida vieja pisaría un "listo"');
     assert.ok(sql.includes('retiros_rango_final'));
     assert.ok(sql.includes('excluded.prep is null then retiros.prep'), 'una celda vacía no debe borrar el estado');
