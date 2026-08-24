@@ -65,6 +65,10 @@ const MAX_ADJUNTO = 20 * 1024 * 1024;
 // (una planilla que no se pudo procesar, por ejemplo), describirlo no alcanza: se manda el
 // archivo atrás del mensaje, así el admin lo abre en el momento en vez de tener que ir hasta
 // la PC donde se generó. Si falla el adjunto, el aviso de texto ya salió igual.
+//
+// opts.botones = [[{ text, callback_data }]] — OPCIONAL. Van pegados al archivo (o al texto
+// si no hay archivo). Sirve para que el aviso no sea solo una mala noticia sino algo que se
+// pueda resolver ahí mismo, sin cambiar de pantalla.
 async function avisarProblema(opts) {
   const msg = formatearProblema(opts);
   // Siempre al log, aunque no llegue a Telegram (Railway guarda el log).
@@ -89,15 +93,22 @@ async function avisarProblema(opts) {
 
   let enviados = 0;
   for (const tid of new Set(admins.map(String))) {
-    try { await botInstance.telegram.sendMessage(tid, msg, { parse_mode: 'HTML' }); enviados++; }
+    const opcionesMsg = { parse_mode: 'HTML' };
+    // Si no hay archivo, los botones van pegados al texto; si hay, van con el archivo,
+    // que es lo último que se ve en el chat.
+    if (opts.botones && !adjunto) opcionesMsg.reply_markup = { inline_keyboard: opts.botones };
+    try { await botInstance.telegram.sendMessage(tid, msg, opcionesMsg); enviados++; }
     catch (e) { console.error(`avisarProblema: no pude avisar al admin ${tid}:`, e.message); continue; }
 
     if (!adjunto) continue;
     try {
+      const extra = {};
+      if (adjunto.leyenda) extra.caption = String(adjunto.leyenda).slice(0, 1000);
+      if (opts.botones) extra.reply_markup = { inline_keyboard: opts.botones };
       const r = await botInstance.telegram.sendDocument(
         tid,
         fileId || { source: adjunto.buffer, filename: adjunto.nombre || 'archivo' },
-        adjunto.leyenda ? { caption: String(adjunto.leyenda).slice(0, 1000) } : undefined
+        Object.keys(extra).length ? extra : undefined
       );
       if (!fileId && r && r.document && r.document.file_id) fileId = r.document.file_id;
     } catch (e) {

@@ -21,6 +21,7 @@ const { DOCUMENTOS, DocumentoInvalido } = require('./lib/documentos-carga');
 const { esPlanillaRetiros } = require('./lib/retiros-excel');
 const { avisarProblema } = require('./notificar');
 const canal = require('./lib/canal-planilla');
+const reintento = require('./lib/reintento-planilla');
 
 // La planilla real pesa ~75 KB. El tope es holgado a propósito (un Excel puede
 // engordar mucho con imágenes pegadas), pero tiene que existir: sin tope, un
@@ -385,10 +386,24 @@ async function manejar(req, res, { documento }) {
     console.log(`[api-planilla] ${equipo}: ${buffer.length} bytes, días ${salida.dias.join(',') || '-'}, ${salida.borrados} borrado(s)`);
     return responder(res, 200, salida);
   } catch (e) {
-    if (e instanceof ErrorHttp) return responder(res, e.codigo, { ok: false, error: e.message });
+    if (e instanceof ErrorHttp) {
+      // El 413 era el unico rechazo que no avisaba: la planilla dejaba de entrar y
+      // del lado de aca no se enteraba nadie. Los demas ErrorHttp ya avisaron ellos.
+      if (e.codigo === 413) {
+        await avisarSiCambio('tamano', String(e.message), {
+          proceso: 'la planilla automática de retiros',
+          que: `La planilla que manda ${equipo} es demasiado grande y se está rechazando.`,
+          detalle: e.message,
+          sugerencia: 'Suele ser una imagen pegada dentro del Excel. Hay que aligerarla en '
+            + 'la sucursal; mientras tanto la pantalla se queda con los datos viejos.',
+        });
+      }
+      return responder(res, e.codigo, { ok: false, error: e.message });
+    }
     // Un error inesperado (la base caída, un bug) sí se avisa: acá no hay nadie
     // mirando una conversación de Telegram que se entere de que falló.
     console.error('[api-planilla] error:', e);
+    const idReintento = buffer && buffer.length ? reintento.guardar(buffer, nombre) : null;
     await avisarSiCambio('error', String(e.message || ''), {
       proceso: 'la planilla automática de retiros',
       que: `Falló el procesamiento de la planilla que mandó ${equipo}.`,
@@ -400,6 +415,12 @@ async function manejar(req, res, { documento }) {
       archivo: buffer && buffer.length
         ? { buffer, nombre: nombreParaAdmins(buffer, nombre), leyenda: 'La planilla que estaba procesando cuando falló.' }
         : undefined,
+      // El botón va SOLO acá. En "no es la planilla" y en "no trae turnos"
+      // reintentar da exactamente el mismo resultado —es el mismo parser— y un
+      // botón que no puede funcionar es peor que no tener botón: la primera vez
+      // que alguien lo aprieta y no pasa nada, deja de creerle a todo el aviso.
+      // Un error interno, en cambio, suele ser transitorio (la base, un timeout).
+      botones: idReintento ? [[{ text: '🔁 Intentar cargarla de nuevo', callback_data: `planilla_reintentar:${idReintento}` }]] : undefined,
     });
     return responder(res, 500, { ok: false, error: 'Error interno.' });
   } finally {

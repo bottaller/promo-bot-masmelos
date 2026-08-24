@@ -177,6 +177,33 @@ async function ta(nombre, fn) { await fn(); pass++; console.log('  ok:', nombre)
     assert.strictEqual(b.documentos.length, 0);
   });
 
+  await ta('los botones van pegados al ARCHIVO, que es lo último que se ve', async () => {
+    const b = botFalso(); setBot(b);
+    const botones = [[{ text: '🔁 Reintentar', callback_data: 'planilla_reintentar:abc' }]];
+    await avisarProblema({
+      proceso: 'la planilla', que: 'falló',
+      archivo: { buffer: XLSX_FALSO, nombre: 'x.xlsx' }, botones,
+    });
+    assert.deepStrictEqual(b.documentos[0].opts.reply_markup, { inline_keyboard: botones });
+    assert.strictEqual(b.mensajes[0].opts.reply_markup, undefined, 'no duplicados en el texto');
+  });
+
+  await ta('sin archivo, los botones van con el texto', async () => {
+    const b = botFalso(); setBot(b);
+    const botones = [[{ text: 'Dale', callback_data: 'x:1' }]];
+    await avisarProblema({ proceso: 'algo', que: 'falló', botones });
+    assert.deepStrictEqual(b.mensajes[0].opts.reply_markup, { inline_keyboard: botones });
+  });
+
+  await ta('sin botones no se manda ningún reply_markup', async () => {
+    const b = botFalso(); setBot(b);
+    await avisarProblema({ proceso: 'algo', que: 'falló', archivo: { buffer: XLSX_FALSO, nombre: 'x.xlsx' } });
+    assert.strictEqual(b.mensajes[0].opts.reply_markup, undefined);
+    // Sin caption ni botones no se manda ningún objeto de opciones: la llamada
+    // queda igual a como era antes de que existieran los botones.
+    assert.strictEqual(b.documentos[0].opts, undefined);
+  });
+
   await ta('sin bot seteado no explota', async () => {
     setBot(null);
     const n = await avisarProblema({

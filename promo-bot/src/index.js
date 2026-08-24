@@ -24,6 +24,7 @@ const { iniciarAvisoMpSemanal } = require('./aviso-mp-semanal');
 const { iniciarEntregaCierres } = require('./entrega-cierres');
 const { registrarAccionesCalidad } = require('./acciones-calidad');
 const { registrarAccionesDeposito } = require('./acciones-deposito');
+const { registrarAccionesPlanilla } = require('./acciones-planilla');
 const { iniciarEntregaArqueo, iniciarEntregaTaloApi } = require('./entrega-arqueo');
 const { anunciarDeploy } = require('./aviso-deploy');
 const { iniciarChequeoDemoraAjustes } = require('./ajustes-demora');
@@ -154,6 +155,8 @@ admin.registrar(bot);
 registrarAccionesCalidad(bot);
 // Botón de /carteleria (Marketing confirma que ya pidió los carteles a la gráfica).
 registrarAccionesDeposito(bot);
+// Boton "reintentar" del aviso de la planilla de retiros. Va ANTES del catch-all de callbacks.
+registrarAccionesPlanilla(bot);
 
 // Responder callbacks sueltos (botones de flujos ya terminados) para que no queden "cargando".
 bot.on('callback_query', (ctx) => ctx.answerCbQuery().catch(() => {}));

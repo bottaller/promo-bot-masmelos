@@ -470,13 +470,42 @@ async function t(nombre, fn) {
 
   // ── Tamaño ─────────────────────────────────────────────────────────────────
 
-  await t('un archivo más grande que el límite se rechaza CON respuesta', async () => {
+  await t('un archivo más grande que el límite se rechaza CON respuesta, y se avisa', async () => {
     // Importa que conteste 413 y no que corte el socket: del otro lado hay un
     // script que guarda el motivo del rechazo en su log.
+    // Y que AVISE: era el único rechazo mudo, así que la planilla dejaba de
+    // entrar y de este lado no se enteraba nadie.
     const gigante = Buffer.alloc(api.LIMITE_BYTES + 100_000, 0x50);
     const r = await pedir({ cuerpo: gigante });
     assert.equal(r.codigo, 413);
     assert.equal(recibido, null);
+    assert.equal(avisos.length, 1);
+    assert.ok(/demasiado grande/.test(avisos[0].que));
+    assert.ok(/imagen pegada/.test(avisos[0].sugerencia), 'la causa más común');
+  });
+
+  // ── El botón de reintento ──────────────────────────────────────────────────
+
+  await t('el aviso de error interno trae el botón para reintentar', async () => {
+    tirar = new Error('la base no responde');
+    await pedir({ cuerpo: PLANILLA });
+    const b = avisos[0].botones;
+    assert.ok(b, 'un error transitorio se resuelve con un toque, no bajando el adjunto');
+    assert.ok(/planilla_reintentar:/.test(b[0][0].callback_data));
+    assert.ok(b[0][0].callback_data.length <= 64, 'Telegram corta el callback_data en 64 bytes');
+  });
+
+  await t('los rechazos que reintentar NO puede arreglar no traen botón', async () => {
+    // Es el mismo parser: reintentar da exactamente el mismo resultado. Un botón
+    // que no puede funcionar es peor que ninguno — la primera vez que alguien lo
+    // aprieta y no pasa nada, deja de creerle a todo el aviso.
+    await pedir({ cuerpo: OTRO_XLSX });
+    assert.equal(avisos[0].botones, undefined, 'no es la planilla: reintentar no cambia nada');
+
+    api._resetAvisos(); avisos.length = 0;
+    tirar = new DocumentoInvalido('No trae ningún turno de hoy en adelante.');
+    await pedir({ cuerpo: PLANILLA });
+    assert.equal(avisos[0].botones, undefined, 'planilla vieja: reintentar no la hace nueva');
   });
 
   // ── Sin clave configurada ──────────────────────────────────────────────────
