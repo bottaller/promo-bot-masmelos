@@ -96,22 +96,56 @@ async function ta(nombre, fn) {
     assert.equal(acc[0].accion, 'reclamar');
   });
 
-  t('nunca hubo un latido y el bot lleva rato despierto: canal caído', () => {
+  t('sin NINGUN latido no se acusa al script: puede ser una version vieja', () => {
+    // El bug que salio a produccion: el primer deploy mando "el sync no reporta,
+    // nunca reporto" con la planilla habiendo entrado 44 minutos antes. El script
+    // estaba perfecto; lo que pasaba es que todavia no hablaba el protocolo.
+    const acc = av.decidir({
+      ahora: EN_HORARIO,
+      ultima: new Date(EN_HORARIO - 0.7 * H), // planilla reciente: nada esta mal
+      latido: null, minutosDespierto: 600, estado: sinEpisodios(),
+    });
+    assert.deepEqual(acc, [], 'ausencia de latidos no es prueba de nada');
+  });
+
+  t('sin latidos Y con la planilla vieja se avisa, pero sin culpar al script', () => {
     const acc = av.decidir({
       ahora: EN_HORARIO, ultima: new Date(EN_HORARIO - 40 * H),
       latido: null, minutosDespierto: 600, estado: sinEpisodios(),
     });
-    assert.equal(acc[0].tipo, 'canal');
+    assert.deepEqual(acc.map((x) => x.tipo), ['datos'], 'no "canal": no hay con que acusarlo');
+  });
+
+  t('solo se acusa al canal si LATIO y despues se callo', () => {
+    const acc = av.decidir({
+      ahora: EN_HORARIO, ultima: new Date(EN_HORARIO - 40 * H),
+      latido: latidoDe(new Date(EN_HORARIO - 3 * H)), // hablo el protocolo, y se fue
+      minutosDespierto: 600, estado: sinEpisodios(),
+    });
+    assert.deepEqual(acc.map((x) => x.tipo), ['canal']);
   });
 
   t('recién reiniciado el bot NO se acusa al script', () => {
-    // Sin esto, cada redeploy dispara un "el sync no reporta" que es mentira:
-    // el script está bien, lo que pasa es que su próxima vuelta no llegó todavía.
+    // Sin esto, cada redeploy dispara un "el sync no reporta" que es mentira: el
+    // script está bien, lo que pasa es que su próxima vuelta no llegó todavía.
+    // Que la planilla esté vieja SÍ se puede afirmar —sale de la base, no depende
+    // de hace cuánto arrancó el bot—, así que ese aviso sale igual.
     const acc = av.decidir({
       ahora: EN_HORARIO, ultima: new Date(EN_HORARIO - 40 * H),
       latido: null, minutosDespierto: 3, estado: sinEpisodios(),
     });
-    assert.deepEqual(acc.map((a) => a.tipo), [], 'hay que esperar a la ventana de tolerancia');
+    assert.ok(!acc.some((a) => a.tipo === 'canal'), 'al script no se lo puede acusar todavía');
+    assert.deepEqual(acc.map((a) => a.tipo), ['datos']);
+  });
+
+  t('con un latido viejo y el bot recién reiniciado tampoco se afirma nada', () => {
+    // Ventana de tolerancia: el latido quedó de antes del reinicio y todavía no
+    // llegó el siguiente. Ni canal ni datos: se espera.
+    const acc = av.decidir({
+      ahora: EN_HORARIO, ultima: new Date(EN_HORARIO - 40 * H),
+      latido: latidoDe(new Date(EN_HORARIO - 3 * H)), minutosDespierto: 3, estado: sinEpisodios(),
+    });
+    assert.deepEqual(acc, []);
   });
 
   // ── Los datos (¿alguien actualiza la planilla?) ────────────────────────────
@@ -227,11 +261,14 @@ async function ta(nombre, fn) {
   await ta('canal: avisa, se calla, recuerda al otro día y cierra cuando vuelve', async () => {
     canal._fijarArranque(new Date(EN_HORARIO - 10 * H)); // despierto hace rato
     ultimaFalsa = new Date(EN_HORARIO - 40 * H);
-    // Sin latidos: el script está muerto.
+    // El script LATIÓ y después se calló: eso sí prueba que se murió. (Sin ningún
+    // latido no se lo puede acusar: podría ser una versión vieja.)
+    canal.registrarLatido({ equipo: 'DESKTOP-GO5TPVR', estado: 'ok' });
+    canal.ultimoLatido().en = new Date(EN_HORARIO - 3 * H);
     const a = await av.revisarPlanilla({ ahora: EN_HORARIO });
     assert.deepEqual(a.map((x) => x.tipo), ['canal']);
     assert.equal(avisos.length, 1);
-    assert.ok(/no reporta/.test(avisos[0].que));
+    assert.ok(/dejó de reportar/.test(avisos[0].que), avisos[0].que);
     assert.ok(/prendida y con la sesión iniciada/.test(avisos[0].sugerencia), 'tiene que decir qué mirar');
 
     // Media hora después: nada.
@@ -269,6 +306,29 @@ async function ta(nombre, fn) {
     assert.ok(/sync SÍ está funcionando/.test(avisos[0].que), avisos[0].que);
     assert.ok(/PLANILLA RETIRA MORENO 2026\.xlsx/.test(avisos[0].detalle), avisos[0].detalle);
     assert.ok(/2026-08-19 09:10/.test(avisos[0].detalle), 'y desde cuándo no lo tocan');
+  });
+
+  await ta('sin latidos, el aviso NO afirma que el sync este funcionando', async () => {
+    canal._fijarArranque(new Date(EN_HORARIO - 10 * H));
+    ultimaFalsa = new Date(EN_HORARIO - 6 * H);   // planilla vieja, y ningun latido
+    await av.revisarPlanilla({ ahora: EN_HORARIO });
+    assert.equal(avisos.length, 1);
+    assert.ok(!/sync SÍ está funcionando/.test(avisos[0].que), avisos[0].que);
+    assert.ok(/tampoco recibo latidos/.test(avisos[0].detalle), avisos[0].detalle);
+    assert.ok(/sync\.log/.test(avisos[0].sugerencia));
+  });
+
+  await ta('el aviso del canal no dice "no reporta nunca reporto"', async () => {
+    // Salio asi a produccion: dos frases pegadas que se contradicen y hacen dudar
+    // del aviso entero.
+    canal._fijarArranque(new Date(EN_HORARIO - 10 * H));
+    canal.registrarLatido({ equipo: 'DESKTOP-GO5TPVR', estado: 'ok' });
+    canal.ultimoLatido().en = new Date(EN_HORARIO - 3 * H); // latio, y se callo
+    ultimaFalsa = new Date(EN_HORARIO - 40 * H);
+    await av.revisarPlanilla({ ahora: EN_HORARIO });
+    assert.equal(avisos.length, 1);
+    assert.ok(/dejó de reportar hace 3 horas/.test(avisos[0].que), avisos[0].que);
+    assert.ok(!/nunca reportó/.test(avisos[0].que));
   });
 
   await ta('todo bien: no avisa nada', async () => {

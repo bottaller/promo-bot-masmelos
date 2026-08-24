@@ -96,13 +96,27 @@ function decidir({ ahora, ultima, latido, minutosDespierto, estado = episodios }
   // Recién reiniciado el bot no hay latidos todavía y eso NO significa que el
   // script esté muerto. Se espera a llevar despierto más que la ventana.
   const confiable = minutosDespierto >= MINUTOS_SIN_LATIDO;
-  const canalCaido = confiable && minSinLatido >= MINUTOS_SIN_LATIDO;
-  // OJO: sano NO es "no caído". Entre los dos hay un tercer estado —recién
-  // reiniciado, todavía sin latidos— donde no se sabe nada. Reclamar los datos
-  // ahí sería afirmar "el sync SÍ está funcionando" sin ninguna prueba, que es
-  // justamente lo que dice el mensaje. Se espera.
-  const canalSano = minSinLatido < MINUTOS_SIN_LATIDO;
-  const datosViejos = canalSano && horasSin >= LIMITE_HORAS;
+  const hayLatido = !!latido;
+
+  // NUNCA acusar al script por la simple AUSENCIA de latidos.
+  //
+  // El latido es una señal nueva: una version anterior del script no la manda, y
+  // el estado se pierde en cada redeploy. Con la regla ingenua ("no hay latidos =
+  // esta muerto"), el primer deploy mando un "el sync no reporta, nunca reporto"
+  // con la planilla habiendo entrado 44 minutos antes. Un aviso que grita en
+  // falso el dia que se estrena es exactamente lo que hace que despues nadie los
+  // lea.
+  //
+  // Entonces se acusa al canal SOLO si en algun momento SI latio y despues se
+  // callo: ahi hay prueba positiva de que el script habla el protocolo. Sin
+  // ningun latido no se afirma nada sobre el script; se cae al chequeo de datos,
+  // que tiene su propio texto para ese caso.
+  const canalCaido = confiable && hayLatido && minSinLatido >= MINUTOS_SIN_LATIDO;
+  const canalSano = hayLatido && minSinLatido < MINUTOS_SIN_LATIDO;
+  // Con el canal caido no se sabe nada de los datos: la causa es el canal.
+  // Recien reiniciado y con un latido viejo tampoco se afirma nada (ventana de
+  // tolerancia); sin ningun latido si se mira, con el texto honesto.
+  const datosViejos = !canalCaido && horasSin >= LIMITE_HORAS && (canalSano || !hayLatido);
   const mal = { canal: canalCaido, datos: datosViejos };
 
   const seTrabaja = diaArg(ahora) !== DOMINGO;
@@ -122,9 +136,10 @@ function decidir({ ahora, ultima, latido, minutosDespierto, estado = episodios }
       continue;
     }
     if (!ep) continue;
-    // El episodio de datos solo se cierra con el canal SANO: sin latidos frescos
-    // no sabemos nada de los datos, y "no sé" no es "se arregló".
-    if (tipo === 'datos' && !canalSano) continue;
+    // El episodio de datos no se cierra con el canal caido: ahi no sabemos nada
+    // de los datos, y "no se" no es "se arreglo". Sin latidos, en cambio, una
+    // planilla que entra ES la prueba de que se arreglo.
+    if (tipo === 'datos' && canalCaido) continue;
     acciones.push({ tipo, accion: 'resuelto', horasSin, minSinLatido });
   }
   return acciones;
@@ -133,28 +148,45 @@ function decidir({ ahora, ultima, latido, minutosDespierto, estado = episodios }
 // ── Los textos ───────────────────────────────────────────────────────────────
 
 function mensajeCanal(a, latido, recordatorio) {
-  const quien = latido ? latido.equipo : 'la PC de la sucursal';
+  // Acá `latido` siempre existe: sin ningún latido no se acusa al canal (ver
+  // decidir()). Igual se contempla, porque un mensaje que dice "no reporta nunca
+  // reportó" —que es lo que salía— hace dudar del aviso entero.
+  const quien = (latido && latido.equipo) || 'la PC de la sucursal';
   return {
     proceso: 'la pantalla de recepción',
     nivel: '❌',
-    que: `${recordatorio ? 'SIGUE sin resolverse: ' : ''}El sync de ${quien} no reporta `
+    que: `${recordatorio ? 'SIGUE sin resolverse: ' : ''}El sync de ${quien} dejó de reportar `
       + `${textoMinutos(a.minSinLatido)}. La pantalla va a quedar con datos viejos.`,
     detalle: latido
       ? `Último reporte: ${latido.en.toISOString()} · archivo que veía: ${latido.archivo || '?'}`
-      : 'Nunca reportó desde que arrancó el bot.',
+      : 'Sin datos del último reporte.',
     sugerencia: 'Primero: ¿esa PC está prendida y con la sesión iniciada? El sync corre '
       + 'con la sesión abierta. Si está prendida, abrir sync.log y mirar la última línea.',
   };
 }
 
 function mensajeDatos(a, latido, recordatorio) {
-  const visto = latido && latido.fecha
+  const pre = recordatorio ? 'SIGUE sin resolverse: ' : '';
+
+  // Sin latidos no se puede afirmar que el sync esté bien. Decirlo igual sería
+  // mandar a buscar el problema al lado equivocado.
+  if (!latido) {
+    return {
+      proceso: 'la pantalla de recepción',
+      que: `${pre}No entra una planilla nueva ${textoHoras(a.horasSin)}.`,
+      detalle: 'Y tampoco recibo latidos del sync, así que no puedo confirmar que esté corriendo: '
+        + 'puede ser que nadie haya tocado la planilla, que la PC esté apagada, o que todavía '
+        + 'tenga la versión del script anterior al latido.',
+      sugerencia: 'En la PC de la sucursal, abrir sync.log y mirar la última línea.',
+    };
+  }
+
+  const visto = latido.fecha
     ? `El script está bien y ve el archivo "${latido.archivo}", modificado ${latido.fecha}.`
     : 'El script está reportando bien.';
   return {
     proceso: 'la pantalla de recepción',
-    que: `${recordatorio ? 'SIGUE sin resolverse: ' : ''}No entra una planilla nueva `
-      + `${textoHoras(a.horasSin)}, y el sync SÍ está funcionando.`,
+    que: `${pre}No entra una planilla nueva ${textoHoras(a.horasSin)}, y el sync SÍ está funcionando.`,
     detalle: `${visto} O sea que nadie está guardando cambios en la planilla.`,
     sugerencia: 'Puede ser normal si no hubo pedidos nuevos. Si no, fijate que estén '
       + 'editando ese archivo y no una copia.',
