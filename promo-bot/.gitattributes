@@ -7,3 +7,10 @@ arqueo/** text eol=lf
 
 # Los .xlsx son binarios: git no debe tocarles los saltos de línea (los corrompería).
 *.xlsx binary
+
+# Los .cmd de la sucursal (scripts/sync-planilla) DEBEN quedar con CRLF.
+# No es cosmetico: con saltos de linea LF, cmd.exe se desincroniza leyendo el
+# archivo y termina ejecutando pedazos de linea sueltos ("ershell no se reconoce
+# como un comando"). Se manifiesta o no segun donde caigan los offsets, asi que
+# un archivo puede andar y el de al lado no.
+*.cmd text eol=crlf
