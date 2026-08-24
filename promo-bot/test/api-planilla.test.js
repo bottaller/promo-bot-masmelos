@@ -463,6 +463,33 @@ async function t(nombre, fn) {
     assert.equal(canal.ultimoLatido().equipo, 'DESKTOP-GO5TPVR');
   });
 
+  await t('/planilla/estado cuenta si esta llegando el latido', async () => {
+    // Sin esto, "¿el script esta reportando?" solo se podia responder yendo hasta
+    // la maquina. Es la pregunta que mas veces hubo que hacerse.
+    await pedir({ ruta: '/planilla/latido', headers: { 'x-equipo': 'DESKTOP-GO5TPVR', 'x-estado': 'ok', 'x-archivo': 'PLANILLA.xlsx' } });
+    const r = await pedir({ metodo: 'GET', ruta: '/planilla/estado' });
+    assert.equal(r.codigo, 200);
+    assert.equal(r.json.latido.equipo, 'DESKTOP-GO5TPVR');
+    assert.equal(r.json.latido.estado, 'ok');
+    assert.equal(r.json.latido.hace_min, 0);
+    assert.equal(typeof r.json.minutosDespierto, 'number');
+  });
+
+  await t('sin latidos, el estado lo dice en vez de mentir', async () => {
+    const r = await pedir({ metodo: 'GET', ruta: '/planilla/estado' });
+    assert.equal(r.json.latido, null);
+  });
+
+  await t('el estado necesita la clave: dice que maquina manda y a que hora', async () => {
+    const r = await pedir({ metodo: 'GET', ruta: '/planilla/estado', token: 'mal' });
+    assert.equal(r.codigo, 401);
+  });
+
+  await t('el estado es de lectura: un POST ahi da 405', async () => {
+    const r = await pedir({ metodo: 'POST', ruta: '/planilla/estado' });
+    assert.equal(r.codigo, 405);
+  });
+
   await t('una ruta parecida pero distinta sigue dando 404', async () => {
     assert.equal((await pedir({ ruta: '/planilla/latidos' })).codigo, 404);
     assert.equal((await pedir({ ruta: '/latido' })).codigo, 404);

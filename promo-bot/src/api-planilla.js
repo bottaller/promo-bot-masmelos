@@ -33,6 +33,10 @@ const RUTA = process.env.PLANILLA_API_PATH || '/planilla';
 // son cosas distintas (una trae datos, la otra dice "sigo vivo") y mezclarlas
 // obligaria a mirar un header para saber que hacer con el cuerpo.
 const RUTA_LATIDO = `${RUTA}/latido`;
+// Consultar el estado del canal sin tener que mirar la base ni entrar a Railway.
+// Nace de necesitarlo dos veces: "¿esta llegando el latido?" no se podia responder
+// desde afuera, y la respuesta cambiaba el diagnostico por completo.
+const RUTA_ESTADO = `${RUTA}/estado`;
 
 // Guard de ruido. El script reintenta solo, y la planilla se guarda decenas de
 // veces por día: sin esto, un problema que persiste avisaría cada 4 minutos para
@@ -319,8 +323,12 @@ async function manejar(req, res, { documento }) {
   }
 
   const esLatido = url === RUTA_LATIDO;
-  if (url !== RUTA && !esLatido) return responder(res, 404, { ok: false, error: 'No existe.' });
-  if (req.method !== 'POST') return responder(res, 405, { ok: false, error: 'Solo POST.' });
+  const esEstado = url === RUTA_ESTADO;
+  if (url !== RUTA && !esLatido && !esEstado) return responder(res, 404, { ok: false, error: 'No existe.' });
+  // El estado es de lectura; el resto escribe.
+  if (esEstado ? req.method !== 'GET' : req.method !== 'POST') {
+    return responder(res, 405, { ok: false, error: esEstado ? 'Solo GET.' : 'Solo POST.' });
+  }
 
   if (!tokenValido(req.headers['x-sync-token'])) {
     console.warn(`[api-planilla] token inválido desde ${req.socket.remoteAddress}`);
@@ -340,6 +348,26 @@ async function manejar(req, res, { documento }) {
     return responder(res, 401, { ok: false, error: 'Token inválido.' });
   }
   if (rechazosSeguidos) { rechazosSeguidos = 0; limpiarAviso('token'); }
+
+  if (esEstado) {
+    // Va con clave aunque solo lea: dice que maquina manda la planilla y a que
+    // hora, que no es asunto de cualquiera que pase por la URL.
+    const l = canal.ultimoLatido();
+    const p = canal.ultimaPlanillaOk();
+    return responder(res, 200, {
+      ok: true,
+      ahora: new Date().toISOString(),
+      minutosDespierto: Math.round(canal.minutosDespierto()),
+      latido: l ? {
+        hace_min: Math.round((Date.now() - l.en.getTime()) / 60000),
+        en: l.en.toISOString(), equipo: l.equipo, estado: l.estado,
+        archivo: l.archivo, fecha: l.fecha, tam: l.tam, motivo: l.motivo,
+      } : null,
+      // OJO: esto es "desde que arranco el proceso". La fuente de verdad de cuando
+      // entro la ultima planilla es la base (ver aviso-planilla.js).
+      planilla_en_este_proceso: p ? p.toISOString() : null,
+    });
+  }
 
   if (esLatido) {
     // El latido se atiende ANTES del guard de "en curso": decir "sigo vivo" no
@@ -489,6 +517,6 @@ module.exports = {
   procesarPlanillaHttp, tokenValido, ErrorHttp, RUTA, LIMITE_BYTES,
   nombreParaAdmins, extensionReal, tamanoLegible, esExcel,
   RECHAZOS_PARA_AVISAR,
-  RUTA_LATIDO,
+  RUTA_LATIDO, RUTA_ESTADO,
   _resetAvisos: () => { avisosVistos.clear(); rechazosSeguidos = 0; canal._reset(); },
 };
