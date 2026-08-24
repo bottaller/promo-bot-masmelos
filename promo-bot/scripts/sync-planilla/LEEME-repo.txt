@@ -8,7 +8,20 @@ Estan versionados aca, al lado del endpoint con el que hablan
 (src/api-planilla.js), porque si los dos extremos evolucionan por separado se
 rompen en silencio: el contrato es el de arriba de LEEME.txt.
 
-QUE ES CADA COSA
+EMPEZAR POR ACA
+  "MasMelos - Sync planilla.cmd" es UN SOLO ARCHIVO que hace todo: se copia solo
+  a %LOCALAPPDATA%\MasMelos\sync-planilla, deja el arranque automatico y queda
+  corriendo. Es el que hay que mandarle a la sucursal.
+
+  Reemplaza al paquete de varios archivos de abajo, que se sigue versionando por
+  historia. El motivo del cambio: descomprimir el zip dos veces creo
+  "sync-planilla (1)" al lado de "sync-planilla", el arranque automatico quedo
+  apuntando a una carpeta y el resto a la otra, y el sync termino sin correr.
+  Un archivo que se copia solo a un lugar fijo no puede terminar asi.
+
+  Modos: (sin argumentos) instala · /estado · /quitar · /una · /loop
+
+QUE ES CADA COSA (el paquete viejo, de varios archivos)
   Sync planilla.cmd        el que trabaja. Doble clic = una pasada; /loop = queda corriendo
   Instalar sync.cmd        lo deja andando y lo hace arrancar al iniciar sesion
   Quitar sync.cmd          lo baja y saca el arranque automatico
