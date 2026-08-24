@@ -313,6 +313,82 @@ function SacarAccesos {
 }
 
 # ───────────────────────────────────────────────────────────────────────────
+# Arrancar el loop: probar, VERIFICAR, y si no anduvo probar otra forma
+# ───────────────────────────────────────────────────────────────────────────
+# En la PC de la sucursal el arranque por wscript no dejaba ningun proceso, pero
+# todo lo demas funcionaba (la planilla se subia bien). La causa mas probable es
+# que Windows Script Host este deshabilitado por politica, que es comun en
+# equipos administrados. Adivinar cual es no sirve: lo que sirve es intentar,
+# comprobar si quedo corriendo, y si no, usar otra forma.
+$MARCA_LOOP = 'TV_MODO=' + [char]39 + [char]47 + 'loop' + [char]39
+
+function ProcesosLoop {
+  return @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+           Where-Object { $_.CommandLine -like ('*' + $MARCA_LOOP + '*') })
+}
+
+function EsperarArranque($segundos = 40) {
+  # CUARENTA segundos, no tres. Se midio: en una maquina cargada la cadena
+  # wscript -> cmd -> powershell tardo 48 segundos en aparecer en la lista de
+  # procesos. Con la espera corta el instalador decia "NO arranco" cuando en
+  # realidad si habia arrancado, y mandaba a buscar un problema inexistente.
+  #
+  # El @() de afuera no es decorativo: un @() VACIO devuelto por una funcion se
+  # desarma y llega como $null, y entonces .Count no da 0 sino nada.
+  for ($intento = 1; $intento -le [int]($segundos / 2); $intento++) {
+    Start-Sleep -Seconds 2
+    if (@(ProcesosLoop).Count) { return $intento * 2 }
+  }
+  return 0
+}
+
+function ArrancarLoop {
+  $q = [char]34
+
+  # Forma 1: wscript. Es la unica que no muestra NINGUNA ventana.
+  Start-Process -FilePath 'wscript.exe' -ArgumentList ($q + $VBS + $q) -WindowStyle Hidden -ErrorAction SilentlyContinue
+  $s = EsperarArranque
+  if ($s) { W ("   arranco en {0} segundos (sin ventana)" -f $s); return 'wscript' }
+
+  # Forma 2: el .cmd directo, oculto. Sirve si wscript esta bloqueado.
+  W '   wscript no dejo nada corriendo; puede estar deshabilitado en esta PC.'
+  W '   Pruebo otra forma...'
+  Start-Process -FilePath $WORKER -ArgumentList ([char]47 + 'loop') -WindowStyle Hidden -ErrorAction SilentlyContinue
+  $s = EsperarArranque
+  if ($s) { W ("   arranco en {0} segundos (sin wscript)" -f $s); return 'directo' }
+
+  return $null
+}
+
+function CrearAcceso($forma) {
+  # El acceso directo tiene que usar LA MISMA forma que funciono recien. Si
+  # wscript esta bloqueado, un acceso directo a wscript no arranca nada despues
+  # de reiniciar y el problema vuelve solo, sin que nadie lo note.
+  $q = [char]34
+  New-Item -ItemType Directory -Force -Path $INICIO | Out-Null
+  try {
+    $ws = New-Object -ComObject WScript.Shell
+    # El objeto NO se puede llamar $lnk si hay un $LNK: son la misma variable.
+    $acceso = $ws.CreateShortcut((Join-Path $INICIO $LNK_NOMBRE))
+    if ($forma -eq 'wscript') {
+      $acceso.TargetPath = 'wscript.exe'
+      $acceso.Arguments = $q + $VBS + $q
+    } else {
+      # Sin wscript: powershell oculto lanzando el worker. Puede haber un
+      # parpadeo de consola al iniciar sesion; es el precio de no tener wscript.
+      $acceso.TargetPath = 'powershell.exe'
+      $acceso.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command " +
+                          "& '" + $WORKER + "' " + [char]47 + "loop"
+      $acceso.WindowStyle = 7
+    }
+    $acceso.WorkingDirectory = $DEST
+    $acceso.Description = 'Manda la planilla de retiros al sitio'
+    $acceso.Save()
+    W ("   arranque automatico: listo ({0})" -f $forma)
+  } catch { W ("   NO pude crear el arranque automatico: {0}" -f $_.Exception.Message) }
+}
+
+# ───────────────────────────────────────────────────────────────────────────
 # Instalar
 # ───────────────────────────────────────────────────────────────────────────
 function Instalar {
@@ -356,31 +432,24 @@ function Instalar {
   # ANSI: wscript se lleva mal con UTF-8 con BOM si la ruta tiene acentos.
   [IO.File]::WriteAllText($VBS, $contenido, [Text.Encoding]::Default)
 
-  New-Item -ItemType Directory -Force -Path $INICIO | Out-Null
-  try {
-    $ws = New-Object -ComObject WScript.Shell
-    # El objeto NO se puede llamar $lnk si hay un $LNK: son la misma variable.
-    $acceso = $ws.CreateShortcut((Join-Path $INICIO $LNK_NOMBRE))
-    $acceso.TargetPath = 'wscript.exe'
-    $acceso.Arguments = $q + $VBS + $q
-    $acceso.WorkingDirectory = $DEST
-    $acceso.Description = 'Manda la planilla de retiros al sitio'
-    $acceso.Save()
-    W '   arranque automatico: listo'
-  } catch { W ("   NO pude crear el arranque automatico: {0}" -f $_.Exception.Message) }
-
   # El token vive en config.txt. No es una clave de base (solo sirve para subir
   # esta planilla), pero no hay razon para que lo lea cualquiera.
   try { cmd /c ("icacls `"$CONFIG`" /inheritance:r /grant:r `"$env:USERNAME`":(R,W) >nul 2>&1") } catch {}
 
   W ''
   W '3) Arrancando...'
-  Start-Process -FilePath 'wscript.exe' -ArgumentList ($q + $VBS + $q) -WindowStyle Hidden
-  Start-Sleep -Seconds 3
-  $vivos = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
-             Where-Object { $_.CommandLine -like ('*' + 'TV_MODO=' + [char]39 + [char]47 + 'loop' + [char]39 + '*') })
-  W ("   procesos corriendo: {0}" -f $vivos.Count)
-  if (-not $vivos.Count) { W '   >> NO arranco. Avisale a sistemas con esta pantalla.' }
+  $forma = ArrancarLoop
+  if (-not $forma) {
+    # SIEMPRE se deja el arranque automatico, aunque no se haya podido confirmar
+    # que arranco. Si no, un arranque lento deja la maquina sin nada configurado
+    # y despues del reinicio no arranca nunca mas: peor que el problema original.
+    $forma = 'wscript'
+    W '   No pude CONFIRMAR que arrancara en 40 segundos.'
+    W '   Puede estar arrancando igual: volve a hacer doble clic en unos minutos'
+    W '   y te va a mostrar el estado en vez de reinstalar.'
+  }
+  CrearAcceso $forma
+  W ("   procesos corriendo: {0}" -f @(ProcesosLoop).Count)
 
   W ''
   W '4) Probando contra el servidor...'
