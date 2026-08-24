@@ -81,10 +81,26 @@ agosto 2026 escucha además **un solo endpoint**, para que la PLANILLA RETIRA qu
 de recepción llegue sin que nadie se acuerde de subirla:
 
 ```
-POST /planilla        header X-Sync-Token: <PLANILLA_SYNC_TOKEN>
-                      body: el .xlsx crudo (application/octet-stream)
-GET  /salud           sin clave, no devuelve datos
+POST /planilla         header X-Sync-Token: <PLANILLA_SYNC_TOKEN>
+                       body: el .xlsx crudo (application/octet-stream)
+POST /planilla/latido  "sigo vivo", en cada vuelta del script (cada ~4 min)
+GET  /salud            sin clave, no devuelve datos
 ```
+
+**Por qué existe el latido.** El script solo manda el Excel cuando cambia, que es
+lo correcto. Pero entonces "no llegó nada" significa dos cosas muy distintas a la
+vez: que nadie tocó la planilla, o que el script se murió. Pasó de verdad un lunes
+a la mañana y no hubo forma de saber cuál era sin ir hasta la máquina. Con el
+latido, `aviso-planilla.js` vigila las dos cosas por separado:
+
+| Señal | Pregunta que responde |
+|---|---|
+| ¿Hay latidos? | ¿El script sigue vivo? |
+| ¿Entran planillas? | ¿Alguien está actualizando el Excel? |
+
+El latido además trae el estado del propio script: si no llega al servidor de
+archivos, lo dice, y el aviso sale en el momento en vez de deducirse tres horas
+después.
 
 Del otro lado hay un script de PowerShell en la PC de la sucursal (`Desktop/sync-planilla`) que mira
 el archivo en el servidor cada pocos minutos y lo manda cuando cambia. **No parsea nada**: es una

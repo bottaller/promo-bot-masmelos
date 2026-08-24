@@ -20,6 +20,7 @@ const { timingSafeEqual } = require('crypto');
 const { DOCUMENTOS, DocumentoInvalido } = require('./lib/documentos-carga');
 const { esPlanillaRetiros } = require('./lib/retiros-excel');
 const { avisarProblema } = require('./notificar');
+const canal = require('./lib/canal-planilla');
 
 // La planilla real pesa ~75 KB. El tope es holgado a propósito (un Excel puede
 // engordar mucho con imágenes pegadas), pero tiene que existir: sin tope, un
@@ -27,11 +28,10 @@ const { avisarProblema } = require('./notificar');
 const LIMITE_BYTES = 8 * 1024 * 1024;
 
 const RUTA = process.env.PLANILLA_API_PATH || '/planilla';
-
-// Última planilla aceptada, para /salud y para saber si el canal está vivo. OJO:
-// esto se pierde en cada redeploy, así que NO es la fuente del aviso de datos
-// viejos — ese mira la base (ver aviso-planilla.js).
-let ultimaOk = null;
+// El latido va por su propia ruta y no como una variante del POST de la planilla:
+// son cosas distintas (una trae datos, la otra dice "sigo vivo") y mezclarlas
+// obligaria a mirar un header para saber que hacer con el cuerpo.
+const RUTA_LATIDO = `${RUTA}/latido`;
 
 // Guard de ruido. El script reintenta solo, y la planilla se guarda decenas de
 // veces por día: sin esto, un problema que persiste avisaría cada 4 minutos para
@@ -274,7 +274,10 @@ async function procesarPlanillaHttp(buffer, { documento, equipo = 'desconocido',
     throw e;
   }
 
-  ultimaOk = new Date();
+  canal.registrarPlanillaOk();
+  // Una planilla que entra tambien prueba que el script esta vivo. Sin esto, un
+  // sync que manda seguido pero cuyos latidos se pierden pareceria caido.
+  canal.registrarLatido({ equipo, estado: 'ok', archivo: nombre });
   limpiarAviso('invalida');
 
   // Lo que sí amerita molestar a alguien: pedidos que desaparecieron del Excel
@@ -314,7 +317,8 @@ async function manejar(req, res, { documento }) {
     return responder(res, 200, { ok: true, servicio: 'planilla-retiros' });
   }
 
-  if (url !== RUTA) return responder(res, 404, { ok: false, error: 'No existe.' });
+  const esLatido = url === RUTA_LATIDO;
+  if (url !== RUTA && !esLatido) return responder(res, 404, { ok: false, error: 'No existe.' });
   if (req.method !== 'POST') return responder(res, 405, { ok: false, error: 'Solo POST.' });
 
   if (!tokenValido(req.headers['x-sync-token'])) {
@@ -335,6 +339,36 @@ async function manejar(req, res, { documento }) {
     return responder(res, 401, { ok: false, error: 'Token inválido.' });
   }
   if (rechazosSeguidos) { rechazosSeguidos = 0; limpiarAviso('token'); }
+
+  if (esLatido) {
+    // El latido se atiende ANTES del guard de "en curso": decir "sigo vivo" no
+    // puede quedar bloqueado porque justo se este importando una planilla, que es
+    // lo unico que tarda.
+    const l = canal.registrarLatido({
+      equipo: req.headers['x-equipo'],
+      estado: req.headers['x-estado'],
+      archivo: req.headers['x-archivo'],
+      fecha: req.headers['x-archivo-fecha'],
+      tam: req.headers['x-archivo-tam'],
+      motivo: req.headers['x-motivo'],
+    });
+    // Que el script no llegue al archivo se avisa desde ACA y no desde el chequeo
+    // periodico: el script ya sabe cual es el problema y lo dice, no hace falta
+    // esperar tres horas para deducirlo.
+    if (l.estado !== 'ok') {
+      await avisarSiCambio('sucursal', `${l.estado}:${l.motivo || ''}`, {
+        proceso: 'la planilla automática de retiros',
+        que: `La PC de la sucursal (${l.equipo}) no está pudiendo leer la planilla.`,
+        detalle: l.motivo || l.estado,
+        sugerencia: 'Suele ser que se perdió el acceso al servidor de archivos. '
+          + 'Entrar una vez a \192.168.0.210\Compartida desde el Explorador y tildar '
+          + '"Recordar mis credenciales".',
+      });
+    } else {
+      limpiarAviso('sucursal');
+    }
+    return responder(res, 200, { ok: true });
+  }
 
   // A partir de acá el que llama está autenticado, así que los errores pueden ser
   // explícitos: le sirven al log del script para saber qué arreglar.
@@ -433,7 +467,7 @@ module.exports = {
   // exportados para los tests
   procesarPlanillaHttp, tokenValido, ErrorHttp, RUTA, LIMITE_BYTES,
   nombreParaAdmins, extensionReal, tamanoLegible, esExcel,
-  ultimaPlanillaOk: () => ultimaOk,
   RECHAZOS_PARA_AVISAR,
-  _resetAvisos: () => { avisosVistos.clear(); rechazosSeguidos = 0; ultimaOk = null; },
+  RUTA_LATIDO,
+  _resetAvisos: () => { avisosVistos.clear(); rechazosSeguidos = 0; canal._reset(); },
 };

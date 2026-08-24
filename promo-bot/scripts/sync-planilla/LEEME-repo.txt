@@ -1,0 +1,27 @@
+SYNC DE LA PLANILLA RETIRA — el lado de la sucursal
+===================================================
+
+Estos archivos NO corren en el servidor: se copian a la PC de la sucursal (hoy
+DESKTOP-GO5TPVR) y desde ahi mandan la PLANILLA RETIRA al bot.
+
+Estan versionados aca, al lado del endpoint con el que hablan
+(src/api-planilla.js), porque si los dos extremos evolucionan por separado se
+rompen en silencio: el contrato es el de arriba de LEEME.txt.
+
+QUE ES CADA COSA
+  Sync planilla.cmd        el que trabaja. Doble clic = una pasada; /loop = queda corriendo
+  Instalar sync.cmd        lo deja andando y lo hace arrancar al iniciar sesion
+  Quitar sync.cmd          lo baja y saca el arranque automatico
+  config.txt               PLANTILLA, sin url ni token (ver adentro)
+  Diagnostico planilla.cmd solo lee: sirve para ver por que no llega al archivo
+  LEEME.txt                el instructivo para quien lo instala
+
+POR QUE ES POWERSHELL Y NO NODE
+  La maquina donde corre es un escritorio de empleado: sin permisos de
+  administrador y sin Node instalado. PowerShell ya viene con Windows.
+  Y sobre todo: ahi NO tiene que haber credenciales de la base. El script solo
+  manda bytes con una clave que unicamente sirve para subir esta planilla.
+
+AL INSTALAR
+  Completar url y token en config.txt ANTES de correr "Instalar sync.cmd", o
+  arranca en modo prueba (hace todo menos mandar).

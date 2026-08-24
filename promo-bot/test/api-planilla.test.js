@@ -17,6 +17,7 @@ const http = require('http');
 const Module = require('module');
 const XLSX = require('xlsx');
 const { DocumentoInvalido } = require('../src/lib/documentos-carga');
+const canal = require('../src/lib/canal-planilla');
 
 // Doble de notificar, puesto ANTES de cargar api-planilla: los avisos a los admins
 // son la mitad del valor de esto (un token mal copiado no se nota de ninguna otra
@@ -393,6 +394,78 @@ async function t(nombre, fn) {
     await pedir({ cuerpo: PLANILLA });
     await pedir({ cuerpo: PLANILLA });
     assert.equal(avisos.length, 0, 'la planilla se guarda decenas de veces por día');
+  });
+
+  // ── El latido ──────────────────────────────────────────────────────────────
+  // Es lo que permite distinguir "el script murió" de "nadie tocó el Excel".
+  // Sin esto las dos se ven igual desde el servidor: no llega nada.
+
+  await t('un latido queda registrado con lo que ve el script', async () => {
+    const r = await pedir({
+      ruta: '/planilla/latido',
+      headers: {
+        'x-equipo': 'DESKTOP-GO5TPVR', 'x-estado': 'ok',
+        'x-archivo': 'PLANILLA RETIRA MORENO 2026.xlsx',
+        'x-archivo-fecha': '2026-08-24 10:15', 'x-archivo-tam': '104791',
+      },
+    });
+    assert.equal(r.codigo, 200);
+    const l = canal.ultimoLatido();
+    assert.equal(l.equipo, 'DESKTOP-GO5TPVR');
+    assert.equal(l.estado, 'ok');
+    assert.equal(l.archivo, 'PLANILLA RETIRA MORENO 2026.xlsx');
+    assert.equal(l.tam, 104791);
+    assert.ok(l.en instanceof Date);
+    assert.equal(avisos.length, 0, 'un latido sano no molesta a nadie');
+  });
+
+  await t('el latido también necesita la clave', async () => {
+    const r = await pedir({ ruta: '/planilla/latido', token: 'mal' });
+    assert.equal(r.codigo, 401);
+    assert.equal(canal.ultimoLatido(), null);
+  });
+
+  await t('si el script dice que NO llega al archivo, se avisa en el momento', async () => {
+    // El script ya sabe cuál es el problema: no hay que esperar tres horas para
+    // deducirlo desde el servidor.
+    await pedir({
+      ruta: '/planilla/latido',
+      headers: {
+        'x-equipo': 'DESKTOP-GO5TPVR', 'x-estado': 'sin-archivo',
+        'x-motivo': 'no se llego a la carpeta compartida',
+      },
+    });
+    assert.equal(avisos.length, 1);
+    assert.ok(/no está pudiendo leer la planilla/.test(avisos[0].que));
+    assert.ok(/carpeta compartida/.test(avisos[0].detalle));
+    assert.ok(/Recordar mis credenciales/.test(avisos[0].sugerencia), 'la causa más común');
+  });
+
+  await t('el problema de la sucursal no se repite, y se cierra cuando vuelve', async () => {
+    const malo = {
+      ruta: '/planilla/latido',
+      headers: { 'x-equipo': 'X', 'x-estado': 'sin-archivo', 'x-motivo': 'mismo problema' },
+    };
+    await pedir(malo);
+    await pedir(malo);
+    assert.equal(avisos.length, 1, 'late cada 4 minutos: no puede avisar cada vez');
+    await pedir({ ruta: '/planilla/latido', headers: { 'x-equipo': 'X', 'x-estado': 'ok' } });
+    await pedir(malo);
+    assert.equal(avisos.length, 2, 'si se arregla y vuelve a romperse, avisa de nuevo');
+  });
+
+  await t('una planilla que entra también cuenta como latido', async () => {
+    // Si no, un sync que manda seguido pero cuyos latidos se pierden parecería
+    // caído y saldría un aviso falso.
+    assert.equal(canal.ultimoLatido(), null);
+    await pedir({ cuerpo: PLANILLA, headers: { 'x-equipo': 'DESKTOP-GO5TPVR' } });
+    assert.ok(canal.ultimoLatido(), 'tiene que haber quedado registrado');
+    assert.equal(canal.ultimoLatido().equipo, 'DESKTOP-GO5TPVR');
+  });
+
+  await t('una ruta parecida pero distinta sigue dando 404', async () => {
+    assert.equal((await pedir({ ruta: '/planilla/latidos' })).codigo, 404);
+    assert.equal((await pedir({ ruta: '/latido' })).codigo, 404);
   });
 
   // ── Tamaño ─────────────────────────────────────────────────────────────────

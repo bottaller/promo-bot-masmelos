@@ -1,0 +1,145 @@
+SYNC DE LA PLANILLA RETIRA
+==========================
+
+Que hace
+--------
+Mira cada pocos minutos la PLANILLA RETIRA que esta en el servidor y, cuando
+cambia, la manda sola al sitio. La idea es que nadie tenga que acordarse de
+subirla por Telegram ni por el panel: se guarda el Excel y listo.
+
+Corre en la PC del empleado (DESKTOP-GO5TPVR), no en el servidor. El servidor
+no sirve para esto porque la cuenta que tiene iniciada no puede leer la carpeta
+"03 Ventas".
+
+No necesita administrador, no instala nada en el sistema y no usa Node ni
+ningun programa extra: es PowerShell, que ya viene con Windows.
+
+
+Los archivos
+------------
+  Sync planilla.cmd    el que hace el trabajo
+  Instalar sync.cmd    lo deja andando y lo hace arrancar solo al iniciar sesion
+  Quitar sync.cmd      lo baja y saca el arranque automatico
+  config.txt           la url, la clave y cada cuanto mirar
+  LEEME.txt            esto
+
+Cuando corre se agregan solos dos archivos mas:
+  sync.log             que fue pasando (es lo primero que hay que mirar)
+  estado.txt           que version de la planilla ya se mando
+  Sync oculto.vbs      el lanzador sin ventana, lo genera el instalador
+
+
+Como se pone en marcha
+----------------------
+1. Copiar TODA la carpeta a la PC del empleado. Puede ir en el Escritorio.
+
+2. Doble clic en "Instalar sync.cmd".
+   Queda andando y ademas arranca solo cada vez que esa persona inicia sesion.
+   El instalador hace una pasada de prueba y muestra el resultado ahi mismo.
+
+3. Listo. No abre ninguna ventana ni molesta a nadie mientras trabaja.
+
+Para sacarlo: doble clic en "Quitar sync.cmd".
+
+
+MODO PRUEBA
+-----------
+Mientras config.txt no tenga una "url" cargada, el sync corre igual pero NO
+manda nada: busca la planilla, la lee, se fija si cambio y lo anota en el log.
+
+Esto es a proposito. Sirve para dejarlo instalado y verificar durante unos dias
+la parte dificil (que llegue a la carpeta, que sobreviva a un reinicio, que se
+de cuenta cuando el archivo cambia) antes de que exista el otro extremo.
+
+Cuando este la url y la clave, se cargan en config.txt y ya esta: el sync las
+toma solo en pocos minutos, sin reinstalar nada ni cerrar sesion. La primera
+planilla sale enseguida, no hay que esperar a que alguien la vuelva a editar.
+
+
+Como saber si esta andando
+--------------------------
+Abrir sync.log. Tiene una linea por vuelta, incluso cuando no pasa nada:
+
+  16:33:23  sin cambios (guardada 14:40, 20 KB)
+  16:41:02  ENVIADA 74 KB  ->  200  {"guardados":28,"borrados":0}
+
+Si la ultima linea es de hace mas de 10 minutos, el sync no esta corriendo.
+Se arregla con "Instalar sync.cmd" de nuevo.
+
+Otras lineas que pueden aparecer, y que significan:
+
+  "sin cambios"
+      Todo bien. Es lo normal casi siempre.
+
+  "SIN ARCHIVO: no se llego a la carpeta compartida..."
+      No esta llegando al servidor. Puede ser que el servidor este apagado, o
+      que se haya perdido la credencial guardada (ver abajo).
+
+  "todavia no: lo estaban guardando justo en ese momento"
+      Alguien estaba grabando el Excel mientras lo leiamos. No es un problema:
+      lo vuelve a intentar en la vuelta siguiente.
+
+  "OJO: la planilla se achico de X a Y KB"
+      La planilla quedo a menos de la mitad de lo que venia pesando. No la
+      manda de una: espera una vuelta mas y, si sigue igual, ahi si la manda.
+      Es para que un guardado a medias no borre pedidos de la pantalla.
+
+  "FALLO EL ENVIO: ..."
+      Llego al archivo pero no pudo mandarlo. Reintenta solo en la vuelta
+      siguiente; no hay que hacer nada. Si se repite todo el dia, mirar el
+      mensaje que sigue al ":", que viene del servidor.
+
+
+La credencial del servidor (importante)
+---------------------------------------
+En la PC del empleado hay una credencial guardada para 192.168.0.210, y por eso
+esto funciona sin que nadie tipee nada.
+
+Si alguna vez se borra, el sync deja de llegar a la carpeta despues del
+siguiente reinicio, y en el log va a aparecer "no se llego a la carpeta
+compartida". Se vuelve a guardar entrando una vez a \\192.168.0.210\Compartida
+desde el Explorador y tildando "Recordar mis credenciales".
+
+
+Un detalle de la carpeta
+------------------------
+El archivo vive hoy en una carpeta que se llama "JULIO 2026" y se sigue usando
+en agosto. El sync NO arma la ruta con el nombre del mes: busca el xlsx mas
+nuevo que cuelgue de "PEDIDOS RETIRA MORENO 2026". Asi que el dia que alguien
+arme una carpeta "AGOSTO 2026" y mueva el archivo ahi, esto sigue andando solo,
+sin que haya que tocar nada.
+
+
+============================================================================
+PARA EL QUE HAGA EL OTRO EXTREMO (el endpoint)
+============================================================================
+
+Lo que manda este script:
+
+  POST  <la url de config.txt>
+  Content-Type: application/octet-stream
+  X-Sync-Token: <la clave de config.txt>
+  X-Archivo:    PLANILLA RETIRA MORENO 2026.xlsx
+  X-Equipo:     DESKTOP-GO5TPVR
+  Body:         los bytes crudos del .xlsx (hoy 74 KB)
+
+Lo que espera de vuelta:
+
+  200 con un JSON corto. Se escribe tal cual en el log, asi que conviene que
+  diga algo util, por ejemplo:
+      {"guardados":28,"borrados":0,"dias":["2026-08-21"]}
+
+  Cualquier otro codigo se toma como error: se anota en el log junto con los
+  primeros 300 caracteres del cuerpo de la respuesta, y NO se marca el archivo
+  como enviado, asi que se reintenta solo en la vuelta siguiente. Por eso el
+  endpoint tiene que poder recibir la misma planilla dos veces sin romperse
+  (que ya es el caso: el merge es idempotente).
+
+Dos cosas que el endpoint tiene que resolver y este script no puede:
+
+  1. Avisar si los datos se ponen viejos. Que el sync este vivo y que la
+     pantalla tenga datos de hoy son dos cosas distintas. Si no llega una
+     planilla en toda la manana, el que se tiene que dar cuenta es el servidor,
+     no esta maquina.
+
+  2. Rechazar un token que no sea el suyo, y no aceptar archivos gigantes.

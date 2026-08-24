@@ -1,18 +1,19 @@
-// Tests de aviso-planilla.js — el que avisa cuando la pantalla de recepción quedó
-// mostrando datos viejos. Correr: node test/aviso-planilla.test.js
+// Tests de aviso-planilla.js — el que vigila la pantalla de recepción.
+// Correr: node test/aviso-planilla.test.js
 //
 // Lo que se cuida es que el aviso sea CREÍBLE, que es lo único que hace que
 // alguien le preste atención:
-//   - avisa UNA vez por episodio y no cada media hora,
+//   - distingue "el script murió" de "nadie tocó la planilla" (son problemas
+//     distintos, con culpables y arreglos distintos),
+//   - avisa una vez por episodio, no cada media hora,
+//   - pero RECUERDA una vez por día mientras siga sin resolverse,
 //   - avisa cuando se resuelve, así el silencio significa "está bien",
-//   - no molesta de noche ni el fin de semana a la madrugada, cuando que no llegue
-//     una planilla es lo normal.
+//   - no molesta de noche ni los domingos.
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://test/test';
 
 const assert = require('assert');
 const Module = require('module');
 
-// ── Dobles ───────────────────────────────────────────────────────────────────
 let ultimaFalsa = null;
 function stub(ruta, exports) {
   const p = require.resolve(ruta);
@@ -24,145 +25,270 @@ const avisos = [];
 stub('../src/db/retiros', { async ultimaPlanillaImportada() { return ultimaFalsa; } });
 stub('../src/notificar', { async avisarProblema(o) { avisos.push(o); return 1; } });
 
+const canal = require('../src/lib/canal-planilla');
 const av = require('../src/aviso-planilla');
 
 const H = 3600 * 1000;
-// Un miércoles a las 14:00 de Argentina (17:00 UTC): dentro del horario de trabajo.
+const M = 60 * 1000;
+// Miércoles 14:00 de Argentina (17:00 UTC): en horario de trabajo.
 const EN_HORARIO = new Date('2026-08-19T17:00:00Z');
-// El mismo día a las 06:00 de Argentina: fuera.
+// Mismo día 06:00 de Argentina: fuera.
 const DE_MADRUGADA = new Date('2026-08-19T09:00:00Z');
+
+const latidoDe = (fecha, extra = {}) => ({
+  en: fecha, equipo: 'DESKTOP-GO5TPVR', estado: 'ok',
+  archivo: 'PLANILLA RETIRA MORENO 2026.xlsx', fecha: '2026-08-19 13:40', tam: 104791,
+  motivo: null, ...extra,
+});
+// Estado limpio de episodios para las pruebas de decidir().
+const sinEpisodios = () => ({ canal: null, datos: null });
 
 let pass = 0;
 function t(nombre, fn) { fn(); pass++; console.log('  ok:', nombre); }
-async function ta(nombre, fn) { avisos.length = 0; av._reset(); await fn(); pass++; console.log('  ok:', nombre); }
+async function ta(nombre, fn) {
+  avisos.length = 0; av._reset(); canal._reset(); ultimaFalsa = null;
+  await fn(); pass++; console.log('  ok:', nombre);
+}
 
 (async () => {
   console.log('\naviso-planilla');
 
-  // ── La hora argentina ──────────────────────────────────────────────────────
+  // ── Fechas y horas argentinas ──────────────────────────────────────────────
 
-  t('horaArg convierte de UTC a hora argentina', () => {
+  t('horaArg y diaArg trabajan en hora argentina, no UTC', () => {
     assert.equal(av.horaArg(new Date('2026-08-19T12:00:00Z')), 9);
     assert.equal(av.horaArg(new Date('2026-08-19T17:00:00Z')), 14);
-    // El caso que rompe si alguien usa getHours(): pasada la medianoche UTC
-    // todavía es el día anterior en Argentina.
     assert.equal(av.horaArg(new Date('2026-08-20T01:00:00Z')), 22);
+    // Sábado 22:00 en Argentina ya es domingo en UTC: con getUTCDay() a secas se
+    // perderían las últimas dos horas del sábado.
+    assert.equal(av.diaArg(new Date('2026-08-23T01:00:00Z')), 6, 'todavía es sábado acá');
+    assert.equal(av.diaArg(new Date('2026-08-23T17:00:00Z')), 0, 'domingo');
+    assert.equal(av.fechaArg(new Date('2026-08-20T01:00:00Z')), '2026-08-19');
   });
 
-  // ── La decisión ────────────────────────────────────────────────────────────
+  // ── Todo bien ──────────────────────────────────────────────────────────────
 
-  t('planilla reciente: no pasa nada', () => {
-    const r = av.decidir({ ultima: new Date(EN_HORARIO - 0.5 * H), ahora: EN_HORARIO, hayReclamo: false });
-    assert.equal(r.accion, 'nada');
+  t('con latidos frescos y planilla reciente no pasa nada', () => {
+    const acc = av.decidir({
+      ahora: EN_HORARIO,
+      ultima: new Date(EN_HORARIO - 0.5 * H),
+      latido: latidoDe(new Date(EN_HORARIO - 2 * M)),
+      minutosDespierto: 600,
+      estado: sinEpisodios(),
+    });
+    assert.deepEqual(acc, []);
   });
 
-  t('planilla vieja en horario de trabajo: se reclama', () => {
-    const r = av.decidir({ ultima: new Date(EN_HORARIO - 5 * H), ahora: EN_HORARIO, hayReclamo: false });
-    assert.equal(r.accion, 'reclamar');
-    assert.equal(Math.round(r.horasSin), 5);
+  // ── El canal (¿el script está vivo?) ───────────────────────────────────────
+
+  t('sin latidos hace rato: se reclama el CANAL, no los datos', () => {
+    // Este es el caso que antes no se podía distinguir: la planilla no llega
+    // porque el script se murió, no porque nadie la edite.
+    const acc = av.decidir({
+      ahora: EN_HORARIO,
+      ultima: new Date(EN_HORARIO - 40 * H),
+      latido: latidoDe(new Date(EN_HORARIO - 3 * H)),
+      minutosDespierto: 600,
+      estado: sinEpisodios(),
+    });
+    assert.equal(acc.length, 1, 'un problema, un aviso');
+    assert.equal(acc[0].tipo, 'canal');
+    assert.equal(acc[0].accion, 'reclamar');
   });
 
-  t('justo en el límite todavía no se reclama', () => {
-    const casi = av.decidir({ ultima: new Date(EN_HORARIO - (av.LIMITE_HORAS * H - 60000)), ahora: EN_HORARIO, hayReclamo: false });
-    assert.equal(casi.accion, 'nada');
-    const pasado = av.decidir({ ultima: new Date(EN_HORARIO - (av.LIMITE_HORAS * H + 60000)), ahora: EN_HORARIO, hayReclamo: false });
-    assert.equal(pasado.accion, 'reclamar');
+  t('nunca hubo un latido y el bot lleva rato despierto: canal caído', () => {
+    const acc = av.decidir({
+      ahora: EN_HORARIO, ultima: new Date(EN_HORARIO - 40 * H),
+      latido: null, minutosDespierto: 600, estado: sinEpisodios(),
+    });
+    assert.equal(acc[0].tipo, 'canal');
   });
 
-  t('de madrugada no se molesta a nadie aunque haga horas que no llega', () => {
-    const r = av.decidir({ ultima: new Date(DE_MADRUGADA - 12 * H), ahora: DE_MADRUGADA, hayReclamo: false });
-    assert.equal(r.accion, 'nada', 'a las 6 de la mañana que no haya planilla es lo normal');
+  t('recién reiniciado el bot NO se acusa al script', () => {
+    // Sin esto, cada redeploy dispara un "el sync no reporta" que es mentira:
+    // el script está bien, lo que pasa es que su próxima vuelta no llegó todavía.
+    const acc = av.decidir({
+      ahora: EN_HORARIO, ultima: new Date(EN_HORARIO - 40 * H),
+      latido: null, minutosDespierto: 3, estado: sinEpisodios(),
+    });
+    assert.deepEqual(acc.map((a) => a.tipo), [], 'hay que esperar a la ventana de tolerancia');
+  });
+
+  // ── Los datos (¿alguien actualiza la planilla?) ────────────────────────────
+
+  t('con el script vivo pero sin planilla nueva: se reclaman los DATOS', () => {
+    const acc = av.decidir({
+      ahora: EN_HORARIO,
+      ultima: new Date(EN_HORARIO - 5 * H),
+      latido: latidoDe(new Date(EN_HORARIO - 2 * M)),
+      minutosDespierto: 600, estado: sinEpisodios(),
+    });
+    assert.equal(acc.length, 1);
+    assert.equal(acc[0].tipo, 'datos');
+    assert.equal(Math.round(acc[0].horasSin), 5);
+  });
+
+  t('con el canal caído NO se reclama además por los datos', () => {
+    // Dos avisos para un solo problema es ruido, y encima despista: la causa es
+    // el canal, no que nadie edite la planilla.
+    const acc = av.decidir({
+      ahora: EN_HORARIO, ultima: new Date(EN_HORARIO - 40 * H),
+      latido: latidoDe(new Date(EN_HORARIO - 5 * H)),
+      minutosDespierto: 600, estado: sinEpisodios(),
+    });
+    assert.deepEqual(acc.map((a) => a.tipo), ['canal']);
+  });
+
+  t('un episodio de datos abierto no se cierra si despues cae el canal', () => {
+    // Con el canal caído no sabemos nada de los datos: no es que se arreglaron.
+    const estado = { canal: null, datos: { desde: EN_HORARIO, ultimoAvisoDia: '2026-08-19' } };
+    const acc = av.decidir({
+      ahora: EN_HORARIO, ultima: new Date(EN_HORARIO - 0.1 * H),
+      latido: latidoDe(new Date(EN_HORARIO - 5 * H)),
+      minutosDespierto: 600, estado,
+    });
+    assert.ok(!acc.some((a) => a.tipo === 'datos' && a.accion === 'resuelto'));
+  });
+
+  // ── Cuándo se molesta y cuándo no ──────────────────────────────────────────
+
+  t('de madrugada no se molesta a nadie', () => {
+    const acc = av.decidir({
+      ahora: DE_MADRUGADA, ultima: new Date(DE_MADRUGADA - 12 * H),
+      latido: latidoDe(new Date(DE_MADRUGADA - 2 * M)),
+      minutosDespierto: 600, estado: sinEpisodios(),
+    });
+    assert.deepEqual(acc, []);
   });
 
   t('el domingo no se reclama: no se trabaja', () => {
     // La planilla del 21/08 traía viernes, sábado y lunes. El domingo ni figura.
-    // Sin esto, el primer domingo llegaba un "hace 3 horas que no entra" que es
-    // mentira — y un aviso que grita en falso una vez ya no se lee la segunda.
-    const domingo = new Date('2026-08-23T17:00:00Z'); // 14:00 ART, domingo
-    assert.equal(av.diaArg(domingo), 0);
-    const r = av.decidir({ ultima: new Date(domingo - 20 * H), ahora: domingo, hayReclamo: false });
-    assert.equal(r.accion, 'nada');
+    const domingo = new Date('2026-08-23T17:00:00Z');
+    const acc = av.decidir({
+      ahora: domingo, ultima: new Date(domingo - 20 * H),
+      latido: latidoDe(new Date(domingo - 2 * M)),
+      minutosDespierto: 600, estado: sinEpisodios(),
+    });
+    assert.deepEqual(acc, []);
   });
 
   t('el sábado SÍ se reclama: se trabaja', () => {
-    const sabado = new Date('2026-08-22T17:00:00Z'); // 14:00 ART, sábado
-    assert.equal(av.diaArg(sabado), 6);
-    const r = av.decidir({ ultima: new Date(sabado - 5 * H), ahora: sabado, hayReclamo: false });
-    assert.equal(r.accion, 'reclamar');
+    const sabado = new Date('2026-08-22T17:00:00Z');
+    const acc = av.decidir({
+      ahora: sabado, ultima: new Date(sabado - 5 * H),
+      latido: latidoDe(new Date(sabado - 2 * M)),
+      minutosDespierto: 600, estado: sinEpisodios(),
+    });
+    assert.equal(acc[0].tipo, 'datos');
   });
 
-  t('diaArg usa la fecha ARGENTINA, no la UTC', () => {
-    // Sábado 22 a las 22:00 de Argentina ya es domingo 23 en UTC. Con getUTCDay()
-    // a secas, las últimas dos horas del sábado se tomarían como domingo.
-    const sabadoTarde = new Date('2026-08-23T01:00:00Z'); // 22:00 ART del sábado
-    assert.equal(av.diaArg(sabadoTarde), 6, 'todavía es sábado en Argentina');
+  t('el "ya se resolvió" sale a cualquier hora y cualquier día', () => {
+    // Si se destrabó un domingo a la noche, hay que cerrar el episodio igual: si
+    // no, queda un reclamo abierto que nadie sabe si sigue vigente.
+    const domingoTarde = new Date('2026-08-23T23:00:00Z');
+    const estado = { canal: null, datos: { desde: EN_HORARIO, ultimoAvisoDia: '2026-08-19' } };
+    const acc = av.decidir({
+      ahora: domingoTarde, ultima: new Date(domingoTarde - 0.2 * H),
+      latido: latidoDe(new Date(domingoTarde - 2 * M)),
+      minutosDespierto: 600, estado,
+    });
+    assert.deepEqual(acc.map((a) => [a.tipo, a.accion]), [['datos', 'resuelto']]);
   });
 
-  t('si nunca entró ninguna planilla, también se reclama', () => {
-    const r = av.decidir({ ultima: null, ahora: EN_HORARIO, hayReclamo: false });
-    assert.equal(r.accion, 'reclamar');
-    assert.equal(r.horasSin, Infinity);
+  // ── Repetición: ni cada media hora, ni nunca más ───────────────────────────
+
+  t('el mismo día no se repite el reclamo', () => {
+    const estado = { canal: null, datos: { desde: EN_HORARIO, ultimoAvisoDia: '2026-08-19' } };
+    const luego = new Date(EN_HORARIO.getTime() + 0.5 * H);
+    const acc = av.decidir({
+      ahora: luego,
+      ultima: new Date(EN_HORARIO - 5 * H),
+      latido: latidoDe(new Date(luego.getTime() - 2 * M)), // el script sigue latiendo
+      minutosDespierto: 600, estado,
+    });
+    assert.deepEqual(acc, [], 'avisar cada media hora hace que dejen de leerse los avisos');
   });
 
-  t('con un reclamo abierto y el problema sin resolver, NO se repite', () => {
-    const r = av.decidir({ ultima: new Date(EN_HORARIO - 9 * H), ahora: EN_HORARIO, hayReclamo: true });
-    assert.equal(r.accion, 'nada', 'avisar cada media hora hace que dejen de leer los avisos');
+  t('al día siguiente SÍ se recuerda', () => {
+    // El caso real: el problema empieza un sábado a la tarde, se avisa cuando la
+    // sucursal está cerrando, y el lunes —cuando importa— nadie se entera.
+    const estado = { canal: null, datos: { desde: EN_HORARIO, ultimoAvisoDia: '2026-08-22' } };
+    const lunes = new Date('2026-08-24T13:30:00Z'); // 10:30 ART
+    const acc = av.decidir({
+      ahora: lunes, ultima: new Date(lunes - 42 * H),
+      latido: latidoDe(new Date(lunes - 2 * M)),
+      minutosDespierto: 600, estado,
+    });
+    assert.deepEqual(acc.map((a) => [a.tipo, a.accion]), [['datos', 'recordar']]);
   });
 
-  t('el "ya volvió" sale aunque sea fuera de horario', () => {
-    // Si la planilla se destraba a las 19:30, el aviso de resuelto tiene que salir
-    // esa misma noche: si no, queda un reclamo abierto que nadie sabe si sigue.
-    const tarde = new Date('2026-08-19T23:00:00Z'); // 20:00 ART
-    const r = av.decidir({ ultima: new Date(tarde - 0.2 * H), ahora: tarde, hayReclamo: true });
-    assert.equal(r.accion, 'resuelto');
+  // ── El episodio completo, con envío ────────────────────────────────────────
+
+  await ta('canal: avisa, se calla, recuerda al otro día y cierra cuando vuelve', async () => {
+    canal._fijarArranque(new Date(EN_HORARIO - 10 * H)); // despierto hace rato
+    ultimaFalsa = new Date(EN_HORARIO - 40 * H);
+    // Sin latidos: el script está muerto.
+    const a = await av.revisarPlanilla({ ahora: EN_HORARIO });
+    assert.deepEqual(a.map((x) => x.tipo), ['canal']);
+    assert.equal(avisos.length, 1);
+    assert.ok(/no reporta/.test(avisos[0].que));
+    assert.ok(/prendida y con la sesión iniciada/.test(avisos[0].sugerencia), 'tiene que decir qué mirar');
+
+    // Media hora después: nada.
+    await av.revisarPlanilla({ ahora: new Date(EN_HORARIO.getTime() + 0.5 * H) });
+    assert.equal(avisos.length, 1);
+
+    // Al otro día, mismo problema: recuerda.
+    await av.revisarPlanilla({ ahora: new Date(EN_HORARIO.getTime() + 24 * H) });
+    assert.equal(avisos.length, 2);
+    assert.ok(/SIGUE sin resolverse/.test(avisos[1].que));
+
+    // Llega un latido: se cierra el episodio del canal…
+    canal.registrarLatido({ equipo: 'DESKTOP-GO5TPVR', estado: 'ok' });
+    const c = await av.revisarPlanilla({ ahora: new Date(EN_HORARIO.getTime() + 24.5 * H) });
+    assert.ok(c.some((x) => x.tipo === 'canal' && x.accion === 'resuelto'));
+    assert.ok(avisos.some((m) => m.nivel === '✅'), 'tiene que salir el "ya volvió"');
+    assert.equal(av._episodios().canal, null);
+
+    // …y en la MISMA pasada aparece el problema que el canal caído tapaba: la
+    // planilla sigue siendo vieja. Es el diagnóstico en dos etapas funcionando,
+    // no un aviso de más.
+    assert.ok(c.some((x) => x.tipo === 'datos' && x.accion === 'reclamar'));
+    assert.ok(av._episodios().datos, 'y queda abierto para poder recordarlo mañana');
   });
 
-  // ── El texto ───────────────────────────────────────────────────────────────
+  await ta('datos: el aviso dice qué archivo está viendo el script', async () => {
+    canal._fijarArranque(new Date(EN_HORARIO - 10 * H));
+    canal.registrarLatido({
+      equipo: 'DESKTOP-GO5TPVR', estado: 'ok',
+      archivo: 'PLANILLA RETIRA MORENO 2026.xlsx', fecha: '2026-08-19 09:10', tam: 104791,
+    });
+    ultimaFalsa = new Date(EN_HORARIO - 6 * H);
+    await av.revisarPlanilla({ ahora: EN_HORARIO });
+    assert.equal(avisos.length, 1);
+    assert.ok(/sync SÍ está funcionando/.test(avisos[0].que), avisos[0].que);
+    assert.ok(/PLANILLA RETIRA MORENO 2026\.xlsx/.test(avisos[0].detalle), avisos[0].detalle);
+    assert.ok(/2026-08-19 09:10/.test(avisos[0].detalle), 'y desde cuándo no lo tocan');
+  });
 
-  t('el texto de la demora se lee bien', () => {
+  await ta('todo bien: no avisa nada', async () => {
+    canal._fijarArranque(new Date(EN_HORARIO - 10 * H));
+    canal.registrarLatido({ equipo: 'X', estado: 'ok' });
+    ultimaFalsa = new Date(EN_HORARIO - 0.2 * H);
+    const a = await av.revisarPlanilla({ ahora: EN_HORARIO });
+    assert.deepEqual(a, []);
+    assert.equal(avisos.length, 0);
+  });
+
+  // ── Textos ─────────────────────────────────────────────────────────────────
+
+  t('los textos de tiempo se leen bien', () => {
     assert.equal(av.textoHoras(Infinity), 'nunca entró ninguna');
     assert.equal(av.textoHoras(0.5), 'hace 30 minutos');
     assert.equal(av.textoHoras(4.2), 'hace 4 horas');
-  });
-
-  // ── El episodio completo ───────────────────────────────────────────────────
-
-  await ta('un episodio: avisa una vez, se calla, y avisa cuando vuelve', async () => {
-    ultimaFalsa = new Date(EN_HORARIO - 6 * H);
-
-    const a = await av.revisarPlanilla({ ahora: EN_HORARIO });
-    assert.equal(a.accion, 'reclamar');
-    assert.equal(avisos.length, 1);
-    assert.ok(/datos viejos/.test(avisos[0].que));
-    // El aviso tiene que decir dónde mirar: si no, no es accionable.
-    assert.ok(/sync\.log/.test(avisos[0].sugerencia));
-    assert.ok(av._hayReclamo());
-
-    // Media hora después sigue igual: no puede volver a avisar.
-    const b = await av.revisarPlanilla({ ahora: new Date(EN_HORARIO.getTime() + 0.5 * H) });
-    assert.equal(b.accion, 'nada');
-    assert.equal(avisos.length, 1, 'no se repite el mismo reclamo');
-
-    // Entra una planilla.
-    ultimaFalsa = new Date(EN_HORARIO.getTime() + 0.9 * H);
-    const c = await av.revisarPlanilla({ ahora: new Date(EN_HORARIO.getTime() + H) });
-    assert.equal(c.accion, 'resuelto');
-    assert.equal(avisos.length, 2);
-    assert.equal(avisos[1].nivel, '✅');
-    assert.ok(!av._hayReclamo(), 'cerrado el episodio, un problema nuevo tiene que poder avisar');
-
-    // Y si vuelve a cortarse, avisa de nuevo.
-    ultimaFalsa = new Date(EN_HORARIO - 8 * H);
-    const d = await av.revisarPlanilla({ ahora: EN_HORARIO });
-    assert.equal(d.accion, 'reclamar');
-    assert.equal(avisos.length, 3);
-  });
-
-  await ta('todo bien de entrada: no avisa nada', async () => {
-    ultimaFalsa = new Date(EN_HORARIO - 0.1 * H);
-    const r = await av.revisarPlanilla({ ahora: EN_HORARIO });
-    assert.equal(r.accion, 'nada');
-    assert.equal(avisos.length, 0);
+    assert.equal(av.textoMinutos(Infinity), 'nunca reportó');
+    assert.equal(av.textoMinutos(25), 'hace 25 minutos');
+    assert.equal(av.textoMinutos(180), 'hace 3 horas');
   });
 
   console.log(`\n${pass} tests ok\n`);

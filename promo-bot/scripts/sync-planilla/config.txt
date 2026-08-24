@@ -1,0 +1,25 @@
+# CONFIGURACION DEL SYNC DE LA PLANILLA
+#
+# Esta es la PLANTILLA que vive en el repo: va sin url y sin token a proposito.
+# La copia que se instala en la PC de la sucursal se completa con los valores
+# reales (el token es el mismo PLANILLA_SYNC_TOKEN que tiene el bot en Railway).
+#
+# Se relee en cada vuelta: se puede cambiar cualquier cosa de aca y el sync la
+# toma sola en pocos minutos, sin reinstalar ni reiniciar nada.
+#
+# Las lineas que empiezan con # son comentarios y no se leen.
+
+# A donde se manda la planilla. MIENTRAS ESTE VACIO el sync corre en modo prueba:
+# busca el archivo y lo anota en el log, pero no manda nada.
+url=
+
+# Clave compartida con el bot. Viaja en el header X-Sync-Token.
+token=
+
+# Cada cuantos minutos mirar si la planilla cambio. Si no cambio no se manda el
+# archivo, solo un latido diminuto, asi que bajarlo no cuesta casi nada.
+minutos=4
+
+# Franja horaria en la que trabajar. Fuera de esto ni mira la carpeta.
+desde=06:00
+hasta=22:00
