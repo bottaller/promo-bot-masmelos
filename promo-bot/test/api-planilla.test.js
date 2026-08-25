@@ -495,6 +495,64 @@ async function t(nombre, fn) {
     assert.equal((await pedir({ ruta: '/latido' })).codigo, 404);
   });
 
+  // ── Lo que el parser entiende A MEDIAS ─────────────────────────────────────
+  // Es el caso peor: la planilla "entra bien" pero hay lineas que el bot no
+  // entendio y descarto. Esos pedidos no llegan a la pantalla y, sin aviso, se
+  // descubre cuando un cliente reclama.
+
+  await t('si el parser no entendio algunas lineas, avisa CON el archivo', async () => {
+    respuesta = {
+      dias: ['2026-08-25'], mensaje: 'ok', guardados: 30, borrados: 0, conservados: [],
+      anomalias: ['AGOSTO: un bloque no tiene las columnas de codigo y horario.',
+                  'AGOSTO 2026-08-25: el cliente 41163 no tiene horario de retiro.'],
+    };
+    const r = await pedir({ cuerpo: PLANILLA });
+    assert.equal(r.codigo, 200, 'la planilla igual entro: no es un rechazo');
+    assert.equal(avisos.length, 1);
+    assert.ok(/NO entendió/.test(avisos[0].que), avisos[0].que);
+    assert.ok(/41163/.test(avisos[0].detalle), 'tiene que decir QUE lineas');
+    assert.ok(avisos[0].archivo.buffer.equals(PLANILLA), 'y mandar el archivo para poder arreglarlo');
+  });
+
+  await t('las mismas anomalias no vuelven a avisar; unas nuevas si', async () => {
+    const base = { dias: ['2026-08-25'], mensaje: 'ok', guardados: 30, borrados: 0, conservados: [] };
+    respuesta = { ...base, anomalias: ['algo raro'] };
+    await pedir({ cuerpo: PLANILLA });
+    await pedir({ cuerpo: PLANILLA });
+    assert.equal(avisos.length, 1, 'la planilla se guarda decenas de veces por dia');
+    respuesta = { ...base, anomalias: ['algo raro', 'otra cosa'] };
+    await pedir({ cuerpo: PLANILLA });
+    assert.equal(avisos.length, 2, 'una anomalia nueva si es noticia');
+  });
+
+  await t('cuando se arreglan las anomalias, el problema queda cerrado', async () => {
+    const base = { dias: ['2026-08-25'], mensaje: 'ok', guardados: 30, borrados: 0, conservados: [] };
+    respuesta = { ...base, anomalias: ['algo raro'] };
+    await pedir({ cuerpo: PLANILLA });
+    respuesta = { ...base, anomalias: [] };
+    await pedir({ cuerpo: PLANILLA });          // arreglado
+    respuesta = { ...base, anomalias: ['algo raro'] };
+    await pedir({ cuerpo: PLANILLA });          // vuelve a romperse
+    assert.equal(avisos.length, 2, 'si vuelve a pasar hay que avisar de nuevo');
+  });
+
+  await t('una planilla limpia no avisa nada', async () => {
+    respuesta = { dias: ['2026-08-25'], mensaje: 'ok', guardados: 30, borrados: 1, conservados: [], anomalias: [] };
+    await pedir({ cuerpo: PLANILLA });
+    assert.equal(avisos.length, 0, 'un borrado suelto es un pedido dado de baja, normal');
+  });
+
+  await t('si desaparecen muchos pedidos de golpe, avisa con el archivo', async () => {
+    // Puede ser real o puede ser que el parser dejo de ver filas: desde aca no se
+    // distingue, y lo segundo ya paso (una ventana fija de 16 filas por dia).
+    respuesta = { dias: ['2026-08-25'], mensaje: 'ok', guardados: 20, borrados: 9, conservados: [], anomalias: [] };
+    const r = await pedir({ cuerpo: PLANILLA });
+    assert.equal(r.codigo, 200);
+    assert.equal(avisos.length, 1);
+    assert.ok(/Desaparecieron 9 pedidos/.test(avisos[0].que), avisos[0].que);
+    assert.ok(avisos[0].archivo, 'con el archivo, para poder mirar que paso');
+  });
+
   // ── Tamaño ─────────────────────────────────────────────────────────────────
 
   await t('un archivo más grande que el límite se rechaza CON respuesta, y se avisa', async () => {

@@ -53,6 +53,12 @@ const avisosVistos = new Map();
 const RECHAZOS_PARA_AVISAR = 3;
 let rechazosSeguidos = 0;
 
+// Cuantos pedidos tienen que desaparecer de la planilla en una sola importacion
+// para que valga la pena mirarlo. En dos dias de operacion real el maximo fue 1.
+// Cinco de golpe no es un pedido cancelado: o alguien borro un pedazo del Excel,
+// o el parser dejo de ver filas que antes veia.
+const BORRADOS_PARA_AVISAR = 5;
+
 /** ¿Hay una importación en curso? Dos planillas a la vez no rompen (la transacción
  *  las serializa), pero encolar es más barato que dos INSERT masivos compitiendo. */
 let enCurso = false;
@@ -301,6 +307,47 @@ async function procesarPlanillaHttp(buffer, { documento, equipo = 'desconocido',
     limpiarAviso('conservados'); // se resolvió: que el próximo vuelva a avisar
   }
 
+  // ── Lo que el parser NO entendio ──────────────────────────────────────────
+  //
+  // Este es el caso peor de todos, y hasta ahora no avisaba nada: que la planilla
+  // se procese "bien" pero el parser no haya entendido una parte. Algunas de esas
+  // lineas se descartan (un bloque sin columnas, un pedido sin horario), asi que
+  // el pedido simplemente no llega a la pantalla y no se entera nadie. Un fallo
+  // ruidoso se arregla; uno a medias se descubre cuando un cliente reclama.
+  const anomalias = res.anomalias || [];
+  if (anomalias.length) {
+    await avisarSiCambio('anomalias', anomalias.join('|'), {
+      proceso: 'la planilla automática de retiros',
+      que: `La planilla entró, pero hay ${anomalias.length} línea(s) que el bot NO entendió.`,
+      detalle: anomalias.slice(0, 8).join('\n')
+        + (anomalias.length > 8 ? '\n…y ' + (anomalias.length - 8) + ' más.' : ''),
+      sugerencia: 'Esos pedidos pueden no estar en la pantalla. Va el archivo adjunto: '
+        + 'si es un cambio de formato de la planilla, hay que ajustar el bot.',
+      archivo: adjunto('La planilla que trajo líneas que no se entendieron.'),
+    });
+  } else {
+    limpiarAviso('anomalias');
+  }
+
+  // ── Pedidos que desaparecieron de golpe ───────────────────────────────────
+  //
+  // Puede ser real (los dieron de baja) o puede ser que el parser dejo de ver
+  // filas que antes veia, que es indistinguible desde acá y bastante peor. Ya
+  // paso una vez: el parser leia una ventana fija de 16 filas por dia y los
+  // pedidos insertados de mas nunca llegaban a la pantalla.
+  if ((res.borrados || 0) >= BORRADOS_PARA_AVISAR) {
+    await avisarSiCambio('borrados', String(res.borrados), {
+      proceso: 'la planilla automática de retiros',
+      que: `Desaparecieron ${res.borrados} pedidos de la planilla de una sola vez y los saqué de la pantalla.`,
+      detalle: `Días afectados: ${(res.dias || []).join(', ')}`,
+      sugerencia: 'Si de verdad se dieron de baja, está bien. Si no, puede que el bot haya '
+        + 'dejado de leer parte del Excel: va el archivo adjunto.',
+      archivo: adjunto('La planilla con la que desaparecieron esos pedidos.'),
+    });
+  } else {
+    limpiarAviso('borrados');
+  }
+
   return {
     ok: true,
     dias: res.dias || [],
@@ -309,7 +356,7 @@ async function procesarPlanillaHttp(buffer, { documento, equipo = 'desconocido',
     guardados: res.guardados ?? null,
     borrados: res.borrados ?? 0,
     conservados: conservados.length,
-    anomalias: (res.anomalias || []).length,
+    anomalias: anomalias.length,
   };
 }
 
