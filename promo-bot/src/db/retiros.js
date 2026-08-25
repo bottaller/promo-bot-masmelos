@@ -199,4 +199,26 @@ async function ultimaPlanillaImportada() {
   return v ? new Date(v) : null;
 }
 
-module.exports = { registrarRetiros, ultimaPlanillaImportada };
+/**
+ * Lo que la pantalla está mostrando AHORA, para el comando /pantalla.
+ *
+ * Sale de la base y no de lo que trajo la última planilla: lo que importa es lo
+ * que ve el cliente parado frente a la tele, que puede diferir de lo último que
+ * se importó (alguien marcó un pedido desde el panel, por ejemplo).
+ */
+async function resumenDeHoy() {
+  const { rows } = await pool.query(
+    `select to_char(fecha, 'YYYY-MM-DD') as fecha,
+            count(*)::int as total,
+            count(*) filter (where prep = 'listo' and estado_final is distinct from 'retirado')::int as listos,
+            count(*) filter (where estado_final = 'retirado')::int as retirados
+       from public.retiros
+      where fecha >= (now() at time zone 'America/Argentina/Buenos_Aires')::date
+      group by fecha
+      order by fecha
+      limit 7`
+  );
+  return rows;
+}
+
+module.exports = { registrarRetiros, ultimaPlanillaImportada, resumenDeHoy };

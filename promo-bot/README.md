@@ -116,6 +116,14 @@ Tres cosas para no romperlo:
   `esPlanillaRetiros(buffer)` en vez de dejar que el registro de documentos elija, porque el libro es
   el catch-all y cualquier archivo terminaría ahí.
 
+**¿Cómo se sabe si está andando?** Con **`/pantalla`** en el bot (área Retiros).
+Contesta en una línea, desde el teléfono, juntando las dos señales: el latido dice
+si el script vive, la base dice cuándo entró la última planilla. Existe porque
+durante la puesta en marcha esa pregunta solo se podía contestar mirando la base o
+yendo hasta la PC de la sucursal, y el que la necesita es quien mira la tele.
+Usa los MISMOS umbrales que los avisos: si dijera "al día" mientras el vigilante
+reclama, no habría a cuál creerle.
+
 El parseo y la escritura son **los mismos** que usa `/carga` (`lib/documentos-carga.js` →
 `lib/retiros-excel.js` → `db/retiros.js`), así que la subida manual y la automática no pueden
 comportarse distinto.
