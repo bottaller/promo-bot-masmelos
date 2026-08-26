@@ -436,7 +436,7 @@ async function t(nombre, fn) {
       },
     });
     assert.equal(avisos.length, 1);
-    assert.ok(/no está pudiendo leer la planilla/.test(avisos[0].que));
+    assert.ok(/no está llegando al archivo/.test(avisos[0].que));
     assert.ok(/carpeta compartida/.test(avisos[0].detalle));
     assert.ok(/Recordar mis credenciales/.test(avisos[0].sugerencia), 'la causa más común');
   });
@@ -488,6 +488,55 @@ async function t(nombre, fn) {
   await t('el estado es de lectura: un POST ahi da 405', async () => {
     const r = await pedir({ metodo: 'POST', ruta: '/planilla/estado' });
     assert.equal(r.codigo, 405);
+  });
+
+  await t('un fallo de ENVIO no se confunde con no poder leer el archivo', async () => {
+    // El aviso real que salio decia "la PC de la sucursal no esta pudiendo leer la
+    // planilla" cuando lo que habia fallado era el envio, por un 502 de nuestro
+    // propio deploy. Mandar a revisar el servidor de archivos por un problema
+    // nuestro es peor que no avisar.
+    const malo = {
+      ruta: '/planilla/latido',
+      headers: { 'x-equipo': 'DESKTOP-GO5TPVR', 'x-estado': 'error',
+                 'x-motivo': 'Error en el servidor remoto: (502) Puerta de enlace no valida.' },
+    };
+    await pedir(malo);
+    await pedir(malo);
+    assert.equal(avisos.length, 0, 'el script reintenta solo: uno o dos no son noticia');
+    await pedir(malo);
+    assert.equal(avisos.length, 1, `recien al intento ${api.ERRORES_PARA_AVISAR}`);
+    assert.ok(/no la puede mandar/.test(avisos[0].que), avisos[0].que);
+    assert.ok(!/leer/.test(avisos[0].que), 'no puede decir que no puede LEER el archivo');
+    assert.ok(!/Recordar mis credenciales/.test(avisos[0].sugerencia), 'ni mandar al servidor de archivos');
+    assert.ok(/502/.test(avisos[0].sugerencia), 'y si nombrar la causa mas probable');
+  });
+
+  await t('un latido bueno reinicia el contador de fallos de envio', async () => {
+    const malo = { ruta: '/planilla/latido', headers: { 'x-estado': 'error', 'x-motivo': 'timeout' } };
+    await pedir(malo); await pedir(malo);
+    await pedir({ ruta: '/planilla/latido', headers: { 'x-estado': 'ok' } });
+    await pedir(malo); await pedir(malo);
+    assert.equal(avisos.length, 0, 'volvio a arrancar de cero');
+    await pedir(malo);
+    assert.equal(avisos.length, 1);
+  });
+
+  await t('no llegar al ARCHIVO si avisa en el primer latido', async () => {
+    await pedir({
+      ruta: '/planilla/latido',
+      headers: { 'x-equipo': 'DESKTOP-GO5TPVR', 'x-estado': 'sin-archivo',
+                 'x-motivo': 'no se llego a la carpeta compartida' },
+    });
+    assert.equal(avisos.length, 1, 'este si necesita una persona ya');
+    assert.ok(/no está llegando al archivo/.test(avisos[0].que));
+    // La ruta tiene que salir ENTERA: escrita a mano salio " 92.168.0.210Compartida".
+    assert.ok(avisos[0].sugerencia.includes(api.RUTA_COMPARTIDA), avisos[0].sugerencia);
+    // Se cuentan las barras en vez de usar una expresion regular: escribir barras
+    // dentro de una regex es justamente donde ya se perdieron dos veces.
+    const barras = api.RUTA_COMPARTIDA.split(String.fromCharCode(92)).length - 1;
+    assert.equal(barras, 3, 'dos al principio y una en el medio: ' + api.RUTA_COMPARTIDA);
+    assert.ok(api.RUTA_COMPARTIDA.endsWith('Compartida'));
+    assert.ok(api.RUTA_COMPARTIDA.includes('192.168.0.210'));
   });
 
   await t('una ruta parecida pero distinta sigue dando 404', async () => {

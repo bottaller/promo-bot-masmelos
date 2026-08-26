@@ -59,6 +59,18 @@ let rechazosSeguidos = 0;
 // o el parser dejo de ver filas que antes veia.
 const BORRADOS_PARA_AVISAR = 5;
 
+// Cuantos fallos de ENVIO seguidos antes de avisar. Uno solo no es noticia: el
+// script reintenta en la vuelta siguiente y, sobre todo, un deploy nuestro
+// devuelve 502 unos segundos y produce exactamente ese error. Avisar por eso es
+// acusar a la sucursal de un problema propio — que fue lo que paso.
+const ERRORES_PARA_AVISAR = 3;
+let erroresSeguidos = 0;
+
+// String.raw para que las barras lleguen enteras. Escrita como cadena normal
+// salio " 92.168.0.210Compartida": \1 se come el 1 y \C se come la barra, y el
+// aviso mandaba a entrar a una ruta que no existe.
+const RUTA_COMPARTIDA = String.raw`\\192.168.0.210\Compartida`;
+
 /** ¿Hay una importación en curso? Dos planillas a la vez no rompen (la transacción
  *  las serializa), pero encolar es más barato que dos INSERT masivos compitiendo. */
 let enCurso = false;
@@ -431,17 +443,38 @@ async function manejar(req, res, { documento }) {
     // Que el script no llegue al archivo se avisa desde ACA y no desde el chequeo
     // periodico: el script ya sabe cual es el problema y lo dice, no hace falta
     // esperar tres horas para deducirlo.
-    if (l.estado !== 'ok') {
-      await avisarSiCambio('sucursal', `${l.estado}:${l.motivo || ''}`, {
+    // Los dos problemas que puede reportar el script son MUY distintos y antes
+    // se trataban igual: el aviso culpaba a la sucursal de "no poder leer la
+    // planilla" cuando lo que habia fallado era el ENVIO, por un 502 de nuestro
+    // propio deploy. Mandar a alguien a revisar el servidor de archivos por un
+    // problema nuestro es peor que no avisar nada.
+    if (l.estado === 'sin-archivo') {
+      erroresSeguidos = 0;
+      // Este si es de alla y si necesita una persona: se avisa en la primera.
+      await avisarSiCambio('sucursal', String(l.motivo || ''), {
         proceso: 'la planilla automática de retiros',
-        que: `La PC de la sucursal (${l.equipo}) no está pudiendo leer la planilla.`,
+        que: `La PC de la sucursal (${l.equipo}) no está llegando al archivo.`,
         detalle: l.motivo || l.estado,
-        sugerencia: 'Suele ser que se perdió el acceso al servidor de archivos. '
-          + 'Entrar una vez a \192.168.0.210\Compartida desde el Explorador y tildar '
-          + '"Recordar mis credenciales".',
+        sugerencia: 'Suele ser que se perdió el acceso al servidor de archivos. Entrar una vez a '
+          + `${RUTA_COMPARTIDA} desde el Explorador y tildar "Recordar mis credenciales".`,
       });
+    } else if (l.estado === 'error') {
+      // El archivo está bien y la PC también: falló el camino del medio. El
+      // script reintenta solo, así que recién se avisa si insiste.
+      erroresSeguidos++;
+      if (erroresSeguidos >= ERRORES_PARA_AVISAR) {
+        await avisarSiCambio('envio', String(l.motivo || ''), {
+          proceso: 'la planilla automática de retiros',
+          que: `La sucursal encuentra la planilla pero no la puede mandar: ${erroresSeguidos} intentos seguidos fallaron.`,
+          detalle: l.motivo || 'sin detalle',
+          sugerencia: 'El problema está en el medio, no en el archivo ni en esa PC. Si dice 502, '
+            + 'es el bot reiniciándose y se arregla solo en un par de minutos.',
+        });
+      }
     } else {
+      erroresSeguidos = 0;
       limpiarAviso('sucursal');
+      limpiarAviso('envio');
     }
     return responder(res, 200, { ok: true });
   }
@@ -564,6 +597,6 @@ module.exports = {
   procesarPlanillaHttp, tokenValido, ErrorHttp, RUTA, LIMITE_BYTES,
   nombreParaAdmins, extensionReal, tamanoLegible, esExcel,
   RECHAZOS_PARA_AVISAR,
-  RUTA_LATIDO, RUTA_ESTADO,
-  _resetAvisos: () => { avisosVistos.clear(); rechazosSeguidos = 0; canal._reset(); },
+  RUTA_LATIDO, RUTA_ESTADO, RUTA_COMPARTIDA, ERRORES_PARA_AVISAR,
+  _resetAvisos: () => { avisosVistos.clear(); rechazosSeguidos = 0; erroresSeguidos = 0; canal._reset(); },
 };
