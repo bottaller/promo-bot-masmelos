@@ -198,6 +198,20 @@ t('impuestos presentes pero ilegibles: tira error en vez de subestimar el costo'
     assert.strictEqual(operaciones.length, 1);
     assert.strictEqual(descartadas, 0);
   });
+  await ta('excluye los INVISIBLES (is_invisible=true): inversión/interno, no son cobros', async () => {
+    // Caso real 01/09/2026: un DEPOSIT_INVESTMENT de $37.842.312,90 (HONRE S.A. -> FCI Bco. Mariva
+    // vía CRESIUM) que Talo marca is_invisible y el panel oculta. Sin filtrarlo entraba como "cobró
+    // Talo" e inflaba el arqueo en $37,8M contra un descuadre que no existía.
+    const f = fetchFalso([{ transactions: [
+      { ...TX, payment_id: 'venta', gross_amount: '1000', amount: '1000' },
+      { ...TX, id: 'inv', transaction_id: 'TX#CRESIUM#DEPOSIT_INVESTMENT', subType: 'DEPOSIT_INVESTMENT',
+        is_invisible: true, gross_amount: '37842312.9', amount: '37842312.9' },
+    ] }]);
+    const { operaciones, invisibles } = await bajarExtracto({ desde: '2026-09-01', ...CRED, fetchImpl: f });
+    assert.strictEqual(operaciones.length, 1);
+    assert.strictEqual(operaciones[0].source_id, 'venta');
+    assert.strictEqual(invisibles, 1);
+  });
   await ta('credenciales rechazadas: mensaje que dice qué revisar', async () => {
     const f = async () => ({ ok: false, status: 401, text: async () => JSON.stringify({ message: 'invalid credentials' }) });
     await assert.rejects(bajarExtracto({ desde: '2026-07-23', ...CRED, fetchImpl: f }),

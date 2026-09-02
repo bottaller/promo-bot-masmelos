@@ -280,8 +280,18 @@ async function bajarExtracto({
   // la plata. El panel tampoco las muestra como cobro. Si el campo no viene (API vieja / cambio de
   // formato), NO se filtra (backward-safe: mejor de más que perder todo). Validado jul-2026: las
   // 581 transacciones del mes vinieron todas PROCESSED, así que hoy no descarta ninguna.
-  const finalizadas = crudas.filter((tx) => !tx.transaction_status || String(tx.transaction_status).toUpperCase() === 'PROCESSED');
-  const descartadas = crudas.length - finalizadas.length;
+  // Invisibles: movimientos INTERNOS / de inversión que Talo marca is_invisible=true y el PANEL
+  // oculta — no son cobros de venta. Caso real (01/09/2026): un DEPOSIT_INVESTMENT de $37.842.312,90
+  // (HONRE S.A. metiendo plata en un FCI del Bco. Mariva vía CRESIUM) entraba como "cobró Talo" e
+  // inflaba el arqueo en $37,8M. Se excluyen para alinear EXACTO con el panel (que no los trae).
+  const visibles = crudas.filter((tx) => tx.is_invisible !== true);
+  const invisibles = crudas.length - visibles.length;
+  if (invisibles > 0) {
+    console.warn(`Talo API: excluí ${invisibles} movimiento(s) invisible(s) (inversión/interno, is_invisible=true); no son cobros.`);
+  }
+
+  const finalizadas = visibles.filter((tx) => !tx.transaction_status || String(tx.transaction_status).toUpperCase() === 'PROCESSED');
+  const descartadas = visibles.length - finalizadas.length;
   if (descartadas > 0) {
     console.warn(`Talo API: descarté ${descartadas} transacción(es) no finalizada(s) (transaction_status != PROCESSED); no entran al arqueo.`);
   }
@@ -292,7 +302,7 @@ async function bajarExtracto({
     .sort((a, b) => (a.hora < b.hora ? -1 : a.hora > b.hora ? 1 : 0))
     .map((o, i) => ({ ...o, fila: i + 1 }));
 
-  return { operaciones, rango, crudas, descartadas };
+  return { operaciones, rango, crudas, descartadas, invisibles };
 }
 
 module.exports = {
