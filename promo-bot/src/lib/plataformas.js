@@ -57,6 +57,9 @@ function motivoFueraMp(op) {
 // cuentas del libro (no hay ninguna cuenta que se llame "Talo QR" ni parecido).
 // Entran los movimientos RECIBIDO (cobros); los ENVIADO son salidas de plata.
 function motivoFueraTalo(op) {
+  // Rendimiento del FCI (subType YIELD, ver talo-api.js): ingreso financiero, no una venta. Se
+  // muestra en su propia línea del reporte, no como descuadre.
+  if (op.estado === 'RENDIMIENTO') return 'Rendimiento de cuenta (interés del saldo invertido)';
   if (op.estado && op.estado !== ESTADO_COBRO) return `Es "${op.estado}", no un cobro recibido`;
   if (op.bruto <= 0) return 'Importe cero o negativo: no es un cobro';
   return 'Fuera del alcance';

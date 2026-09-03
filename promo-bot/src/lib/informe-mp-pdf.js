@@ -220,6 +220,22 @@ function construirInformePDF({ fecha, resultados, cuenta, resultado, generadoEn,
         }
       }
 
+      // Rendimientos de cuenta (Talo: subType YIELD — el FCI paga interés del saldo invertido). Es un
+      // ingreso financiero, no un cobro de venta: se muestra reconocido, sin contar como diferencia.
+      const rend = item.resultado.fuera.mp.filter((o) => o.estado === 'RENDIMIENTO');
+      if (rend.length) {
+        const totalR = rend.reduce((a, o) => a + (o.bruto || 0), 0);
+        doc.moveDown(0.3);
+        doc.font('Helvetica-Bold').fontSize(9.5).fillColor(TINTA)
+          .text(`Rendimientos de cuenta — ${rend.length} · ${fmt(totalR)} (interés del saldo, no es un cobro)`, x, doc.y, { width: ancho });
+        doc.moveDown(0.2);
+        for (const o of rend) {
+          doc.font('Helvetica').fontSize(9.5).fillColor(TINTA)
+            .text(`${hora(o.hora)} · ${fmt(o.bruto)}${o.titular ? ' · ' + o.titular : ''}`, x, doc.y, { width: ancho });
+          doc.moveDown(0.2);
+        }
+      }
+
       if (!vp.ok) {
         const MAX = 22;
         doc.moveDown(0.3);

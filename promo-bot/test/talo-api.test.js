@@ -212,6 +212,24 @@ t('impuestos presentes pero ilegibles: tira error en vez de subestimar el costo'
     assert.strictEqual(operaciones[0].source_id, 'venta');
     assert.strictEqual(invisibles, 1);
   });
+  await ta('un YIELD (rendimiento del FCI) NO es cobro: estado RENDIMIENTO, entra con bruto>0 pero fuera del arqueo', async () => {
+    // Caso real 02/09: CRESIUM le paga $20.494,31 de interés al saldo invertido. Llega como INBOUND
+    // VISIBLE (no invisible), así que antes se contaba como "cobró Talo sin asentar". Ahora es un
+    // rendimiento: se reconoce pero no cuenta como cobro ni como descuadre.
+    const f = fetchFalso([{ transactions: [
+      { ...TX, payment_id: 'venta', gross_amount: '1000', amount: '1000' },
+      { ...TX, id: 'y', transaction_id: 'TX#YIELD#CRS-1', subType: 'YIELD', gross_amount: '20494.31', amount: '20494.31' },
+    ] }]);
+    const { operaciones } = await bajarExtracto({ desde: '2026-09-02', ...CRED, fetchImpl: f });
+    assert.strictEqual(operaciones.length, 2); // el YIELD NO se descarta (se muestra), a diferencia del invisible
+    const rend = operaciones.find((o) => o.estado === 'RENDIMIENTO');
+    assert.ok(rend, 'el YIELD queda con estado RENDIMIENTO');
+    assert.strictEqual(rend.bruto, 20494.31);   // entra con bruto>0 (para la línea de rendimientos)
+    assert.strictEqual(rend.enviado, 0);
+    const talo = porCodigo('talo');
+    assert.strictEqual(talo.enAlcance(rend), false);        // NO entra al arqueo de cobros
+    assert.match(talo.motivoFuera(rend), /Rendimiento de cuenta/);
+  });
   await ta('credenciales rechazadas: mensaje que dice qué revisar', async () => {
     const f = async () => ({ ok: false, status: 401, text: async () => JSON.stringify({ message: 'invalid credentials' }) });
     await assert.rejects(bajarExtracto({ desde: '2026-07-23', ...CRED, fetchImpl: f }),

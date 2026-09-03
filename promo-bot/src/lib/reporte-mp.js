@@ -211,7 +211,7 @@ function lineasPlataforma({ fecha, cuenta, resultado, origen = 'mayor', platafor
   // las salidas de dinero (importe negativo: Mercado Libre, devoluciones) no van al mensaje —
   // no son ventas por QR y ensucian el control. Los Haber (salidas de MP al banco) tampoco.
   // Su dato crudo sigue en la liquidación que se subió.
-  const grupos = agruparPorMotivo(fuera.mp.filter((o) => o.bruto >= 0), (o) => o.bruto);
+  const grupos = agruparPorMotivo(fuera.mp.filter((o) => o.bruto >= 0 && o.estado !== 'RENDIMIENTO'), (o) => o.bruto);
   if (grupos.length) {
     L.push('');
     L.push('<b>Fuera de alcance</b> <i>(no pasan por esta cuenta)</i>');
@@ -226,6 +226,15 @@ function lineasPlataforma({ fecha, cuenta, resultado, origen = 'mayor', platafor
     L.push('');
     L.push('<b>Entró a la cuenta pero no es cobro</b> <i>(no cuenta como diferencia)</i>');
     for (const g of transf) L.push(`• ${escapeHtml(g.motivo)}: ${g.n} · ${fmt(g.total)}`);
+  }
+
+  // Rendimientos de cuenta (Talo: subType YIELD — el FCI le paga interés al saldo invertido). Es un
+  // ingreso financiero, NO un cobro de venta: se muestra reconocido, sin contar como descuadre.
+  const rend = fuera.mp.filter((o) => o.estado === 'RENDIMIENTO');
+  if (rend.length) {
+    const tot = rend.reduce((a, o) => a + (o.bruto || 0), 0);
+    L.push('');
+    L.push(`💰 <b>Rendimientos de cuenta</b> — ${rend.length} · ${fmt(tot)} <i>(interés del saldo, no es un cobro)</i>`);
   }
 
   return L;

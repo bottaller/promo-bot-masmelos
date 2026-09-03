@@ -50,6 +50,11 @@ const ESTADO_POR_TIPO = {
   REFUND: 'REEMBOLSO',
 };
 
+// Rendimiento del FCI (subType 'YIELD'): CRESIUM le paga interés al saldo invertido de HONRE. Llega
+// como INBOUND pero NO es un cobro de venta — es un ingreso financiero. Estado propio para dejarlo
+// FUERA del arqueo de cobros y mostrarlo aparte como "rendimiento de cuenta", sin que sea descuadre.
+const ESTADO_RENDIMIENTO = 'RENDIMIENTO';
+
 // --- Importes -------------------------------------------------------------------------------
 // La API manda los montos como STRING con punto decimal ('1185.48', '1200') y a veces como
 // number (commission: 1.21). Devuelve null si no es un número: nunca 0 por defecto, porque un
@@ -209,7 +214,9 @@ function mapearTransaccion(tx, i) {
   const ref = tx.transaction_id || tx.id || `#${i + 1}`;
 
   const tipo = String(tx.transactionType || '').toUpperCase();
-  const estado = ESTADO_POR_TIPO[tipo];
+  // Un YIELD (rendimiento del FCI) llega como INBOUND; se le da su estado propio ANTES del mapeo por
+  // tipo, para que no cuente como cobro de venta.
+  const estado = String(tx.subType || '').toUpperCase() === 'YIELD' ? ESTADO_RENDIMIENTO : ESTADO_POR_TIPO[tipo];
   if (!estado) {
     throw new TaloApiError(`La transacción ${ref} tiene un transactionType que no conozco ("${tx.transactionType}"). Revisar antes de arquear.`);
   }
@@ -227,7 +234,10 @@ function mapearTransaccion(tx, i) {
   // El Excel separa en dos columnas lo que la API pone en un solo importe con su tipo:
   // lo que entra va a "Recibido" (bruto) y lo que sale a "Enviado".
   const magnitud = brutoApi === null ? Math.abs(neto) : Math.abs(brutoApi);
-  const entra = estado === ESTADO_COBRO;
+  // "Entra" = plata que ingresa (cobro O rendimiento): va a `bruto`. Los ENVIADO/REEMBOLSO van a
+  // `enviado`. El rendimiento entra con bruto>0 pero enAlcance (estado===RECIBIDO) lo deja fuera del
+  // apareo; así su importe queda disponible para la línea "rendimientos de cuenta".
+  const entra = estado === ESTADO_COBRO || estado === ESTADO_RENDIMIENTO;
 
   // Lo que resta del bruto va NEGATIVO (igual que el Excel y que MP). El `|| 0` evita el -0
   // que deja `-Math.abs(0)`: es cierto que -0 === 0, pero se imprime "-0,00" en el informe.
@@ -307,7 +317,7 @@ async function bajarExtracto({
 
 module.exports = {
   bajarExtracto, obtenerToken, listarTransacciones, mapearTransaccion,
-  rangoUtcDeDiasArg, numApi, sumarImpuestos, TaloApiError, BASE_PROD, ESTADO_POR_TIPO,
+  rangoUtcDeDiasArg, numApi, sumarImpuestos, TaloApiError, BASE_PROD, ESTADO_POR_TIPO, ESTADO_RENDIMIENTO,
 };
 
 // --- CLI ------------------------------------------------------------------------------------
